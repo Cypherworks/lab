@@ -10,7 +10,9 @@ keys.txt
 *.tfstate.*
 *.tfplan
 crash.log
-*.tfvars          # use sops-encrypted *.sops.tfvars instead
+# use sops-encrypted secrets, not plain tfvars
+*.tfvars
+!*.tfvars.example
 
 # Ansible
 *.retry
