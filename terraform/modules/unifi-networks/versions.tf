@@ -2,10 +2,10 @@ terraform {
   required_version = ">= 1.10"
   required_providers {
     unifi = {
-      # paultyng/unifi was archived 2026-04-30; ubiquiti-community is the
-      # maintained successor. Pinned to the 0.52.x line (modern framework schema).
+      # Pinned to the mature SDKv2 lineage (0.41.x). The 0.52 framework rewrite
+      # can't round-trip many unifi_network/port_profile/wlan fields.
       source  = "ubiquiti-community/unifi"
-      version = "~> 0.52"
+      version = "0.41.5"
     }
   }
 }

@@ -20,7 +20,7 @@ resource "unifi_device" "switch" {
   dynamic "port_override" {
     for_each = var.ports
     content {
-      index                 = tonumber(port_override.key)
+      number                = tonumber(port_override.key)
       name                  = port_override.value.name
       native_networkconf_id = port_override.value.native_network_id
       port_profile_id       = port_override.value.profile_key != null ? unifi_port_profile.this[port_override.value.profile_key].id : null
