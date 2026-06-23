@@ -33,7 +33,7 @@ module "switch" {
     access_servers = { name = "access-servers", forward = "native", native_network_id = local.net.servers, poe_mode = "auto" }
     access_iot     = { name = "access-iot", forward = "native", native_network_id = local.net.iot, poe_mode = "off" }
     trunk_node     = { name = "trunk-node", forward = "customize", native_network_id = local.net.servers, tagged_vlan_mgmt = "custom", excluded_network_ids = [local.net.users, local.net.customer, local.net.iot], poe_mode = "off" }
-    disabled       = { name = "disabled", forward = "disabled" }
+    disabled       = { name = "disabled", forward = "disabled", tagged_vlan_mgmt = "block_all", port_security_enabled = true, port_security_macs = [] }
   }
 
   ports = {
