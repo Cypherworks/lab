@@ -11,6 +11,9 @@ resource "unifi_port_profile" "this" {
   full_duplex           = each.value.full_duplex
   speed                 = each.value.speed
 
+  port_security_enabled     = each.value.port_security_enabled
+  port_security_mac_address = each.value.port_security_macs
+
   # The controller derives `forward` from the VLAN config (native-only becomes
   # `customize`, the primary LAN becomes `all`), so it never matches the literal
   # we send on create. Ignore it to keep re-applies clean.
