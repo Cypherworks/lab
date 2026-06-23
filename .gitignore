@@ -1,0 +1,20 @@
+# Secrets and keys — never commit
+*.age
+keys.txt
+*.decrypted
+*.dec.*
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars          # use sops-encrypted *.sops.tfvars instead
+
+# Ansible
+*.retry
+
+# OS / editor
+.DS_Store
+*.swp
