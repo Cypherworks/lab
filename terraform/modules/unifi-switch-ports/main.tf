@@ -10,6 +10,13 @@ resource "unifi_port_profile" "this" {
   op_mode               = each.value.op_mode
   full_duplex           = each.value.full_duplex
   speed                 = each.value.speed
+
+  # The controller derives `forward` from the VLAN config (native-only becomes
+  # `customize`, the primary LAN becomes `all`), so it never matches the literal
+  # we send on create. Ignore it to keep re-applies clean.
+  lifecycle {
+    ignore_changes = [forward]
+  }
 }
 
 # Manages the whole switch device: one port override per entry in var.ports.
