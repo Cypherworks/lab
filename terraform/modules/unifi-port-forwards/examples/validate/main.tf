@@ -4,7 +4,7 @@ terraform {
   required_providers {
     unifi = {
       source  = "ubiquiti-community/unifi"
-      version = "~> 0.52"
+      version = "0.41.5"
     }
   }
 }
@@ -15,16 +15,13 @@ module "port_forwards" {
   source = "../.."
 
   port_forwards = {
-    cctv_nfs = {
-      name         = "cctv-nfs"
+    cctv_ftp = {
+      name         = "cctv-ftp"
       protocol     = "tcp"
-      wan_port     = "2049"
+      wan_port     = "21"
       forward_ip   = "10.0.20.30"
-      forward_port = "2049"
-      source = {
-        type = "ip"
-        ip   = "192.0.2.10"
-      }
+      forward_port = "21"
+      src_ip       = "192.0.2.10/31" # two cameras
     }
   }
 }
