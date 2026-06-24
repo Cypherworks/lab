@@ -1,0 +1,28 @@
+---
+- name: Install unbound and root data
+  become: true
+  ansible.builtin.apt:
+    name:
+      - unbound
+      - dns-root-data # provides /usr/share/dns/root.hints + root anchor
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure the lab recursive resolver
+  become: true
+  ansible.builtin.template:
+    src: lab.conf.j2
+    dest: /etc/unbound/unbound.conf.d/lab.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: unbound-checkconf %s
+  notify: Restart unbound
+
+- name: Enable and start unbound
+  become: true
+  ansible.builtin.systemd:
+    name: unbound
+    enabled: true
+    state: started

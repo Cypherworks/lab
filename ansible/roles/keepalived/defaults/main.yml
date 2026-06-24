@@ -1,0 +1,16 @@
+---
+# VRRP floating IP across the DNS nodes. The active node holds the VIP; if its
+# DNS service fails the priority drops and the VIP moves to the peer.
+keepalived_interface: eth0
+keepalived_vrid: 20
+keepalived_vip: "" # required (the shared VIP)
+
+# Per-host (host_vars): one node MASTER + higher priority, the rest BACKUP.
+keepalived_state: BACKUP
+keepalived_priority: 100
+
+keepalived_auth_pass: "" # shared VRRP secret (from SOPS)
+
+# Health check: drop priority if the DNS frontend isn't running.
+keepalived_check_command: "/usr/bin/systemctl is-active --quiet blocky"
+keepalived_check_weight: -50

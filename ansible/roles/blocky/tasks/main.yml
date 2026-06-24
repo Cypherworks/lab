@@ -1,0 +1,88 @@
+---
+- name: Free port 53 from the systemd-resolved stub listener
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/10-no-stub.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (blocky role). blocky owns :53 on this host.
+      [Resolve]
+      DNSStubListener=no
+  when: blocky_disable_resolved_stub
+  notify: Restart systemd-resolved
+
+- name: Point resolv.conf at the real upstreams (not the disabled stub)
+  become: true
+  ansible.builtin.file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+  when: blocky_disable_resolved_stub
+
+- name: Create the blocky system user
+  become: true
+  ansible.builtin.user:
+    name: "{{ blocky_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ blocky_install_dir }}"
+    create_home: false
+
+- name: Create the blocky install directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ blocky_install_dir }}/{{ blocky_version }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download and extract blocky
+  become: true
+  ansible.builtin.unarchive:
+    src: "https://github.com/0xERR0R/blocky/releases/download/{{ blocky_version }}/blocky_{{ blocky_version }}_Linux_{{ blocky_arch }}.tar.gz"
+    dest: "{{ blocky_install_dir }}/{{ blocky_version }}"
+    remote_src: true
+    creates: "{{ blocky_install_dir }}/{{ blocky_version }}/blocky"
+    owner: root
+    group: root
+
+- name: Symlink the current blocky binary
+  become: true
+  ansible.builtin.file:
+    src: "{{ blocky_install_dir }}/{{ blocky_version }}/blocky"
+    dest: "{{ blocky_install_dir }}/blocky"
+    state: link
+    force: true
+  notify: Restart blocky
+
+- name: Render blocky config
+  become: true
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ blocky_install_dir }}/config.yml"
+    owner: root
+    group: "{{ blocky_user }}"
+    mode: "0640"
+  notify: Restart blocky
+
+- name: Install the blocky systemd unit
+  become: true
+  ansible.builtin.template:
+    src: blocky.service.j2
+    dest: /etc/systemd/system/blocky.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart blocky
+
+- name: Enable and start blocky
+  become: true
+  ansible.builtin.systemd:
+    name: blocky
+    enabled: true
+    state: started
+    daemon_reload: true

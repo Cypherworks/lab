@@ -1,0 +1,31 @@
+{# Managed by Ansible (unbound role). Recursive validating resolver on loopback. #}
+server:
+    interface: {{ unbound_listen }}@{{ unbound_port }}
+    do-ip4: yes
+    do-ip6: no
+    do-udp: yes
+    do-tcp: yes
+
+    # Loopback only — the local DNS frontend forwards here.
+    access-control: 0.0.0.0/0 refuse
+    access-control: 127.0.0.0/8 allow
+
+    hide-identity: yes
+    hide-version: yes
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-referral-path: yes
+    qname-minimisation: yes
+    aggressive-nsec: yes
+
+    prefetch: yes
+    prefetch-key: yes
+    cache-min-ttl: {{ unbound_cache_min_ttl }}
+    cache-max-ttl: {{ unbound_cache_max_ttl }}
+    rrset-roundrobin: yes
+    minimal-responses: yes
+    edns-buffer-size: {{ unbound_edns_buffer_size }}
+
+    # DNSSEC: validate from the root using the maintained trust anchor + hints.
+    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    root-hints: "/usr/share/dns/root.hints"
