@@ -4,12 +4,18 @@
     that: unifi_mongo_password | default("") | length > 0
     fail_msg: "unifi_mongo_password is not set — supply it from the SOPS secret."
 
-- name: Ensure the controller data directory exists
+- name: Ensure the controller data + bind-mount directories exist
   become: true
   ansible.builtin.file:
-    path: "{{ unifi_data_dir }}"
+    path: "{{ item }}"
     state: directory
     mode: "0755"
+  loop:
+    - "{{ unifi_data_dir }}"
+    - "{{ unifi_data_dir }}/mongo"   # mongo /data/db bind-mount source
+    - "{{ unifi_data_dir }}/config"  # unifi /config bind-mount source
+  # Synology's Docker won't auto-create bind-mount source dirs; the containers
+  # chown them on first start (mongo + the LinuxServer image both do).
 
 - name: Render the MongoDB init script
   become: true
