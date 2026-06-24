@@ -1,0 +1,6 @@
+---
+# Roles consume shared inventory vocabulary (lab_*, ops_*) supplied by the
+# consuming deployment, not role-private vars, so the role-name-prefix
+# convention doesn't apply.
+skip_list:
+  - var-naming[no-role-prefix]

@@ -1,0 +1,23 @@
+---
+# Baseline OS config applied to every Ubuntu host. Site data (IPs, keys) comes
+# from the consuming inventory; these are mechanism defaults.
+
+base_packages:
+  - curl
+  - ca-certificates
+  - unzip
+  - htop
+  - vim
+  - python3
+
+# Per-host network (set in host_vars). lab_ip/lab_gateway are required; the rest
+# have sane defaults. Pis use eth0; x86 NICs are set per host.
+lab_interface: eth0
+lab_prefix: 24
+lab_nameservers:
+  - "{{ dns_vip }}"
+lab_search: "{{ internal_subdomain }}"
+
+# SSH public keys authorised for the ansible user (config, not secret). Supplied
+# by the consuming inventory via ops_ssh_authorized_keys.
+ops_ssh_authorized_keys: []

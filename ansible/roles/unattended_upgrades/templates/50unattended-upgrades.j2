@@ -1,0 +1,10 @@
+{# Managed by Ansible (unattended_upgrades role). #}
+Unattended-Upgrade::Allowed-Origins {
+{% for origin in unattended_upgrades_origins %}
+    "{{ origin }}";
+{% endfor %}
+};
+
+Unattended-Upgrade::Remove-Unused-Dependencies "{{ unattended_upgrades_remove_unused_deps | lower }}";
+Unattended-Upgrade::Automatic-Reboot "{{ unattended_upgrades_auto_reboot | lower }}";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ unattended_upgrades_auto_reboot_time }}";

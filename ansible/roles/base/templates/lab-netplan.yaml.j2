@@ -1,0 +1,15 @@
+{# Static lab network for this host. Renders to /etc/netplan/60-lab.yaml. #}
+network:
+  version: 2
+  ethernets:
+    {{ lab_interface }}:
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - {{ lab_ip }}/{{ lab_prefix }}
+      routes:
+        - to: default
+          via: {{ lab_gateway }}
+      nameservers:
+        addresses: {{ lab_nameservers | to_json }}
+        search: ["{{ lab_search }}"]
