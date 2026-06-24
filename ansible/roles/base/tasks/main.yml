@@ -17,22 +17,9 @@
   community.general.timezone:
     name: "{{ timezone }}"
 
-- name: Configure systemd-timesyncd NTP servers
-  become: true
-  ansible.builtin.template:
-    src: timesyncd.conf.j2
-    dest: /etc/systemd/timesyncd.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart timesyncd
-
-- name: Enable systemd-timesyncd
-  become: true
-  ansible.builtin.systemd:
-    name: systemd-timesyncd
-    enabled: true
-    state: started
+# Time sync (NTP) is owned by the hardening layer: CIS 2.3.x enforces a single
+# time daemon (chrony) and would remove anything base set up here. NTP servers
+# are configured via ubtu24cis_time_pool/servers in the inventory.
 
 - name: Authorise ops SSH keys for the ansible user
   become: true

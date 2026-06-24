@@ -1,10 +1,4 @@
 ---
-- name: Restart timesyncd
-  become: true
-  ansible.builtin.systemd:
-    name: systemd-timesyncd
-    state: restarted
-
 # Re-asserting the host's existing static IP is a no-op, so this won't drop the
 # connection on a re-run. It only reconfigures when the rendered file changes.
 - name: Apply netplan
