@@ -1,4 +1,14 @@
 ---
+- name: Ensure the systemd-resolved drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: blocky_disable_resolved_stub
+
 - name: Free port 53 from the systemd-resolved stub listener
   become: true
   ansible.builtin.copy:
