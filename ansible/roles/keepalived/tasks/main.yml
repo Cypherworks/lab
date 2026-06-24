@@ -1,0 +1,25 @@
+---
+- name: Install keepalived
+  become: true
+  ansible.builtin.apt:
+    name: keepalived
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Render keepalived config
+  become: true
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart keepalived
+
+- name: Enable and start keepalived
+  become: true
+  ansible.builtin.systemd:
+    name: keepalived
+    enabled: true
+    state: started

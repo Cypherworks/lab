@@ -1,0 +1,10 @@
+---
+# Recursive, validating resolver. Listens on loopback only; AdGuard Home (or any
+# local frontend) forwards to it. Not exposed to the network directly.
+unbound_listen: 127.0.0.1
+unbound_port: 5335
+
+# Caching / hardening knobs (sane defaults; override per site if needed).
+unbound_cache_min_ttl: 300
+unbound_cache_max_ttl: 86400
+unbound_edns_buffer_size: 1232

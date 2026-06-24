@@ -1,0 +1,32 @@
+---
+# blocky DNS frontend: blocklists/allowlists + local records, forwarding to the
+# local recursive resolver (unbound). All list/record data is supplied by the
+# consuming inventory so it's identical on every node.
+blocky_version: "v0.32.1"
+blocky_arch: arm64 # Pi; x86 nodes would be amd64
+blocky_install_dir: /opt/blocky
+blocky_user: blocky
+
+blocky_dns_port: 53
+blocky_http_port: 4000 # query API + Prometheus /metrics
+
+# Recursive resolver behind blocky, and how blocky bootstraps list downloads.
+blocky_upstreams:
+  - 127.0.0.1:5335
+blocky_bootstrap: "tcp+udp:127.0.0.1:5335"
+
+blocky_block_type: zeroIp
+blocky_block_ttl: 1m
+blocky_cache_min: 5m
+blocky_cache_max: 30m
+blocky_log_level: info
+
+# Data (set in group_vars; identical across nodes).
+blocky_denylists: {} # group -> [urls/inline]
+blocky_allowlists: {} # group -> [urls/inline]
+blocky_client_groups_block: # which denylist groups apply to which clients
+  default: []
+blocky_custom_dns: {} # fqdn -> ip (local lab records)
+
+# blocky binds :53, so free it from systemd-resolved's stub listener.
+blocky_disable_resolved_stub: true

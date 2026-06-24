@@ -1,0 +1,59 @@
+{# Managed by Ansible (blocky role). Identical on every DNS node. #}
+ports:
+  dns: {{ blocky_dns_port }}
+  http: {{ blocky_http_port }}
+
+upstreams:
+  groups:
+    default:
+{% for u in blocky_upstreams %}
+      - {{ u }}
+{% endfor %}
+
+bootstrapDns:
+  - {{ blocky_bootstrap }}
+
+blocking:
+  denylists:
+{% for group, entries in blocky_denylists.items() %}
+    {{ group }}:
+{% for e in entries %}
+      - {{ e }}
+{% endfor %}
+{% endfor %}
+  allowlists:
+{% for group, entries in blocky_allowlists.items() %}
+    {{ group }}:
+{% for e in entries %}
+      - {{ e }}
+{% endfor %}
+{% endfor %}
+  clientGroupsBlock:
+{% for client, groups in blocky_client_groups_block.items() %}
+    {{ client }}:
+{% for g in groups %}
+      - {{ g }}
+{% endfor %}
+{% endfor %}
+  blockType: {{ blocky_block_type }}
+  blockTTL: {{ blocky_block_ttl }}
+
+{% if blocky_custom_dns %}
+customDNS:
+  mapping:
+{% for fqdn, ip in blocky_custom_dns.items() %}
+    {{ fqdn }}: {{ ip }}
+{% endfor %}
+{% endif %}
+
+caching:
+  minTime: {{ blocky_cache_min }}
+  maxTime: {{ blocky_cache_max }}
+  prefetching: true
+
+prometheus:
+  enable: true
+  path: /metrics
+
+log:
+  level: {{ blocky_log_level }}
