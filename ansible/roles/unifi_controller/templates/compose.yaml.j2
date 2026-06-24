@@ -6,7 +6,6 @@ services:
     restart: unless-stopped
     volumes:
       - {{ unifi_data_dir }}/mongo:/data/db
-      - {{ unifi_data_dir }}/mongo-init.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
 
   unifi:
     image: {{ unifi_app_image }}

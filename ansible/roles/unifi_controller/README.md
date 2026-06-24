@@ -17,10 +17,13 @@ support).
 ## Optional vars
 - `unifi_docker_cli` — explicit path to the `docker` binary. Set this when Docker
   isn't on the module's exec PATH (e.g. Synology, where it's `/usr/local/bin/docker`).
+- `unifi_mongo_shell` — Mongo client for user creation: `mongosh` (mongo:6.0+,
+  default) or `mongo` (4.4 and older, e.g. non-AVX hardware).
 
 ## Notes
-- The Mongo init script creates the DB user only on MongoDB's first start (empty
-  data dir); it's a no-op thereafter.
+- The Mongo DB user is created by the role (idempotent `docker exec` after the
+  stack is up), not via Mongo's entrypoint init dir — on Synology, `@eaDir`
+  metadata stops Mongo treating the data dir as fresh, so that hook never fires.
 - Published ports: 8443 (UI), 8080 (inform), 3478/udp (STUN), 10001/udp
   (discovery). The network firewall controls who may reach them.
 - Adoption is L3-friendly — point devices at the controller with `set-inform`;

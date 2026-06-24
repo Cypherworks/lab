@@ -17,13 +17,6 @@
   # Synology's Docker won't auto-create bind-mount source dirs; the containers
   # chown them on first start (mongo + the LinuxServer image both do).
 
-- name: Render the MongoDB init script
-  become: true
-  ansible.builtin.template:
-    src: mongo-init.js.j2
-    dest: "{{ unifi_data_dir }}/mongo-init.js"
-    mode: "0600"
-
 - name: Render the controller compose file
   become: true
   ansible.builtin.template:
@@ -38,3 +31,19 @@
     docker_cli: "{{ unifi_docker_cli | default(omit) }}"
     state: present
     pull: missing
+
+# We create the DB user explicitly rather than via Mongo's
+# /docker-entrypoint-initdb.d hook: on Synology, @eaDir metadata in the data dir
+# stops Mongo from treating it as fresh, so that hook never fires. The script is
+# idempotent (getUser guard), so this is safe on every run.
+- name: Ensure the controller's MongoDB user exists
+  become: true
+  ansible.builtin.command:
+    cmd: "{{ unifi_docker_cli | default('docker') }} exec -i unifi-db {{ unifi_mongo_shell }} {{ unifi_mongo_dbname }} --quiet"
+    stdin: "{{ lookup('template', 'mongo-init.js.j2') }}"
+  register: _unifi_mongo_user
+  changed_when: "'created' in _unifi_mongo_user.stdout"
+  until: _unifi_mongo_user.rc == 0
+  retries: 12
+  delay: 5
+  no_log: true  # the script carries the Mongo password

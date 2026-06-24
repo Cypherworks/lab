@@ -17,6 +17,9 @@ unifi_pgid: 1000
 # MUST be supplied (from SOPS) as unifi_mongo_password.
 unifi_mongo_user: unifi
 unifi_mongo_dbname: unifi
+# Mongo client used to create the DB user. mongo:6.0+ ships `mongosh`; older
+# (e.g. 4.4 on non-AVX hardware) ships the legacy `mongo` shell.
+unifi_mongo_shell: mongosh
 
 # Host ports published for adoption + UI. The lab firewall governs which sources
 # may actually reach them.
