@@ -1,0 +1,6 @@
+---
+# config.txt is read at boot, so the new fan thresholds need a reboot.
+- name: Reboot for config.txt
+  become: true
+  ansible.builtin.reboot:
+    reboot_timeout: 300

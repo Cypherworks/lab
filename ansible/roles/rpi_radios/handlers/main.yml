@@ -1,0 +1,7 @@
+---
+# Shares the handler name with rpi_poe_fan so a single play applying both reboots
+# only once. config.txt is read at boot.
+- name: Reboot for config.txt
+  become: true
+  ansible.builtin.reboot:
+    reboot_timeout: 300

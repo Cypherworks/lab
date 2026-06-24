@@ -1,0 +1,13 @@
+---
+# Raspberry Pi PoE/PoE+ HAT fan thresholds (millicelsius), written to config.txt.
+# Raised well above the light DNS-Pi idle/load temps so the fan stays off in
+# normal operation — effectively silent — and only spins if the Pi genuinely
+# heats up. Assumes the official PoE/PoE+ HAT (firmware-controlled fan). Needs a
+# reboot to take effect.
+rpi_config_txt: /boot/firmware/config.txt
+
+rpi_poe_fan_temps:
+  temp0: 70000
+  temp1: 75000
+  temp2: 80000
+  temp3: 82000

@@ -1,0 +1,7 @@
+---
+# Disable the Pi's onboard radios. Every Pi here is hard-wired on eth0, so WiFi
+# and Bluetooth are just unused attack surface. Disabled at the firmware level
+# via config.txt overlays (the interfaces don't appear at all). Needs a reboot.
+rpi_disable_wifi: true
+rpi_disable_bt: true
+rpi_config_txt: /boot/firmware/config.txt

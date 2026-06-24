@@ -1,0 +1,12 @@
+---
+- name: Set PoE HAT fan temperature thresholds (quiet)
+  become: true
+  ansible.builtin.lineinfile:
+    path: "{{ rpi_config_txt }}"
+    regexp: "^dtparam=poe_fan_{{ item.key }}="
+    line: "dtparam=poe_fan_{{ item.key }}={{ item.value }}"
+    insertafter: EOF
+  loop: "{{ rpi_poe_fan_temps | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}={{ item.value }}"
+  notify: Reboot for config.txt

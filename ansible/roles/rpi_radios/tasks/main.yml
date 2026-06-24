@@ -1,0 +1,20 @@
+---
+- name: Disable onboard WiFi
+  become: true
+  ansible.builtin.lineinfile:
+    path: "{{ rpi_config_txt }}"
+    regexp: "^dtoverlay=disable-wifi"
+    line: "dtoverlay=disable-wifi"
+    insertafter: EOF
+  when: rpi_disable_wifi
+  notify: Reboot for config.txt
+
+- name: Disable onboard Bluetooth
+  become: true
+  ansible.builtin.lineinfile:
+    path: "{{ rpi_config_txt }}"
+    regexp: "^dtoverlay=disable-bt"
+    line: "dtoverlay=disable-bt"
+    insertafter: EOF
+  when: rpi_disable_bt
+  notify: Reboot for config.txt
