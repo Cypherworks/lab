@@ -1,0 +1,31 @@
+{# Managed by Ansible (unifi_controller role). #}
+services:
+  unifi-db:
+    image: {{ unifi_mongo_image }}
+    container_name: unifi-db
+    restart: unless-stopped
+    volumes:
+      - {{ unifi_data_dir }}/mongo:/data/db
+      - {{ unifi_data_dir }}/mongo-init.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+
+  unifi:
+    image: {{ unifi_app_image }}
+    container_name: unifi
+    restart: unless-stopped
+    depends_on:
+      - unifi-db
+    environment:
+      PUID: "{{ unifi_puid }}"
+      PGID: "{{ unifi_pgid }}"
+      TZ: "{{ timezone | default('Europe/London') }}"
+      MONGO_HOST: unifi-db
+      MONGO_PORT: "27017"
+      MONGO_USER: "{{ unifi_mongo_user }}"
+      MONGO_PASS: "{{ unifi_mongo_password }}"
+      MONGO_DBNAME: "{{ unifi_mongo_dbname }}"
+    volumes:
+      - {{ unifi_data_dir }}/config:/config
+    ports:
+{% for p in unifi_ports %}
+      - "{{ p }}"
+{% endfor %}

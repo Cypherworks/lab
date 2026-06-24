@@ -1,0 +1,27 @@
+---
+# Self-hosted UniFi Network controller, pinned to the last release that manages
+# the Gen1 USG Pro-4 (9.x dropped USG support). Runs as two containers (the app
+# + its MongoDB) via docker compose on any Docker host.
+unifi_app_image: lscr.io/linuxserver/unifi-network-application:8.6.9
+unifi_mongo_image: mongo:7.0
+
+# Where the compose file, mongo data, and controller config live on the host.
+# Override per host (e.g. a NAS share: /volume1/docker/unifi).
+unifi_data_dir: /opt/unifi
+
+# Ownership the LinuxServer image drops to.
+unifi_puid: 1000
+unifi_pgid: 1000
+
+# MongoDB database/user the controller uses. The password has no default and
+# MUST be supplied (from SOPS) as unifi_mongo_password.
+unifi_mongo_user: unifi
+unifi_mongo_dbname: unifi
+
+# Host ports published for adoption + UI. The lab firewall governs which sources
+# may actually reach them.
+unifi_ports:
+  - "8443:8443"      # controller UI / device comms (HTTPS)
+  - "8080:8080"      # device inform
+  - "3478:3478/udp"  # STUN
+  - "10001:10001/udp" # device discovery

@@ -1,0 +1,33 @@
+---
+- name: Require the MongoDB password (supplied from SOPS)
+  ansible.builtin.assert:
+    that: unifi_mongo_password | default("") | length > 0
+    fail_msg: "unifi_mongo_password is not set — supply it from the SOPS secret."
+
+- name: Ensure the controller data directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ unifi_data_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Render the MongoDB init script
+  become: true
+  ansible.builtin.template:
+    src: mongo-init.js.j2
+    dest: "{{ unifi_data_dir }}/mongo-init.js"
+    mode: "0600"
+
+- name: Render the controller compose file
+  become: true
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ unifi_data_dir }}/compose.yaml"
+    mode: "0600"
+
+- name: Deploy the controller stack
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ unifi_data_dir }}"
+    state: present
+    pull: missing

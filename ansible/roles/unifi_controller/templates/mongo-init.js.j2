@@ -1,0 +1,10 @@
+{# Managed by Ansible. Runs only on MongoDB's first start (empty data dir) to
+   create the controller's database user. #}
+db.getSiblingDB("{{ unifi_mongo_dbname }}").createUser({
+  user: "{{ unifi_mongo_user }}",
+  pwd: "{{ unifi_mongo_password }}",
+  roles: [
+    { role: "dbOwner", db: "{{ unifi_mongo_dbname }}" },
+    { role: "dbOwner", db: "{{ unifi_mongo_dbname }}_stat" }
+  ]
+});
