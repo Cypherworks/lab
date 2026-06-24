@@ -26,6 +26,9 @@ server:
     minimal-responses: yes
     edns-buffer-size: {{ unbound_edns_buffer_size }}
 
-    # DNSSEC: validate from the root using the maintained trust anchor + hints.
-    auto-trust-anchor-file: "/var/lib/unbound/root.key"
+    # DNSSEC: the unbound package owns the root trust anchor via its own
+    # root-auto-trust-anchor-file.conf (it seeds and RFC 5011-maintains
+    # /var/lib/unbound/root.key). Declaring auto-trust-anchor-file again here
+    # makes unbound load the anchor twice — "trust anchor presented twice" fatal
+    # — so we don't. We only supply fresher root hints (from dns-root-data).
     root-hints: "/usr/share/dns/root.hints"
