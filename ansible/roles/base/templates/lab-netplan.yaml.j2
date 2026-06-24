@@ -3,6 +3,10 @@ network:
   version: 2
   ethernets:
     {{ lab_interface }}:
+{% if lab_interface_match is defined %}
+      match:
+        name: "{{ lab_interface_match }}"
+{% endif %}
       dhcp4: false
       dhcp6: false
       addresses:
