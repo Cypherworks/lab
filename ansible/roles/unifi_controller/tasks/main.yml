@@ -29,5 +29,6 @@
   become: true
   community.docker.docker_compose_v2:
     project_src: "{{ unifi_data_dir }}"
+    docker_cli: "{{ unifi_docker_cli | default(omit) }}"
     state: present
     pull: missing

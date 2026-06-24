@@ -14,6 +14,10 @@ support).
 - `unifi_mongo_password` — MongoDB user password. Supply from SOPS; never commit.
 - `unifi_data_dir` — host path for the compose file + data (e.g. `/volume1/docker/unifi`).
 
+## Optional vars
+- `unifi_docker_cli` — explicit path to the `docker` binary. Set this when Docker
+  isn't on the module's exec PATH (e.g. Synology, where it's `/usr/local/bin/docker`).
+
 ## Notes
 - The Mongo init script creates the DB user only on MongoDB's first start (empty
   data dir); it's a no-op thereafter.
