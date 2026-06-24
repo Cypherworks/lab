@@ -64,6 +64,12 @@ autoinstall:
   locale: en_GB.UTF-8
   keyboard:
     layout: gb
+  apt:
+    geoip: false
+    preserve_sources_list: false
+    primary:
+      - arches: [default]
+        uri: "http://archive.ubuntu.com/ubuntu"
   identity:
     hostname: lab-node
     username: ${USERNAME}
@@ -87,6 +93,11 @@ EOF
 GRUB="$WORK/boot/grub/grub.cfg"
 sed -i '' 's/^set timeout=.*/set timeout=1/' "$GRUB"
 sed -i '' 's#/casper/vmlinuz  *---#/casper/vmlinuz autoinstall ds=nocloud\\;s=/cdrom/nocloud/ ---#' "$GRUB"
+
+# grub.cfg is listed in the ISO's md5 manifest; refresh its hash or casper's
+# media-integrity check fails the install on our edit.
+NEW_MD5=$(md5 -q "$GRUB")
+sed -i '' "s#^[0-9a-f]*  ./boot/grub/grub.cfg\$#${NEW_MD5}  ./boot/grub/grub.cfg#" "$WORK/md5sum.txt"
 
 echo "Repacking ..."
 # Reuse the source ISO's boot layout verbatim (BIOS+UEFI). Flatten to one line so
