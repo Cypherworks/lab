@@ -1,10 +1,17 @@
-{# Managed by Ansible. Runs only on MongoDB's first start (empty data dir) to
-   create the controller's database user. #}
-db.getSiblingDB("{{ unifi_mongo_dbname }}").createUser({
-  user: "{{ unifi_mongo_user }}",
-  pwd: "{{ unifi_mongo_password }}",
-  roles: [
-    { role: "dbOwner", db: "{{ unifi_mongo_dbname }}" },
-    { role: "dbOwner", db: "{{ unifi_mongo_dbname }}_stat" }
-  ]
-});
+{# Managed by Ansible. Idempotent: creates the controller's MongoDB user if it
+   doesn't already exist. Fed to the mongo shell via `docker exec` by the role,
+   not the entrypoint init dir (which Synology's @eaDir metadata makes unreliable
+   by tricking Mongo into thinking the data dir isn't fresh). #}
+(function () {
+  var d = db.getSiblingDB("{{ unifi_mongo_dbname }}");
+  if (d.getUser("{{ unifi_mongo_user }}")) { print("exists"); return; }
+  d.createUser({
+    user: "{{ unifi_mongo_user }}",
+    pwd: "{{ unifi_mongo_password }}",
+    roles: [
+      { role: "dbOwner", db: "{{ unifi_mongo_dbname }}" },
+      { role: "dbOwner", db: "{{ unifi_mongo_dbname }}_stat" }
+    ]
+  });
+  print("created");
+})();
