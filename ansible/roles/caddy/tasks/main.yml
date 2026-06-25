@@ -1,0 +1,17 @@
+---
+- name: Render the Caddyfile
+  become: true
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ caddy_config_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload Caddy
+
+# Gate the reload: a bad config fails the play here, before the handler runs, so
+# Caddy keeps serving the previous config.
+- name: Validate the Caddyfile
+  become: true
+  ansible.builtin.command: "{{ caddy_binary }} validate --adapter caddyfile --config {{ caddy_config_path }}"
+  changed_when: false
