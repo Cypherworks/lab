@@ -1,0 +1,28 @@
+---
+# Incus and the tooling its LVM thin storage pool needs. The single `incus`
+# package (Ubuntu 24.04+) ships both the daemon and the CLI, with VM support.
+incus_packages:
+  - incus
+  - lvm2
+  - thin-provisioning-tools
+
+# Storage: an LVM thin pool in the host's existing volume group (the OS install
+# leaves free space there). `size` is ignored for an existing VG, so the pool
+# takes the VG's free space. Override incus_storage_vg per host if it differs.
+incus_storage_pool: default
+incus_storage_vg: ubuntu-vg
+
+# Remote API listener so the Incus client and Terraform can manage the host.
+incus_https_address: "[::]:8443"
+
+# Host NIC that carries the tagged lab VLANs (a trunk port). Per-VLAN bridges are
+# built on top of it so instances sit directly on lab VLANs, not behind NAT.
+incus_uplink_interface: lab0
+
+# Lab VLANs exposed to instances. Each entry renders <uplink>.<vlan> -> <bridge>
+# in netplan and an Incus profile with a bridged NIC on that bridge. The host
+# keeps its own address on the uplink (servers VLAN); these bridges carry no host IP.
+incus_networks:
+  - name: services
+    vlan: 30
+    bridge: br30

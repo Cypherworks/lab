@@ -1,0 +1,18 @@
+{# Per-VLAN bridges for Incus instances, on top of the trunked uplink. Renders to
+   /etc/netplan/70-incus.yaml. The bridges carry no host IP — instances get their
+   own addresses on the VLAN; the host stays on its uplink (servers VLAN). #}
+network:
+  version: 2
+  vlans:
+{% for net in incus_networks %}
+    {{ incus_uplink_interface }}.{{ net.vlan }}:
+      id: {{ net.vlan }}
+      link: {{ incus_uplink_interface }}
+{% endfor %}
+  bridges:
+{% for net in incus_networks %}
+    {{ net.bridge }}:
+      interfaces: [{{ incus_uplink_interface }}.{{ net.vlan }}]
+      dhcp4: false
+      dhcp6: false
+{% endfor %}

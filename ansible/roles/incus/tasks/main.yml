@@ -1,0 +1,64 @@
+---
+- name: Install Incus and storage tooling
+  become: true
+  ansible.builtin.apt:
+    name: "{{ incus_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Allow the ansible user to drive Incus
+  become: true
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: incus-admin
+    append: true
+
+- name: Render per-VLAN bridges for instance networking
+  become: true
+  ansible.builtin.template:
+    src: incus-netplan.yaml.j2
+    dest: /etc/netplan/70-incus.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Apply incus netplan
+
+- name: Bring the bridges up before any profile references them
+  ansible.builtin.meta: flush_handlers
+
+- name: Check whether Incus is already initialised
+  become: true
+  ansible.builtin.command:
+    cmd: incus storage list --format csv
+  register: _incus_storage
+  changed_when: false
+  failed_when: false
+
+# First run only: the preseed isn't fully idempotent, so guard on the pool's
+# existence rather than re-applying it.
+- name: Initialise Incus from preseed
+  become: true
+  ansible.builtin.command:
+    cmd: incus admin init --preseed
+    stdin: "{{ lookup('template', 'incus-preseed.yml.j2') }}"
+  when: incus_storage_pool not in _incus_storage.stdout
+  changed_when: true
+
+- name: Ensure a profile exists per lab VLAN
+  become: true
+  ansible.builtin.command:
+    cmd: "incus profile create {{ item.name }}"
+  register: _incus_profile
+  changed_when: _incus_profile.rc == 0
+  failed_when: _incus_profile.rc != 0 and 'already exists' not in _incus_profile.stderr
+  loop: "{{ incus_networks }}"
+
+- name: Give each VLAN profile a bridged NIC
+  become: true
+  ansible.builtin.command:
+    cmd: "incus profile device add {{ item.name }} eth0 nic nictype=bridged parent={{ item.bridge }} name=eth0"
+  register: _incus_profile_nic
+  changed_when: _incus_profile_nic.rc == 0
+  failed_when: _incus_profile_nic.rc != 0 and 'already exists' not in _incus_profile_nic.stderr
+  loop: "{{ incus_networks }}"

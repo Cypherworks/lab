@@ -1,0 +1,16 @@
+{# Fed to `incus admin init --preseed` on first init only (guarded by the task). #}
+config:
+  core.https_address: "{{ incus_https_address }}"
+storage_pools:
+  - name: {{ incus_storage_pool }}
+    driver: lvm
+    config:
+      source: {{ incus_storage_vg }}
+      lvm.use_thinpool: "true"
+profiles:
+  - name: default
+    devices:
+      root:
+        path: /
+        pool: {{ incus_storage_pool }}
+        type: disk
