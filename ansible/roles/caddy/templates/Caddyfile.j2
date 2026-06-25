@@ -1,0 +1,23 @@
+{# Managed by the caddy role. One wildcard site; routes by Host header. #}
+{
+	email {{ caddy_acme_email }}
+}
+
+*.{{ caddy_domain }} {
+	tls {
+		dns route53
+	}
+{% for route in caddy_routes %}
+	@{{ route.name }} host {{ route.host }}
+	handle @{{ route.name }} {
+		reverse_proxy {{ route.upstream }}{% if route.tls_skip_verify | default(false) %} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}{% endif +%}
+	}
+{% endfor %}
+	handle {
+		respond "lab ingress" 200
+	}
+}

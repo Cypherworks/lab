@@ -1,0 +1,6 @@
+---
+# Graceful, sub-second config swap — no dropped connections, no restart.
+- name: Reload Caddy
+  become: true
+  ansible.builtin.command: "{{ caddy_binary }} reload --adapter caddyfile --config {{ caddy_config_path }}"
+  changed_when: true

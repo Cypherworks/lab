@@ -1,0 +1,15 @@
+---
+# Reverse-proxy ingress config. Caddy itself is installed by the Terraform incus
+# instance (cloud-init); this role owns the Caddyfile so routes change with an
+# Ansible run + reload, never an instance rebuild.
+
+caddy_domain: cypherworks.co.uk
+caddy_acme_email: lloyd@cypherworks.co.uk
+caddy_config_path: /etc/caddy/Caddyfile
+caddy_binary: /usr/local/bin/caddy
+
+# One wildcard cert (Route53 DNS-01) covers every host below. Add/remove a service
+# by editing this list (in group_vars) and re-running — the reload is sub-second.
+# Each entry: name (matcher id), host (FQDN), upstream (backend URL), and
+# tls_skip_verify for backends with self-signed certs.
+caddy_routes: []
