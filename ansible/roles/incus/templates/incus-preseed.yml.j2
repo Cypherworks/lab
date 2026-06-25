@@ -3,10 +3,9 @@ config:
   core.https_address: "{{ incus_https_address }}"
 storage_pools:
   - name: {{ incus_storage_pool }}
-    driver: lvm
+    driver: btrfs
     config:
-      source: {{ incus_storage_vg }}
-      lvm.use_thinpool: "true"
+      source: /dev/{{ incus_storage_vg }}/{{ incus_storage_lv }}
 profiles:
   - name: default
     devices:

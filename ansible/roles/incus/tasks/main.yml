@@ -27,6 +27,14 @@
 - name: Bring the bridges up before any profile references them
   ansible.builtin.meta: flush_handlers
 
+- name: Carve a dedicated LV for Incus storage
+  become: true
+  community.general.lvol:
+    vg: "{{ incus_storage_vg }}"
+    lv: "{{ incus_storage_lv }}"
+    size: "{{ incus_storage_size }}"
+    state: present
+
 - name: Check whether Incus is already initialised
   become: true
   ansible.builtin.command:

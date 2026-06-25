@@ -1,16 +1,19 @@
 ---
-# Incus and the tooling its LVM thin storage pool needs. The single `incus`
+# Incus plus the LVM and btrfs tooling its storage needs. The single `incus`
 # package (Ubuntu 24.04+) ships both the daemon and the CLI, with VM support.
 incus_packages:
   - incus
   - lvm2
-  - thin-provisioning-tools
+  - btrfs-progs
 
-# Storage: an LVM thin pool in the host's existing volume group (the OS install
-# leaves free space there). `size` is ignored for an existing VG, so the pool
-# takes the VG's free space. Override incus_storage_vg per host if it differs.
+# Storage: a dedicated LV carved from the OS volume group's free space, which
+# Incus formats btrfs (CoW + snapshots, in-kernel). Incus's LVM driver insists on
+# owning a whole empty VG, so we give it a block device instead of sharing the VG.
+# Override incus_storage_size per host if the disk differs.
 incus_storage_pool: default
 incus_storage_vg: ubuntu-vg
+incus_storage_lv: incus
+incus_storage_size: 120g
 
 # Remote API listener so the Incus client and Terraform can manage the host.
 incus_https_address: "[::]:8443"
