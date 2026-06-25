@@ -1,0 +1,39 @@
+---
+- name: Require the Authentik secrets (supplied from SOPS)
+  ansible.builtin.assert:
+    that:
+      - authentik_secret_key | default("") | length > 0
+      - authentik_pg_password | default("") | length > 0
+    fail_msg: >-
+      authentik_secret_key and authentik_pg_password must be set — supply them
+      from host_vars/authentik.sops.yml.
+
+- name: Ensure the Authentik data + bind-mount directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ authentik_data_dir }}"
+    - "{{ authentik_data_dir }}/data"
+    - "{{ authentik_data_dir }}/certs"
+    - "{{ authentik_data_dir }}/custom-templates"
+
+- name: Render the Authentik environment file
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ authentik_data_dir }}/.env"
+    mode: "0600"
+  no_log: true # carries the secret key + DB password
+
+- name: Render the Authentik compose file
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ authentik_data_dir }}/compose.yaml"
+    mode: "0644"
+
+- name: Deploy the Authentik stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ authentik_data_dir }}"
+    state: present
+    pull: missing
