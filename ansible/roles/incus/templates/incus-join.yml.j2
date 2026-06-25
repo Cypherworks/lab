@@ -1,0 +1,12 @@
+{# Fed to `incus admin init --preseed` to join an existing cluster. The token is
+   single-use, minted on the bootstrap member; member_config supplies this host's
+   local storage source for the cluster-wide pool. #}
+cluster:
+  enabled: true
+  server_address: "{{ incus_cluster_address }}:8443"
+  cluster_token: "{{ _incus_join_token.stdout | regex_search('eyJ[A-Za-z0-9+/=]+') }}"
+  member_config:
+    - entity: storage-pool
+      name: {{ incus_storage_pool }}
+      key: source
+      value: /dev/{{ incus_storage_vg }}/{{ incus_storage_lv }}

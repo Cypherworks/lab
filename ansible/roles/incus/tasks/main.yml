@@ -27,6 +27,8 @@
 - name: Bring the bridges up before any profile references them
   ansible.builtin.meta: flush_handlers
 
+# Every member has its own local storage; in a cluster the pool is defined
+# cluster-wide with a per-member source.
 - name: Carve a dedicated LV for Incus storage
   become: true
   community.general.lvol:
@@ -35,38 +37,84 @@
     size: "{{ incus_storage_size }}"
     state: present
 
-- name: Check whether Incus is already initialised
+- name: Detect existing storage pools
   become: true
-  ansible.builtin.command:
-    cmd: incus storage list --format csv
+  ansible.builtin.command: incus storage list --format csv
   register: _incus_storage
   changed_when: false
   failed_when: false
 
-# First run only: the preseed isn't fully idempotent, so guard on the pool's
-# existence rather than re-applying it.
-- name: Initialise Incus from preseed
+- name: Detect cluster membership
+  become: true
+  ansible.builtin.command: incus cluster list --format csv
+  register: _incus_cluster
+  changed_when: false
+  failed_when: false
+
+- name: Establish whether this host bootstraps the cluster
+  ansible.builtin.set_fact:
+    _incus_is_bootstrap: "{{ (not incus_cluster_enabled) or inventory_hostname == incus_cluster_bootstrap_host }}"
+    _incus_is_member: "{{ incus_cluster_member_name in _incus_cluster.stdout }}"
+
+# --- Bootstrap member (or a standalone host) ---
+- name: Initialise the bootstrap member from preseed
   become: true
   ansible.builtin.command:
     cmd: incus admin init --preseed
     stdin: "{{ lookup('template', 'incus-preseed.yml.j2') }}"
-  when: incus_storage_pool not in _incus_storage.stdout
+  when:
+    - _incus_is_bootstrap
+    - incus_storage_pool not in _incus_storage.stdout
+  changed_when: true
+
+- name: Enable clustering on the bootstrap member
+  become: true
+  ansible.builtin.command: "incus cluster enable {{ incus_cluster_member_name }}"
+  when:
+    - incus_cluster_enabled
+    - _incus_is_bootstrap
+    - not _incus_is_member
   changed_when: true
 
 - name: Ensure a profile exists per lab VLAN
   become: true
-  ansible.builtin.command:
-    cmd: "incus profile create {{ item.name }}"
+  ansible.builtin.command: "incus profile create {{ item.name }}"
   register: _incus_profile
   changed_when: _incus_profile.rc == 0
   failed_when: _incus_profile.rc != 0 and 'already exists' not in _incus_profile.stderr
   loop: "{{ incus_networks }}"
+  when: _incus_is_bootstrap
 
 - name: Give each VLAN profile a bridged NIC
   become: true
-  ansible.builtin.command:
-    cmd: "incus profile device add {{ item.name }} eth0 nic nictype=bridged parent={{ item.bridge }} name=eth0"
+  ansible.builtin.command: "incus profile device add {{ item.name }} eth0 nic nictype=bridged parent={{ item.bridge }} name=eth0"
   register: _incus_profile_nic
   changed_when: _incus_profile_nic.rc == 0
   failed_when: _incus_profile_nic.rc != 0 and 'already exists' not in _incus_profile_nic.stderr
   loop: "{{ incus_networks }}"
+  when: _incus_is_bootstrap
+
+# --- Joining members ---
+# The token is single-use and minted on the bootstrap, so only mint it when this
+# host still needs to join.
+- name: Mint a join token on the bootstrap member
+  become: true
+  ansible.builtin.command: "incus cluster add {{ incus_cluster_member_name }}"
+  delegate_to: "{{ incus_cluster_bootstrap_host }}"
+  register: _incus_join_token
+  when:
+    - incus_cluster_enabled
+    - not _incus_is_bootstrap
+    - not _incus_is_member
+  changed_when: true
+
+- name: Join the cluster
+  become: true
+  ansible.builtin.command:
+    cmd: incus admin init --preseed
+    stdin: "{{ lookup('template', 'incus-join.yml.j2') }}"
+  when:
+    - incus_cluster_enabled
+    - not _incus_is_bootstrap
+    - not _incus_is_member
+  changed_when: true

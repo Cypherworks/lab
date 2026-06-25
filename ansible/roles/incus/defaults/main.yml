@@ -31,3 +31,13 @@ incus_networks:
   - name: services
     vlan: 30
     bridge: br30
+
+# Clustering for a single management plane across the nodes. The bootstrap member
+# converts in place (incus cluster enable); the rest join with a single-use token
+# minted on the bootstrap. Set incus_cluster_bootstrap_host to the bootstrap's
+# inventory_hostname in inventory (required when clustering). Storage stays local
+# per member — the cluster needs no shared storage.
+incus_cluster_enabled: true
+incus_cluster_bootstrap_host: ""
+incus_cluster_member_name: "{{ inventory_hostname }}"
+incus_cluster_address: "{{ ansible_default_ipv4.address }}"
