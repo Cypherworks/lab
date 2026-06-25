@@ -66,10 +66,12 @@ autoinstall:
     layout: gb
   apt:
     geoip: false
-    preserve_sources_list: false
-    primary:
-      - arches: [default]
-        uri: "http://archive.ubuntu.com/ubuntu"
+    # The live installer's resolver is a loopback that's dead inside the target
+    # chroot, so in-target apt-get update can't resolve the mirror — and there's
+    # no autoinstall hook that runs in the target before that step to fix it.
+    # Make it non-fatal: fall back to an offline install from the ISO pool. The
+    # box still comes up; base + unattended_upgrades update it post-boot (real DNS).
+    fallback: offline-install
   identity:
     hostname: lab-node
     username: ${USERNAME}
