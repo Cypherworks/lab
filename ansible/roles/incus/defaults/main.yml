@@ -19,8 +19,10 @@ incus_storage_size: 120g
 incus_https_address: "[::]:8443"
 
 # Host NIC that carries the tagged lab VLANs (a trunk port). Per-VLAN bridges are
-# built on top of it so instances sit directly on lab VLANs, not behind NAT.
-incus_uplink_interface: lab0
+# built on top of it. Defaults to the interface holding the default route: base
+# matches the NIC by glob but doesn't rename it, so the real kernel name (e.g.
+# enp0s31f6) is what the VLAN link needs, not the logical "lab0". Override per host.
+incus_uplink_interface: "{{ ansible_default_ipv4.interface }}"
 
 # Lab VLANs exposed to instances. Each entry renders <uplink>.<vlan> -> <bridge>
 # in netplan and an Incus profile with a bridged NIC on that bridge. The host
