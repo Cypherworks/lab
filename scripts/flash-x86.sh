@@ -6,8 +6,8 @@
 #
 # Per-host identity is NOT baked in — it comes from a DHCP reservation (MAC -> IP,
 # in terraform/unifi) plus the base role (hostname + permanent static netplan).
-# So the same USB does every node; DHCP also makes the installer wait for the
-# link to actually forward before apt runs (no configure_apt race on slow ports).
+# So the same USB does every node. The autoinstall mirrors the proven ndhd-packer
+# Proxmox build (clean config, DHCP, no apt/DNS workarounds).
 #
 # macOS only. Needs xorriso (`brew install xorriso`). --device is destructive.
 #
@@ -53,23 +53,27 @@ xorriso -osirrox on -indev "$ISO" -extract / "$WORK" 2>/dev/null
 chmod -R u+w "$WORK"
 
 # Generic NoCloud seed (read by the installer at /cdrom/nocloud/). No network
-# section -> Subiquity uses DHCP and waits for it before apt. No hostname/IP:
-# those come from the DHCP reservation + the base role.
+# section -> DHCP. No hostname/IP here: those come from the DHCP reservation +
+# the base role. Identical shape to the proven Proxmox autoinstall.
 mkdir -p "$WORK/nocloud"
 : > "$WORK/nocloud/meta-data"
 cat > "$WORK/nocloud/user-data" <<EOF
 #cloud-config
 autoinstall:
   version: 1
+  early-commands:
+    # Tear down leftover LVM/RAID/swap from previous install attempts so curtin's
+    # storage stage can wipe the target disk. The install USB isn't LVM, untouched.
+    - "bash /cdrom/nocloud/wipe-lvm.sh || true"
   locale: en_GB.UTF-8
   keyboard:
     layout: gb
   apt:
     geoip: false
-    preserve_sources_list: false
-    primary:
-      - arches: [default]
-        uri: "http://archive.ubuntu.com/ubuntu"
+    # The lab DNS doesn't propagate into curtin's target resolv.conf, so the
+    # network mirror can't resolve in-target. With /cdrom now readable (dir-mode
+    # fix below), fall back to installing from the disc's offline pool instead.
+    fallback: offline-install
   identity:
     hostname: lab-node
     username: ${USERNAME}
@@ -87,7 +91,18 @@ autoinstall:
     - "echo '${USERNAME} ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/90-${USERNAME}"
     - chmod 0440 /target/etc/sudoers.d/90-${USERNAME}
     - curtin in-target --target=/target -- passwd -l ${USERNAME}
+  shutdown: reboot
 EOF
+
+# Pre-storage wipe of leftover LVM/RAID so curtin can reinstall over old attempts.
+cat > "$WORK/nocloud/wipe-lvm.sh" <<'WIPE'
+#!/bin/bash
+swapoff -a 2>/dev/null || true
+vgchange -an 2>/dev/null || true
+for vg in $(vgs --noheadings -o vg_name 2>/dev/null); do vgremove -f -y "$vg" 2>/dev/null || true; done
+for pv in $(pvs --noheadings -o pv_name 2>/dev/null); do pvremove -ff -y "$pv" 2>/dev/null || true; done
+mdadm --stop --scan 2>/dev/null || true
+WIPE
 
 # Boot the autoinstall entry immediately, unattended.
 GRUB="$WORK/boot/grub/grub.cfg"
@@ -101,9 +116,12 @@ sed -i '' "s#^[0-9a-f]*  ./boot/grub/grub.cfg\$#${NEW_MD5}  ./boot/grub/grub.cfg
 
 echo "Repacking ..."
 # Reuse the source ISO's boot layout verbatim (BIOS+UEFI). Flatten to one line so
-# eval doesn't treat the per-option newlines as command separators.
+# eval doesn't treat the per-option newlines as command separators. -dir-mode 0755
+# is critical: mktemp makes the work dir 0700, which the repack bakes onto the ISO
+# root, leaving /cdrom unreadable by the _apt user so the in-target offline apt pool
+# fails and the install falls back to the network (LP #1963725).
 FLAGS=$(xorriso -indev "$ISO" -report_el_torito as_mkisofs 2>/dev/null | tr '\n' ' ')
-if ! eval xorriso -as mkisofs "$FLAGS" -o "$OUT" "$WORK" >"$WORK.log" 2>&1; then
+if ! eval xorriso -as mkisofs "$FLAGS" -dir-mode 0755 -o "$OUT" "$WORK" >"$WORK.log" 2>&1; then
   tail -20 "$WORK.log"; die "repack failed"
 fi
 
