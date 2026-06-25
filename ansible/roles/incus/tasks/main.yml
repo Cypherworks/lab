@@ -67,6 +67,17 @@
     - incus_storage_pool not in _incus_storage.stdout
   changed_when: true
 
+# Clustering uses core.https_address as the member's cluster address and rejects a
+# wildcard, so bind it to this host's real IP before enabling.
+- name: Bind the bootstrap API to a specific address
+  become: true
+  ansible.builtin.command: "incus config set core.https_address {{ incus_cluster_address }}:8443"
+  when:
+    - incus_cluster_enabled
+    - _incus_is_bootstrap
+    - not _incus_is_member
+  changed_when: true
+
 - name: Enable clustering on the bootstrap member
   become: true
   ansible.builtin.command: "incus cluster enable {{ incus_cluster_member_name }}"
