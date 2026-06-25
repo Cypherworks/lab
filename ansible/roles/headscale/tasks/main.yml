@@ -1,0 +1,29 @@
+---
+- name: Download the pinned Headscale package
+  become: true
+  ansible.builtin.get_url:
+    url: "{{ headscale_deb_url }}"
+    dest: "/tmp/headscale_{{ headscale_version }}.deb"
+    mode: "0644"
+
+- name: Install Headscale
+  become: true
+  ansible.builtin.apt:
+    deb: "/tmp/headscale_{{ headscale_version }}.deb"
+
+- name: Render the Headscale config
+  become: true
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: /etc/headscale/config.yaml
+    owner: root
+    group: headscale
+    mode: "0640"
+  notify: Restart headscale
+
+- name: Enable and start Headscale
+  become: true
+  ansible.builtin.systemd_service:
+    name: headscale
+    enabled: true
+    state: started

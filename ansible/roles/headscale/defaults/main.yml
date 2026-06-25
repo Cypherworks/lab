@@ -1,0 +1,22 @@
+---
+# Pinned ≥ 0.26 — that's where HA subnet-router failover was fixed (LP #2228).
+headscale_version: "0.26.1"
+headscale_arch: arm64
+headscale_release_base: "https://github.com/juanfont/headscale/releases/download/v{{ headscale_version }}"
+headscale_deb_url: "{{ headscale_release_base }}/headscale_{{ headscale_version }}_linux_{{ headscale_arch }}.deb"
+
+headscale_domain: headscale.cypherworks.co.uk
+# MagicDNS suffix — deliberately a tailnet-only subdomain so it never clashes with
+# the real Route53 zone.
+headscale_base_domain: ts.cypherworks.co.uk
+headscale_acme_email: lloyd@cypherworks.co.uk
+
+# OIDC against Authentik — off until Authentik + the EC2 passthrough exist; then
+# flip on and devices enrol with MFA at the IdP. Until then, short-lived pre-auth
+# keys (issued by hand) bootstrap the routers + the laptop.
+headscale_oidc_enabled: false
+headscale_oidc_issuer: ""
+headscale_oidc_client_id: ""
+headscale_oidc_client_secret: ""
+# Only members of this Authentik group may obtain the lab routes.
+headscale_oidc_allowed_groups: ["lab-admins"]
