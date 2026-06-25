@@ -38,3 +38,6 @@
     group: root
     mode: "0600"
   notify: Apply netplan
+  # Hosts without a lab static IP (e.g. the cloud-hosted Headscale EC2) keep their
+  # platform-assigned networking.
+  when: lab_ip is defined
