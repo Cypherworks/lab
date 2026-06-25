@@ -16,7 +16,11 @@
       - "postgresql-{{ patroni_postgres_version }}"
       - "postgresql-client-{{ patroni_postgres_version }}"
       - python3-venv
+      - python3-pip
       - python3-psycopg2
+      # The pip + community.postgresql modules import these from the system Python;
+      # the minimal Debian cloud image doesn't ship them.
+      - python3-packaging
     state: present
     update_cache: true
 
