@@ -17,3 +17,14 @@ network:
       nameservers:
         addresses: {{ lab_nameservers | to_json }}
         search: ["{{ lab_search }}"]
+{% if lab_vlans | default([]) | length > 0 %}
+  vlans:
+{% for v in lab_vlans %}
+    {{ v.name }}:
+      id: {{ v.id }}
+      link: {{ v.link | default(lab_interface) }}
+      dhcp4: false
+      dhcp6: false
+      addresses: {{ v.addresses | to_json }}
+{% endfor %}
+{% endif %}

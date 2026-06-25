@@ -1,0 +1,131 @@
+---
+- name: Add the PGDG repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: pgdg
+    types: [deb]
+    uris: http://apt.postgresql.org/pub/repos/apt
+    suites: "{{ ansible_distribution_release }}-pgdg"
+    components: [main]
+    signed_by: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+
+- name: Install PostgreSQL and Patroni prerequisites
+  become: true
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ patroni_postgres_version }}"
+      - "postgresql-client-{{ patroni_postgres_version }}"
+      - python3-venv
+      - python3-psycopg2
+    state: present
+    update_cache: true
+
+- name: Install Patroni (etcd3) into a venv
+  become: true
+  ansible.builtin.pip:
+    name:
+      - "patroni[etcd3]=={{ patroni_version }}"
+      - psycopg2-binary
+    virtualenv: "{{ patroni_venv }}"
+    virtualenv_command: python3 -m venv
+
+- name: Create the Patroni config directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ patroni_conf_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+# Guarded by the marker so a re-run can NEVER drop the cluster Patroni has since
+# bootstrapped at the same data_dir. The marker is created in the same step.
+- name: Remove the apt-created default cluster so Patroni bootstraps its own
+  become: true
+  ansible.builtin.shell:
+    cmd: >-
+      pg_dropcluster --stop {{ patroni_postgres_version }} main || true;
+      touch {{ patroni_bootstrap_marker }}
+    creates: "{{ patroni_bootstrap_marker }}"
+
+- name: Stop and mask the distro postgresql service (Patroni owns Postgres)
+  become: true
+  ansible.builtin.systemd_service:
+    name: postgresql
+    state: stopped
+    enabled: false
+    masked: true
+
+- name: Render the Patroni config
+  become: true
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: "{{ patroni_config_file }}"
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  notify: Restart patroni
+
+- name: Install the Patroni systemd unit
+  become: true
+  ansible.builtin.template:
+    src: patroni.service.j2
+    dest: /etc/systemd/system/patroni.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart patroni
+
+- name: Enable and start Patroni
+  become: true
+  ansible.builtin.systemd_service:
+    name: patroni
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for the cluster to elect a leader
+  run_once: true
+  ansible.builtin.uri:
+    url: "http://{{ patroni_this_ip }}:{{ patroni_rest_port }}/cluster"
+    return_content: true
+  register: patroni_cluster
+  retries: 30
+  delay: 5
+  until: >-
+    patroni_cluster.json is defined and
+    (patroni_cluster.json.members | default([]) | selectattr('role', 'equalto', 'leader') | list | length) > 0
+  failed_when: false
+  changed_when: false
+
+- name: Identify the current leader address
+  run_once: true
+  ansible.builtin.set_fact:
+    patroni_leader_ip: "{{ patroni_cluster.json.members | selectattr('role', 'equalto', 'leader') | map(attribute='host') | first }}"
+  when:
+    - patroni_cluster.json is defined
+    - (patroni_cluster.json.members | default([]) | selectattr('role', 'equalto', 'leader') | list | length) > 0
+
+- name: Create the Authentik database role (leader only, idempotent)
+  run_once: true
+  community.postgresql.postgresql_user:
+    name: "{{ patroni_app_user }}"
+    password: "{{ patroni_app_password }}"
+    login_host: "{{ patroni_leader_ip }}"
+    login_user: postgres
+    login_password: "{{ patroni_superuser_password }}"
+    port: 5432
+  when: patroni_leader_ip is defined
+
+- name: Create the Authentik database (leader only, idempotent)
+  run_once: true
+  community.postgresql.postgresql_db:
+    name: "{{ patroni_app_db }}"
+    owner: "{{ patroni_app_user }}"
+    login_host: "{{ patroni_leader_ip }}"
+    login_user: postgres
+    login_password: "{{ patroni_superuser_password }}"
+    port: 5432
+  when: patroni_leader_ip is defined

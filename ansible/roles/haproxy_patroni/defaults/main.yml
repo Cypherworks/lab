@@ -1,0 +1,11 @@
+---
+# Local HAProxy on each Authentik app node, routing 127.0.0.1:5000 to the current
+# Patroni primary via the REST /primary healthcheck (200 only on the leader).
+
+haproxy_patroni_bind: "127.0.0.1:5000"
+haproxy_patroni_rest_port: 8008
+
+# Required from inventory (no default): the Patroni members, e.g.
+#   patroni_members:
+#     - { name: pg-tc1, ip: 10.200.30.33 }
+#     - { name: pg-tc2, ip: 10.200.30.34 }

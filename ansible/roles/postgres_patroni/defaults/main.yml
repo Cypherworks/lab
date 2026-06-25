@@ -1,0 +1,33 @@
+---
+# PostgreSQL 16 (PGDG) managed by Patroni, with automatic failover via the etcd
+# quorum. Patroni owns Postgres — the distro postgresql service is masked.
+
+patroni_scope: authentik
+patroni_postgres_version: "16"
+patroni_data_dir: "/var/lib/postgresql/{{ patroni_postgres_version }}/main"
+patroni_bin_dir: "/usr/lib/postgresql/{{ patroni_postgres_version }}/bin"
+patroni_conf_dir: /etc/patroni
+patroni_config_file: "{{ patroni_conf_dir }}/patroni.yml"
+patroni_bootstrap_marker: "{{ patroni_conf_dir }}/.default-cluster-removed"
+
+patroni_venv: /opt/patroni
+patroni_version: "3.3.2"
+
+patroni_rest_user: patroni
+patroni_rest_port: 8008
+
+# Failover timing — ttl must be >= loop_wait + 2*retry_timeout.
+patroni_ttl: 30
+patroni_loop_wait: 10
+patroni_retry_timeout: 10
+patroni_max_connections: 200
+
+patroni_app_db: authentik
+patroni_app_user: authentik
+
+# This node's VLAN-30 address (single-homed containers self-report correctly).
+patroni_this_ip: "{{ ansible_default_ipv4.address }}"
+
+# Required from inventory: patroni_etcd_hosts. SOPS secrets:
+# patroni_superuser_password, patroni_replication_password, patroni_rest_password,
+# patroni_app_password.

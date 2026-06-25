@@ -1,0 +1,11 @@
+{# Managed by redis_sentinel. Written once (force:false) — redis rewrites
+   replicaof itself after a Sentinel-driven failover, so we don't re-assert it. #}
+bind 0.0.0.0
+port 6379
+requirepass {{ redis_password }}
+masterauth {{ redis_password }}
+appendonly yes
+dir {{ redis_data_dir }}
+{% if redis_this_ip != redis_master_ip %}
+replicaof {{ redis_master_ip }} 6379
+{% endif %}

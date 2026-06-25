@@ -1,0 +1,55 @@
+---
+- name: Install Redis server (data nodes only)
+  become: true
+  ansible.builtin.apt:
+    name: redis-server
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: "'authentik_redis' in group_names"
+
+- name: Install Redis Sentinel (all quorum members)
+  become: true
+  ansible.builtin.apt:
+    name: redis-sentinel
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Render redis.conf (initial bootstrap only)
+  become: true
+  ansible.builtin.template:
+    src: redis.conf.j2
+    dest: "{{ redis_conf_dir }}/redis.conf"
+    owner: redis
+    group: redis
+    mode: "0640"
+    force: false
+  when: "'authentik_redis' in group_names"
+  notify: Restart redis-server
+
+- name: Render sentinel.conf (initial bootstrap only)
+  become: true
+  ansible.builtin.template:
+    src: sentinel.conf.j2
+    dest: "{{ redis_conf_dir }}/sentinel.conf"
+    owner: redis
+    group: redis
+    mode: "0640"
+    force: false
+  notify: Restart redis-sentinel
+
+- name: Enable and start Redis server (data nodes)
+  become: true
+  ansible.builtin.systemd_service:
+    name: redis-server
+    enabled: true
+    state: started
+  when: "'authentik_redis' in group_names"
+
+- name: Enable and start Redis Sentinel
+  become: true
+  ansible.builtin.systemd_service:
+    name: redis-sentinel
+    enabled: true
+    state: started

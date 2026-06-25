@@ -1,0 +1,49 @@
+{# Patroni config. Managed by postgres_patroni. Automatic failover via etcd3. #}
+scope: {{ patroni_scope }}
+name: {{ inventory_hostname }}
+
+restapi:
+  listen: {{ patroni_this_ip }}:{{ patroni_rest_port }}
+  connect_address: {{ patroni_this_ip }}:{{ patroni_rest_port }}
+  authentication:
+    username: {{ patroni_rest_user }}
+    password: "{{ patroni_rest_password }}"
+
+etcd3:
+  hosts: {{ patroni_etcd_hosts }}
+
+bootstrap:
+  dcs:
+    ttl: {{ patroni_ttl }}
+    loop_wait: {{ patroni_loop_wait }}
+    retry_timeout: {{ patroni_retry_timeout }}
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - host replication replicator 10.200.0.0/16 md5
+    - host all all 10.200.0.0/16 md5
+    - local all all trust
+
+postgresql:
+  listen: {{ patroni_this_ip }}:5432
+  connect_address: {{ patroni_this_ip }}:5432
+  data_dir: {{ patroni_data_dir }}
+  bin_dir: {{ patroni_bin_dir }}
+  authentication:
+    superuser:
+      username: postgres
+      password: "{{ patroni_superuser_password }}"
+    replication:
+      username: replicator
+      password: "{{ patroni_replication_password }}"
+  parameters:
+    max_connections: {{ patroni_max_connections }}

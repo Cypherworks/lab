@@ -1,0 +1,22 @@
+---
+# Redis + Sentinel for the Authentik HA data tier. Redis (master/replica) runs on
+# authentik_redis members; Sentinel runs on every targeted host including the Pi
+# witness (Sentinel-only there). Master/replica is decided by comparing this
+# host's address to redis_master_ip — no static role assignment.
+
+redis_conf_dir: /etc/redis
+redis_data_dir: /var/lib/redis
+
+redis_master_name: authentik
+redis_sentinel_quorum: 2
+redis_sentinel_down_after_ms: 5000
+redis_sentinel_failover_timeout_ms: 15000
+
+# This host's Redis address (single-homed containers self-report correctly).
+redis_this_ip: "{{ ansible_default_ipv4.address }}"
+# Sentinel announce address — the multi-homed Pi witness overrides this with its
+# VLAN-30 foot via redis_sentinel_announce_ip (host_var); containers use their own.
+redis_announce_ip: "{{ redis_sentinel_announce_ip | default(ansible_default_ipv4.address) }}"
+
+# Required from inventory (no defaults): redis_master_ip, and the SOPS secret
+# redis_password.

@@ -18,6 +18,12 @@ lab_nameservers:
   - "{{ dns_vip }}"
 lab_search: "{{ internal_subdomain }}"
 
+# Optional tagged VLAN sub-interfaces (no gateway — extra feet only). Used by the
+# Pi witness to gain a VLAN-30 address for the Authentik etcd/Sentinel quorum
+# without touching its VLAN-20 DNS interface. Each entry: name, id, addresses,
+# and an optional link (defaults to lab_interface).
+lab_vlans: []
+
 # SSH public keys authorised for the ansible user (config, not secret). Supplied
 # by the consuming inventory via ops_ssh_authorized_keys.
 ops_ssh_authorized_keys: []

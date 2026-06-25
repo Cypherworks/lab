@@ -1,0 +1,11 @@
+{# Managed by redis_sentinel. Written once (force:false) — Sentinel rewrites this
+   file to persist the discovered master/replicas; re-asserting would clobber it. #}
+port 26379
+bind 0.0.0.0
+sentinel announce-ip {{ redis_announce_ip }}
+sentinel monitor {{ redis_master_name }} {{ redis_master_ip }} 6379 {{ redis_sentinel_quorum }}
+sentinel auth-pass {{ redis_master_name }} {{ redis_password }}
+sentinel down-after-milliseconds {{ redis_master_name }} {{ redis_sentinel_down_after_ms }}
+sentinel failover-timeout {{ redis_master_name }} {{ redis_sentinel_failover_timeout_ms }}
+sentinel parallel-syncs {{ redis_master_name }} 1
+dir {{ redis_data_dir }}

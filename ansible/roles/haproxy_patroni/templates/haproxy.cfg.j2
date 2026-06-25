@@ -1,0 +1,22 @@
+{# Managed by haproxy_patroni. Routes to the current Patroni leader. #}
+global
+    maxconn 200
+    log /dev/log local0
+
+defaults
+    log global
+    mode tcp
+    retries 2
+    timeout client 30m
+    timeout connect 4s
+    timeout server 30m
+    timeout check 5s
+
+listen postgres-primary
+    bind {{ haproxy_patroni_bind }}
+    option httpchk OPTIONS /primary
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+{% for m in patroni_members %}
+    server {{ m.name }} {{ m.ip }}:5432 maxconn 100 check port {{ haproxy_patroni_rest_port }}
+{% endfor %}

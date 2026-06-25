@@ -1,0 +1,12 @@
+{# etcd member config. Managed by the etcd role. Bind IP is this host's entry in
+   etcd_members (so pi-dns-1 binds its VLAN-30 foot, not its VLAN-20 DNS IP). #}
+name: {{ inventory_hostname }}
+data-dir: {{ etcd_data_dir }}
+listen-peer-urls: http://{{ etcd_bind_ip }}:2380
+listen-client-urls: http://{{ etcd_bind_ip }}:2379,http://127.0.0.1:2379
+initial-advertise-peer-urls: http://{{ etcd_bind_ip }}:2380
+advertise-client-urls: http://{{ etcd_bind_ip }}:2379
+initial-cluster: {% for m in etcd_members %}{{ m.name }}=http://{{ m.ip }}:2380{% if not loop.last %},{% endif %}{% endfor %}
+
+initial-cluster-token: {{ etcd_cluster_token }}
+initial-cluster-state: {{ etcd_initial_cluster_state }}
