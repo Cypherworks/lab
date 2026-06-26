@@ -1,11 +1,23 @@
 ---
-- name: Install keepalived
+- name: Install keepalived and dig (for the health check)
   become: true
   ansible.builtin.apt:
-    name: keepalived
+    name:
+      - keepalived
+      - dnsutils
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+- name: Deploy the keepalived health-check script
+  become: true
+  ansible.builtin.template:
+    src: check-dns.sh.j2
+    dest: /etc/keepalived/check-dns.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart keepalived
 
 - name: Render keepalived config
   become: true

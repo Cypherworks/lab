@@ -11,6 +11,11 @@ keepalived_priority: 100
 
 keepalived_auth_pass: "" # shared VRRP secret (from SOPS)
 
-# Health check: drop priority if the DNS frontend isn't running.
-keepalived_check_command: "/usr/bin/systemctl is-active --quiet blocky"
+# Health check: a real DNS query against the local resolver, so a HUNG blocky
+# (not just a stopped service) also yields the VIP. When it fails, |weight| is
+# subtracted from this node's priority.
+keepalived_check_command: "/etc/keepalived/check-dns.sh"
+# weight MUST exceed the MASTER↔BACKUP priority gap, or a failed master only ties
+# the backup and keeps the VIP (the zombie-master bug). e.g. 150 vs 100 → < -50.
+# The deploy sets the real value to match its priorities.
 keepalived_check_weight: -50
