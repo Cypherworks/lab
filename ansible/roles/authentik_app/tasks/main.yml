@@ -43,6 +43,29 @@
     # (the blueprint reads creds via !Env).
     mode: "0755"
 
+- name: Create the Authentik media directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ authentik_media_dir }}/public"
+    state: directory
+    owner: root
+    group: root
+    # Bind-mounted at /media; the container's non-root user must read served assets.
+    mode: "0755"
+
+- name: Deploy branding assets into the media dir
+  become: true
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ authentik_media_dir }}/public/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ authentik_branding_files }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Restart authentik
+
 # authentik runs blueprint discovery at worker startup, not via a live file-watch,
 # so a re-rendered blueprint is only picked up on restart — hence the notify.
 # Add an integration by dropping templates/blueprints/<name>.yaml.j2 and adding

@@ -16,6 +16,7 @@ services:
       - "9000:9000"
     volumes:
       - {{ authentik_blueprints_dir }}:/blueprints/custom:ro
+      - {{ authentik_media_dir }}:/media
 
   worker:
     image: {{ authentik_image }}
@@ -24,5 +25,6 @@ services:
     env_file: ./.env
     volumes:
       - {{ authentik_blueprints_dir }}:/blueprints/custom:ro
+      - {{ authentik_media_dir }}:/media
     # No docker.sock mount: embedded-docker outpost management is deliberately
     # off (outposts are deployed as their own Incus services, not via this socket).

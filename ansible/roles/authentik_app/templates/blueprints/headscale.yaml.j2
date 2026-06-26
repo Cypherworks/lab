@@ -6,14 +6,16 @@ version: 1
 metadata:
   name: lab - headscale oidc
 entries:
-  # The group whose members are allowed onto the lab routes (Headscale's
-  # allowed_groups matches the groups claim against this).
+  # Per-app access group. Membership of THIS group grants Headscale: it gates the
+  # application (policy binding below) AND is the OIDC allowed_groups (set in the
+  # deploy to match). Default-deny — non-members can't see or use the app. Grant a
+  # user the overlay by adding them to headscale-users.
   - model: authentik_core.group
-    id: group-lab-admins
+    id: group-headscale-users
     identifiers:
-      name: lab-admins
+      name: headscale-users
     attrs:
-      name: lab-admins
+      name: headscale-users
 
   - model: authentik_providers_oauth2.oauth2provider
     id: provider-headscale
@@ -50,3 +52,13 @@ entries:
       slug: headscale
       provider: !KeyOf provider-headscale
       policy_engine_mode: any
+
+  # Restrict the application to headscale-users: only members see/launch it.
+  # With one group binding under policy_engine_mode "any", everyone else is denied.
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-headscale
+      group: !KeyOf group-headscale-users
+      order: 0
+    attrs:
+      enabled: true

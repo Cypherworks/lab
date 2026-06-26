@@ -93,6 +93,25 @@ entries:
       placeholder_expression: false
       order: 4
 
+  # Password-complexity policy, bound to the prompt below. Same name as in the
+  # recovery blueprint (idempotent) so each flow is self-contained on first apply.
+  - identifiers:
+      name: lab-password-policy
+    id: password-policy
+    model: authentik_policies_password.passwordpolicy
+    attrs:
+      name: lab-password-policy
+      password_field: password
+      length_min: 14
+      amount_uppercase: 1
+      amount_lowercase: 1
+      amount_digits: 1
+      amount_symbols: 1
+      check_zxcvbn: true
+      error_message: >-
+        Password must be at least 14 characters and include upper- and lower-case
+        letters, a digit, a symbol, and not be a weak/common password.
+
   - identifiers:
       name: lab-invitation-prompt
     id: prompt-stage
@@ -104,6 +123,8 @@ entries:
         - !KeyOf prompt-field-email
         - !KeyOf prompt-field-password
         - !KeyOf prompt-field-password-repeat
+      validation_policies:
+        - !KeyOf password-policy
 
   - identifiers:
       name: lab-invitation-user-write

@@ -28,6 +28,15 @@ authentik_redis_port: 6379
 # a template under templates/blueprints/ and a render task (see the headscale one).
 authentik_blueprints_dir: "{{ authentik_compose_dir }}/blueprints"
 
+# Media dir mounted at /media in the containers (authentik serves uploaded assets
+# from there). Branding files are copied into <dir>/public and referenced by the
+# brand as /media/public/<name>. The file list + the brand logo/favicon paths are
+# site data — set in the deploy; empty here leaves authentik's stock branding.
+authentik_media_dir: "{{ authentik_compose_dir }}/media"
+authentik_branding_files: []
+authentik_branding_logo_path: ""
+authentik_branding_favicon_path: ""
+
 # Headscale OIDC: the blueprint reads the client id/secret via !Env (one source of
 # truth that the headscale role's OIDC config also reads from SOPS). The redirect
 # URI is the deployment's Headscale callback — supplied by the deploy, not defaulted
