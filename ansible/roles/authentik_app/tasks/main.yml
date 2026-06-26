@@ -31,6 +31,27 @@
     group: root
     mode: "0750"
 
+- name: Create the blueprints directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ authentik_blueprints_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+# authentik file-watches the mounted dir and reconciles, so no restart is needed
+# for a blueprint change once the volume's in place (the compose change below
+# triggers the first recreate that mounts it).
+- name: Render the Headscale OIDC blueprint
+  become: true
+  ansible.builtin.template:
+    src: blueprints/headscale.yaml.j2
+    dest: "{{ authentik_blueprints_dir }}/headscale.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+
 - name: Render the Authentik env
   become: true
   ansible.builtin.template:
