@@ -16,7 +16,18 @@
     update_cache: true
     cache_valid_time: 3600
 
-- name: Render redis.conf (initial bootstrap only)
+# Write once, overwriting the stock Debian config, then leave it alone — Redis and
+# Sentinel both rewrite their own configs at runtime (replicaof, discovered peers)
+# after a Sentinel failover, so re-asserting would fight them. The marker makes
+# this first-boot-only; force:false silently skipped because the package ships a
+# default at this path.
+- name: Check whether Redis/Sentinel has been bootstrapped
+  become: true
+  ansible.builtin.stat:
+    path: "{{ redis_conf_dir }}/.lab-configured"
+  register: redis_lab_marker
+
+- name: Render redis.conf (first bootstrap only)
   become: true
   ansible.builtin.template:
     src: redis.conf.j2
@@ -24,11 +35,12 @@
     owner: redis
     group: redis
     mode: "0640"
-    force: false
-  when: "'authentik_redis' in group_names"
+  when:
+    - "'authentik_redis' in group_names"
+    - not redis_lab_marker.stat.exists
   notify: Restart redis-server
 
-- name: Render sentinel.conf (initial bootstrap only)
+- name: Render sentinel.conf (first bootstrap only)
   become: true
   ansible.builtin.template:
     src: sentinel.conf.j2
@@ -36,8 +48,18 @@
     owner: redis
     group: redis
     mode: "0640"
-    force: false
+  when: not redis_lab_marker.stat.exists
   notify: Restart redis-sentinel
+
+- name: Mark Redis/Sentinel bootstrapped
+  become: true
+  ansible.builtin.file:
+    path: "{{ redis_conf_dir }}/.lab-configured"
+    state: touch
+    owner: redis
+    group: redis
+    mode: "0640"
+  when: not redis_lab_marker.stat.exists
 
 - name: Enable and start Redis server (data nodes)
   become: true
