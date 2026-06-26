@@ -29,6 +29,9 @@
 {% for header, value in (route.header_up | default({})).items() %}
 			header_up {{ header }} "{{ value }}"
 {% endfor %}
+{% for header in (route.header_up_remove | default([])) %}
+			header_up -{{ header }}
+{% endfor %}
 		}
 	}
 {% endfor %}
