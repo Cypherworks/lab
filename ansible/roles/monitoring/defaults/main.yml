@@ -17,17 +17,31 @@ monitoring_alertmanager_image: "prom/alertmanager:v0.27.0"
 monitoring_grafana_image: "grafana/grafana:11.2.0"
 monitoring_ntfy_image: "binwiederhier/ntfy:v2.11.0"
 monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
+monitoring_blackbox_image: "prom/blackbox-exporter:v0.25.0"
+monitoring_snmp_exporter_image: "prom/snmp-exporter:v0.26.0"
 
 monitoring_retention: "30d"          # modest, given constrained storage
 monitoring_scrape_interval: "30s"
 
-# Scrape targets — host:port lists supplied by the deploy from inventory (no IPs
-# in the role). An empty list omits that job.
+# Scrape targets supplied by the deploy from inventory (no IPs in the role). Each
+# entry is a {target: "ip:port", instance: "hostname"} mapping so the scraped series
+# carry the real hostname as their `instance` label (dashboards read hostnames, not
+# IPs). An empty list omits that job.
 monitoring_node_targets: []          # node_exporter on the bare-metal hosts (:9100)
 monitoring_blocky_targets: []        # blocky /metrics (:4000)
 monitoring_patroni_targets: []       # Patroni REST /metrics (:8008)
 monitoring_etcd_targets: []          # etcd /metrics (:2379)
 monitoring_redis_targets: []         # redis endpoints (:6379) via redis_exporter
+
+# blackbox_exporter https probes (cert expiry). Plain list of https URLs; the URL
+# becomes the `instance` label (blackbox standard pattern).
+monitoring_blackbox_targets: []      # e.g. ["https://grafana.cypherworks.co.uk"]
+
+# snmp_exporter targets — the Synology NAS over SNMPv3. {target: "ip:161", instance}.
+monitoring_snmp_targets: []
+
+# Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
+monitoring_headscale_target: ""
 
 # Alert thresholds — tunable from the deploy.
 monitoring_temp_warn_celsius: 75
@@ -57,3 +71,11 @@ monitoring_grafana_oidc_client_secret: ""
 monitoring_redis_password: ""
 monitoring_ntfy_alertmanager_password: ""    # alertmanager ntfy user (publish to the topic)
 monitoring_ntfy_user_password: ""            # human ntfy user (subscribe)
+
+# SNMPv3 (authPriv) creds for the Synology NAS — from SOPS (deploy). The DSM side
+# uses SHA auth + AES privacy (set explicitly on both ends).
+monitoring_snmp_v3_username: ""
+monitoring_snmp_v3_auth_password: ""         # SNMPv3 auth password
+monitoring_snmp_v3_priv_password: ""         # SNMPv3 privacy (encryption) password
+monitoring_snmp_v3_auth_protocol: "SHA"
+monitoring_snmp_v3_priv_protocol: "AES"

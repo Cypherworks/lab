@@ -10,6 +10,11 @@ headscale_domain: headscale.cypherworks.co.uk
 # a local port (e.g. 127.0.0.1:8443) so nginx ssl_preread can front 443 and share
 # it with auth.cypherworks.co.uk. TLS-ALPN-01 still works through raw passthrough.
 headscale_listen_addr: "0.0.0.0:443"
+# Prometheus /metrics bind. Defaults to localhost (no exposure). Override from the
+# deploy to the host's TAILNET IP (e.g. 100.x.y.z:9090) so the monitoring host can
+# scrape it over the overlay — never 0.0.0.0 and never the public interface (the
+# EC2 security group stays closed; the tailnet is the only path in).
+headscale_metrics_listen_addr: "127.0.0.1:9090"
 # MagicDNS suffix — deliberately a tailnet-only subdomain so it never clashes with
 # the real Route53 zone.
 headscale_base_domain: ts.cypherworks.co.uk
