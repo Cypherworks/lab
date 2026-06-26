@@ -8,8 +8,13 @@ The observability stack on one Incus instance (docker compose):
 - **Alertmanager → alertmanager-ntfy → ntfy** — alerts pushed to your phone via a
   self-hosted ntfy (no third party). *The bridge config/image is unverified — see
   the inline NOTE in `am-ntfy.yml.j2` and confirm on apply.*
-- **Grafana** — VictoriaMetrics datasource + a provisioned `Lab Overview`
-  dashboard, SSO via Authentik (the `grafana` blueprint + `grafana-users` group).
+- **Grafana** — VictoriaMetrics datasource + provisioned dashboards, SSO via
+  Authentik (the `grafana` blueprint + `grafana-users` group). Two single-screen
+  1920x1080 no-scroll dashboards (`Lab Overview`, `Lab Services & NAS`), each with
+  the **Front CCTV** strip pinned at the top and tagged `kiosk`. The role creates a
+  **kiosk playlist** (via the Grafana API — the file provisioner can't) that rotates
+  every `kiosk`-tagged dashboard; the hosts block is a single threshold-coloured
+  table (one row per host). The CCTV feed is a placeholder until task #18.
 - **blackbox_exporter** — https probes for TLS cert expiry
   (`probe_ssl_earliest_cert_expiry`). Targets: `monitoring_blackbox_targets`
   (https URLs). Module `https_2xx`.

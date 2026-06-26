@@ -23,6 +23,15 @@ monitoring_snmp_exporter_image: "prom/snmp-exporter:v0.26.0"
 monitoring_retention: "30d"          # modest, given constrained storage
 monitoring_scrape_interval: "30s"
 
+# Kiosk playlist. The kiosk screen auto-rotates through every dashboard tagged
+# `monitoring_kiosk_tag` (so new rotated dashboards join just by carrying the tag).
+# Each is a single-screen 1920x1080 no-scroll layout with the Front CCTV strip
+# pinned at the top. The Grafana file provisioner can't create playlists, so the
+# role creates it via the Grafana API (idempotent).
+monitoring_kiosk_playlist_name: "Lab Kiosk"
+monitoring_kiosk_tag: "kiosk"
+monitoring_kiosk_rotate_interval: "30s"
+
 # Scrape targets supplied by the deploy from inventory (no IPs in the role). Each
 # entry is a {target: "ip:port", instance: "hostname"} mapping so the scraped series
 # carry the real hostname as their `instance` label (dashboards read hostnames, not

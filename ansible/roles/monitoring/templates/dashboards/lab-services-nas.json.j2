@@ -1,0 +1,143 @@
+{% raw %}
+{
+  "uid": "lab-services-nas",
+  "title": "Lab Services & NAS",
+  "tags": ["kiosk"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 90,
+      "type": "text",
+      "title": "Front CCTV",
+      "description": "Pinned top strip — duplicated on every rotated dashboard so it stays visible across the playlist. Placeholder until the go2rtc stream lands (task #18).",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "## Front CCTV\n_Live feed parked — go2rtc stream arrives with task #18. This strip is reserved 16:9 and pinned to the top of every rotated dashboard._"
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Host temperature (°C)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "celsius" } },
+      "targets": [
+        { "refId": "A", "expr": "max by (instance) (node_hwmon_temp_celsius)", "legendFormat": "{{instance}} hwmon" },
+        { "refId": "B", "expr": "max by (instance) (node_thermal_zone_temp)", "legendFormat": "{{instance}} thermal" }
+      ]
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "DNS query rate (q/s)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "qps" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (instance) (rate(blocky_query_total[5m]))", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "DNS block rate (blocked/s)",
+      "description": "blocky_response_total with response_type=\"BLOCKED\". Query rate uses blocky_query_total (no response_type label).",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (instance) (rate(blocky_response_total{response_type=\"BLOCKED\"}[5m]))", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "stat",
+      "title": "NAS system status",
+      "description": "SYNOLOGY-SYSTEM-MIB systemStatus: 1 Normal, 2 Failed.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 15 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "1": { "text": "Normal", "color": "green" }, "2": { "text": "Failed", "color": "red" } } } ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "synology_system_status", "legendFormat": "system", "instant": true }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "NAS disk temps (°C)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "celsius" } },
+      "targets": [
+        { "refId": "A", "expr": "synology_disk_temperature", "legendFormat": "{{diskID}}" }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "NAS storage used (%) — 1h",
+      "description": "raidTotalSize/raidFreeSize from SYNOLOGY-RAID-MIB.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "timeFrom": "1h",
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - synology_raid_free_size / synology_raid_total_size)", "legendFormat": "{{raidName}}" }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "NAS storage used (%) — 12h",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "timeFrom": "12h",
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - synology_raid_free_size / synology_raid_total_size)", "legendFormat": "{{raidName}}" }
+      ]
+    },
+    {
+      "id": 50,
+      "type": "stat",
+      "title": "Headscale up",
+      "description": "Headscale exports NO connected-nodes gauge and NO throughput/byte metric (control plane only; data is peer-to-peer/DERP). Confirmed against hscontrol/metrics.go and issue #2650.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 23 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } } ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "up{job=\"headscale\"}", "legendFormat": "headscale", "instant": true }
+      ]
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Headscale map-response activity (proxy for node sessions)",
+      "description": "Headscale has no connected-nodes/throughput metric. This is rate of map responses sent + sessions ended — a control-plane activity proxy, NOT a node count or bandwidth figure.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 7, "w": 18, "x": 6, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(headscale_mapresponse_sent_total[5m]))", "legendFormat": "map responses sent/s" },
+        { "refId": "B", "expr": "sum(rate(headscale_mapresponse_ended_total[5m]))", "legendFormat": "sessions ended/s" }
+      ]
+    }
+  ]
+}
+{% endraw %}
