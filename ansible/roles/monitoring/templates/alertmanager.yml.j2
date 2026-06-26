@@ -1,5 +1,6 @@
-{# Managed by the monitoring role. All alerts → the alertmanager-ntfy bridge → ntfy.
-   VERIFY the bridge's webhook path/port on apply (upstream README unreachable). #}
+{# Managed by the monitoring role. Alerts POST straight to ntfy's built-in
+   "alertmanager" template (firing/resolved formatting) — no bridge container.
+   See https://docs.ntfy.sh/publish/ (?template=alertmanager). #}
 route:
   receiver: ntfy
   group_by: [alertname, instance]
@@ -10,5 +11,5 @@ route:
 receivers:
   - name: ntfy
     webhook_configs:
-      - url: "http://alertmanager-ntfy:8080/hook"
+      - url: "http://ntfy/{{ monitoring_ntfy_topic }}?template=alertmanager"
         send_resolved: true

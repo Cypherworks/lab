@@ -50,7 +50,6 @@
     - { src: scrape.yml.j2, dest: scrape.yml }
     - { src: alert-rules.yml.j2, dest: alert-rules.yml }
     - { src: alertmanager.yml.j2, dest: alertmanager.yml }
-    - { src: am-ntfy.yml.j2, dest: am-ntfy.yml }
     - { src: ntfy.yml.j2, dest: ntfy.yml }
     - { src: grafana-datasource.yml.j2, dest: grafana/provisioning/datasources/datasource.yml }
     - { src: grafana-dashboards.yml.j2, dest: grafana/provisioning/dashboards/dashboards.yml }

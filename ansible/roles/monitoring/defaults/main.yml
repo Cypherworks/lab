@@ -1,7 +1,7 @@
 ---
 # Observability stack on one monitoring Incus instance, via docker compose:
 # VictoriaMetrics (vmsingle) for storage + scraping, vmalert for rules, Alertmanager
-# routing to a self-hosted ntfy (via the alertmanager-ntfy bridge), and Grafana.
+# posting to a self-hosted ntfy via ntfy's built-in alertmanager template, and Grafana.
 # vmsingle over Prometheus deliberately — lighter + better compaction on the
 # resource/heat-constrained rig. PromQL-compatible, so Grafana treats it as a
 # Prometheus datasource.
@@ -17,8 +17,6 @@ monitoring_alertmanager_image: "prom/alertmanager:v0.27.0"
 monitoring_grafana_image: "grafana/grafana:11.2.0"
 monitoring_ntfy_image: "binwiederhier/ntfy:v2.11.0"
 monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
-# Bridges Alertmanager webhooks → ntfy. VERIFY the image + config schema on apply.
-monitoring_am_ntfy_image: "ghcr.io/xenrox/alertmanager-ntfy:v0.3.0"
 
 monitoring_retention: "30d"          # modest, given constrained storage
 monitoring_scrape_interval: "30s"

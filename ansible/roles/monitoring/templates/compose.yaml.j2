@@ -38,17 +38,11 @@ services:
     volumes:
       - {{ monitoring_config_dir }}/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - amdata:/alertmanager
-
-  # Bridges Alertmanager's webhook → ntfy (nice formatting). VERIFY image tag +
-  # config path/schema on apply — upstream README wasn't reachable at build time.
-  alertmanager-ntfy:
-    image: {{ monitoring_am_ntfy_image }}
-    restart: unless-stopped
-    volumes:
-      - {{ monitoring_config_dir }}/am-ntfy.yml:/etc/alertmanager-ntfy/config.yml:ro
     depends_on:
       - ntfy
 
+  # Alertmanager posts directly to ntfy's built-in "alertmanager" template — no
+  # bridge container (see alertmanager.yml).
   ntfy:
     image: {{ monitoring_ntfy_image }}
     restart: unless-stopped
