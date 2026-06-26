@@ -95,3 +95,17 @@ scrape_configs:
         labels:
           instance: "headscale"
 {% endif %}
+{% if monitoring_hass_target %}
+  # Home Assistant Prometheus integration, scraped via Caddy (TLS). The bearer token
+  # is injected as the HASS_TOKEN container env and expanded by vmsingle's %{ENV}
+  # substitution, so it never lands in this config on disk.
+  - job_name: hass
+    scheme: https
+    metrics_path: /api/prometheus
+    authorization:
+      credentials: "%{HASS_TOKEN}"
+    static_configs:
+      - targets: ["{{ monitoring_hass_target }}"]
+        labels:
+          instance: "hass"
+{% endif %}
