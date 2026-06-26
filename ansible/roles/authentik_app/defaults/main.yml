@@ -43,16 +43,23 @@ authentik_branding_favicon_path: ""
 # here (no site data in the role).
 headscale_oidc_redirect_uri: ""
 
+# NAS (Synology DSM) OIDC redirect URIs — the bare base URLs DSM is reached on
+# (internal + external), no callback path. Site data — set in the deploy.
+nas_oidc_redirect_uris: []
+
 # Email set on the bootstrap superuser (akadmin) by the core blueprint, freeing a
 # personal address for a human account. Site data — set in the deploy.
 authentik_admin_email: ""
 
 # Secrets — from SOPS, never defaulted in real use:
 #   authentik_secret_key, authentik_pg_password, authentik_redis_password,
-#   authentik_bootstrap_password, headscale_oidc_client_id, headscale_oidc_client_secret
+#   authentik_bootstrap_password, headscale_oidc_client_id/_secret,
+#   nas_oidc_client_id/_secret
 authentik_secret_key: ""
 authentik_pg_password: ""
 authentik_redis_password: ""
 authentik_bootstrap_password: ""
 headscale_oidc_client_id: ""
 headscale_oidc_client_secret: ""
+nas_oidc_client_id: ""
+nas_oidc_client_secret: ""

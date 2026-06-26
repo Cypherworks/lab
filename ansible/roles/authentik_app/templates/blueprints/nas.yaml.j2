@@ -1,0 +1,68 @@
+# Managed by the authentik_app role. Synology DSM OIDC SSO integration as a
+# blueprint — mirrors the headscale pattern (verified against authentik's Synology
+# integration guide: integrations.goauthentik.io/infrastructure/synology-dsm).
+# DSM's redirect URI is the BARE base URL (no callback path, no #/signin); two are
+# whitelisted (internal + external) and DSM sends whichever matches its host.
+# sub_mode is the user's email; DSM maps the account from the preferred_username
+# claim carried by the profile scope. Client id/secret come via !Env from SOPS.
+version: 1
+metadata:
+  name: lab - nas oidc
+entries:
+  # Per-app access group. Membership grants the NAS — it gates the application
+  # (policy binding below). Default-deny: non-members can't see or use it. Grant a
+  # user the NAS by adding them to nas-users.
+  - model: authentik_core.group
+    id: group-nas-users
+    identifiers:
+      name: nas-users
+    attrs:
+      name: nas-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-nas
+    identifiers:
+      name: NAS
+    attrs:
+      name: NAS
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env NAS_OIDC_CLIENT_ID
+      client_secret: !Env NAS_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      # DSM identifies the account from preferred_username (profile scope); the
+      # subject identifier is the user's email, per the integration guide.
+      sub_mode: user_email
+      redirect_uris:
+{% for uri in nas_oidc_redirect_uris %}
+        - url: "{{ uri }}"
+          matching_mode: strict
+{% endfor %}
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    id: app-nas
+    identifiers:
+      slug: nas
+    attrs:
+      name: NAS
+      slug: nas
+      provider: !KeyOf provider-nas
+      policy_engine_mode: any
+
+  # Restrict the application to nas-users: only members see/launch it; everyone
+  # else is denied (one group binding under policy_engine_mode "any").
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-nas
+      group: !KeyOf group-nas-users
+      order: 0
+    attrs:
+      enabled: true

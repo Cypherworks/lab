@@ -84,6 +84,7 @@
     - core
     - recovery
     - invitation
+    - nas
   notify: Restart authentik
 
 - name: Render the Authentik env
