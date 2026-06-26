@@ -1,13 +1,26 @@
 ---
-- name: Install Docker (compose runtime for the Authentik containers)
+- name: Add Docker's official APT repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "https://download.docker.com/linux/debian"
+    suites: "{{ ansible_distribution_release }}"
+    components: [stable]
+    signed_by: https://download.docker.com/linux/debian/gpg
+
+# Debian's docker-compose-v2 isn't in the minimal Incus cloud image; Docker's own
+# repo ships the engine + the compose v2 plugin reliably.
+- name: Install Docker Engine + Compose v2 plugin
   become: true
   ansible.builtin.apt:
     name:
-      - docker.io
-      - docker-compose-v2
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
     state: present
     update_cache: true
-    cache_valid_time: 3600
 
 - name: Create the Authentik compose directory
   become: true
