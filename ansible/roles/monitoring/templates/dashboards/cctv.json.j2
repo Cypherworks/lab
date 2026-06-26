@@ -1,0 +1,46 @@
+{# Managed by the monitoring role. CCTV dashboard: go2rtc restream embedded via a
+   Grafana text panel in HTML mode. The iframe renders only because the role sets
+   GF_PANELS_DISABLE_SANITIZE_HTML=true on Grafana (scoped to text-panel HTML;
+   Grafana itself stays behind Authentik OIDC).
+
+   The iframe loads go2rtc's built-in player, /stream.html, which reads the query
+   params src (stream name) and mode (player engine). We pin mode=mse: pure HTTP/WS
+   over the single Caddy TLS port, so no extra UDP/TCP ports and no mixed-content.
+   The browser fetches this URL directly (not via Grafana), so it must be the Caddy
+   front (monitoring_go2rtc_public_url, HTTPS), never the internal compose port.
+
+   Tagged `kiosk` so it joins the rotating kiosk playlist automatically. #}
+{
+  "uid": "cctv",
+  "title": "CCTV",
+  "tags": ["kiosk"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "",
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Front",
+      "description": "Live front camera, restreamed by go2rtc (MSE). Pinned top strip.",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "html",
+        "content": "<iframe src=\"{{ monitoring_go2rtc_public_url }}/stream.html?src=front&amp;mode=mse&amp;background=false\" style=\"border:0;width:100%;height:100%;display:block\" allow=\"autoplay\" allowfullscreen></iframe>"
+      }
+    },
+    {
+      "id": 2,
+      "type": "text",
+      "title": "Garage & Car Port",
+      "description": "Live garage/car-port camera, restreamed by go2rtc (MSE).",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 14 },
+      "options": {
+        "mode": "html",
+        "content": "<iframe src=\"{{ monitoring_go2rtc_public_url }}/stream.html?src=garage_carport&amp;mode=mse&amp;background=false\" style=\"border:0;width:100%;height:100%;display:block\" allow=\"autoplay\" allowfullscreen></iframe>"
+      }
+    }
+  ]
+}
