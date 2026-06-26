@@ -53,6 +53,12 @@ monitoring_snmp_targets: []
 # Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
 monitoring_headscale_target: ""
 
+# Home Assistant Prometheus scrape, via Caddy (TLS). Target is the Caddy host
+# (host:443). The bearer token is a SOPS secret, injected via the container env and
+# expanded by vmsingle (%{HASS_TOKEN}) — never written to the on-disk scrape config.
+monitoring_hass_target: ""           # e.g. hass.cypherworks.co.uk:443
+monitoring_hass_token: ""            # SOPS — HASS long-lived access token
+
 # Alert thresholds — tunable from the deploy.
 monitoring_temp_warn_celsius: 75
 monitoring_disk_used_percent: 85

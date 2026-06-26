@@ -1,10 +1,15 @@
 {# Managed by the monitoring role. vmsingle (store+scrape) → vmalert (rules) →
-   Alertmanager → alertmanager-ntfy → ntfy; Grafana reads vmsingle. Secrets via
+   Alertmanager → ntfy (native template); Grafana reads vmsingle. Secrets via
    ./.env interpolation. #}
 services:
   vmsingle:
     image: {{ monitoring_vmsingle_image }}
     restart: unless-stopped
+    environment:
+      # HASS bearer token for the Home Assistant scrape. vmsingle expands the
+      # %{HASS_TOKEN} placeholder in scrape.yml from this env, so the token never
+      # lands in the on-disk scrape config. Empty when no HASS scrape (harmless).
+      HASS_TOKEN: "${HASS_TOKEN}"
     command:
       - "--storageDataPath=/victoria-metrics-data"
       - "--retentionPeriod={{ monitoring_retention }}"
