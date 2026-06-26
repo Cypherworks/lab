@@ -38,7 +38,10 @@
     state: directory
     owner: root
     group: root
-    mode: "0750"
+    # World-readable: the dir is bind-mounted into the container, which runs as a
+    # non-root user that must read it to discover the blueprints. No secrets here
+    # (the blueprint reads creds via !Env).
+    mode: "0755"
 
 # authentik file-watches the mounted dir and reconciles, so no restart is needed
 # for a blueprint change once the volume's in place (the compose change below
@@ -50,7 +53,8 @@
     dest: "{{ authentik_blueprints_dir }}/headscale.yaml"
     owner: root
     group: root
-    mode: "0640"
+    # Readable by the container's non-root user (mounted in); no secret in the file.
+    mode: "0644"
 
 - name: Render the Authentik env
   become: true
