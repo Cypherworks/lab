@@ -1,0 +1,10 @@
+{# Managed by the monitoring role. Loads provisioned dashboards from disk. #}
+apiVersion: 1
+providers:
+  - name: lab
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,44 @@
+{% raw %}
+{
+  "uid": "lab-overview",
+  "title": "Lab Overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU temperature (°C)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "max by (instance) (node_hwmon_temp_celsius)", "legendFormat": "{{instance}} hwmon" },
+        { "refId": "B", "expr": "max by (instance) (node_thermal_zone_temp)", "legendFormat": "{{instance}} thermal" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Targets up",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "targets": [ { "refId": "A", "expr": "sum(up)" } ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Memory used (%)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}" }
+      ]
+    }
+  ]
+}
+{% endraw %}

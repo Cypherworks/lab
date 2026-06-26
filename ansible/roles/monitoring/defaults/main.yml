@@ -1,0 +1,56 @@
+---
+# Observability stack on one monitoring Incus instance, via docker compose:
+# VictoriaMetrics (vmsingle) for storage + scraping, vmalert for rules, Alertmanager
+# posting to a self-hosted ntfy via ntfy's built-in alertmanager template, and Grafana.
+# vmsingle over Prometheus deliberately — lighter + better compaction on the
+# resource/heat-constrained rig. PromQL-compatible, so Grafana treats it as a
+# Prometheus datasource.
+
+monitoring_compose_dir: /opt/monitoring
+monitoring_data_dir: "{{ monitoring_compose_dir }}/data"
+monitoring_config_dir: "{{ monitoring_compose_dir }}/config"
+
+# Pin to confirmed-current stable tags before apply (registry tag must exist).
+monitoring_vmsingle_image: "victoriametrics/victoria-metrics:v1.102.1"
+monitoring_vmalert_image: "victoriametrics/vmalert:v1.102.1"
+monitoring_alertmanager_image: "prom/alertmanager:v0.27.0"
+monitoring_grafana_image: "grafana/grafana:11.2.0"
+monitoring_ntfy_image: "binwiederhier/ntfy:v2.11.0"
+monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
+
+monitoring_retention: "30d"          # modest, given constrained storage
+monitoring_scrape_interval: "30s"
+
+# Scrape targets — host:port lists supplied by the deploy from inventory (no IPs
+# in the role). An empty list omits that job.
+monitoring_node_targets: []          # node_exporter on the bare-metal hosts (:9100)
+monitoring_blocky_targets: []        # blocky /metrics (:4000)
+monitoring_patroni_targets: []       # Patroni REST /metrics (:8008)
+monitoring_etcd_targets: []          # etcd /metrics (:2379)
+monitoring_redis_targets: []         # redis endpoints (:6379) via redis_exporter
+
+# Alert thresholds — tunable from the deploy.
+monitoring_temp_warn_celsius: 75
+monitoring_disk_used_percent: 85
+
+# Grafana — site values from the deploy. OIDC endpoints are authentik's GLOBAL
+# ones (not per-app); verified against integrations.goauthentik.io/monitoring/grafana.
+monitoring_grafana_root_url: ""              # https://grafana.cypherworks.co.uk
+monitoring_grafana_admin_user: "admin"
+monitoring_grafana_oidc_auth_url: ""         # https://auth.cw/application/o/authorize/
+monitoring_grafana_oidc_token_url: ""        # https://auth.cw/application/o/token/
+monitoring_grafana_oidc_api_url: ""          # https://auth.cw/application/o/userinfo/
+monitoring_grafana_oidc_signout_url: ""      # https://auth.cw/application/o/grafana/end-session/
+# Map authentik groups → Grafana roles. grafana-admins → Admin, everyone else
+# (i.e. grafana-users, who are the only ones the app lets in) → Editor.
+monitoring_grafana_role_path: "contains(groups[*], 'grafana-admins') && 'Admin' || 'Editor'"
+
+# ntfy
+monitoring_ntfy_base_url: ""                 # public base URL ntfy serves on
+monitoring_ntfy_topic: "lab-alerts"
+
+# Secrets — from SOPS (deploy), never defaulted in real use.
+monitoring_grafana_admin_password: ""
+monitoring_grafana_oidc_client_id: ""
+monitoring_grafana_oidc_client_secret: ""
+monitoring_redis_password: ""

@@ -1,0 +1,49 @@
+{# Managed by the monitoring role. vmalert rules. Thresholds are Jinja; the alert
+   templating ({{ '{{ ... }}' }}) is escaped so it survives to the rendered file. #}
+groups:
+  - name: lab
+    rules:
+      - alert: HighCPUTemperature
+        expr: (max by (instance) (node_hwmon_temp_celsius) > {{ monitoring_temp_warn_celsius }}) or (max by (instance) (node_thermal_zone_temp) > {{ monitoring_temp_warn_celsius }})
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU temperature on {{ '{{ $labels.instance }}' }}"
+          description: "{{ '{{ $value }}' }}°C (warn at {{ monitoring_temp_warn_celsius }}°C)"
+
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target down: {{ '{{ $labels.job }} / {{ $labels.instance }}' }}"
+          description: "No metrics scraped for 2 minutes."
+
+      - alert: DiskFilling
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) > {{ monitoring_disk_used_percent }}
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk filling on {{ '{{ $labels.instance }}' }} ({{ '{{ $labels.mountpoint }}' }})"
+          description: "Over {{ monitoring_disk_used_percent }}% used."
+
+      - alert: PatroniNoPrimary
+        expr: sum(patroni_primary) < 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Patroni has no primary"
+          description: "No PostgreSQL primary in the cluster — auto-failover may be stuck."
+
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis unreachable: {{ '{{ $labels.instance }}' }}"
+          description: "redis_exporter cannot reach the instance."
