@@ -1,45 +1,97 @@
 {# Managed by the monitoring role. vmsingle promscrape config (Prometheus format).
-   Targets come from the deploy (inventory-derived); an empty list omits the job. #}
+   Targets come from the deploy (inventory-derived); an empty list omits the job.
+
+   Each target is a {target, instance} mapping so the scraped series carry the real
+   hostname as their `instance` label (dashboards read hostnames, not IPs). One
+   static_configs block per target sets that block's `instance` label. No
+   per-node node_exporter change is needed. #}
 global:
   scrape_interval: {{ monitoring_scrape_interval }}
 
 scrape_configs:
-{% if monitoring_node_targets %}
-  - job_name: node
+{% macro labelled_job(name, targets, metrics_path='/metrics') %}
+{% if targets %}
+  - job_name: {{ name }}
+    metrics_path: {{ metrics_path }}
     static_configs:
-      - targets: {{ monitoring_node_targets | to_json }}
+{% for t in targets %}
+      - targets: ["{{ t.target }}"]
+        labels:
+          instance: "{{ t.instance }}"
+{% endfor %}
 {% endif %}
-{% if monitoring_blocky_targets %}
-  - job_name: blocky
-    metrics_path: /metrics
-    static_configs:
-      - targets: {{ monitoring_blocky_targets | to_json }}
-{% endif %}
-{% if monitoring_patroni_targets %}
-  - job_name: patroni
-    metrics_path: /metrics
-    static_configs:
-      - targets: {{ monitoring_patroni_targets | to_json }}
-{% endif %}
+{% endmacro -%}
+{{ labelled_job('node', monitoring_node_targets) -}}
+{{ labelled_job('blocky', monitoring_blocky_targets) -}}
+{{ labelled_job('patroni', monitoring_patroni_targets) -}}
 {% if monitoring_etcd_targets %}
   # etcd serves /metrics on the client port; if etcd has client TLS this needs a
   # scheme/cert, or etcd's --listen-metrics-urls set to a plain-HTTP endpoint.
-  - job_name: etcd
-    metrics_path: /metrics
-    static_configs:
-      - targets: {{ monitoring_etcd_targets | to_json }}
+{{ labelled_job('etcd', monitoring_etcd_targets) -}}
 {% endif %}
 {% if monitoring_redis_targets %}
   # redis_exporter multi-target: vmsingle hits the exporter once per redis endpoint.
+  # __address__ is rewritten to the exporter; the real redis host is passed as the
+  # scrape target via __param_target, while the hostname instance label is preserved.
   - job_name: redis
     metrics_path: /scrape
     static_configs:
-      - targets: {{ monitoring_redis_targets | to_json }}
+{% for t in monitoring_redis_targets %}
+      - targets: ["{{ t.target }}"]
+        labels:
+          instance: "{{ t.instance }}"
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: redis_exporter:9121
+{% endif %}
+{% if monitoring_blackbox_targets %}
+  # blackbox_exporter multi-target: vmsingle asks blackbox to probe each https
+  # endpoint. The probed URL becomes the `instance` label; __address__ is rewritten
+  # to the blackbox exporter. Standard pattern from the blackbox_exporter README.
+  - job_name: blackbox-https
+    metrics_path: /probe
+    params:
+      module: [https_2xx]
+    static_configs:
+      - targets: {{ monitoring_blackbox_targets | to_json }}
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: redis_exporter:9121
+        replacement: blackbox:9115
+{% endif %}
+{% if monitoring_snmp_targets %}
+  # snmp_exporter multi-target for the Synology NAS. vmsingle asks snmp_exporter to
+  # walk the NAS with the named module + auth; the NAS hostname becomes `instance`.
+  - job_name: snmp-synology
+    metrics_path: /snmp
+    params:
+      module: [synology]
+      auth: [synology_v3]
+    static_configs:
+{% for t in monitoring_snmp_targets %}
+      - targets: ["{{ t.target }}"]
+        labels:
+          instance: "{{ t.instance }}"
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: snmp_exporter:9116
+{% endif %}
+{% if monitoring_headscale_target %}
+  # Headscale control-plane metrics, reached over the Tailscale overlay (the EC2
+  # binds metrics_listen_addr to its tailnet IP only — never 0.0.0.0/public).
+  - job_name: headscale
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["{{ monitoring_headscale_target }}"]
+        labels:
+          instance: "headscale"
 {% endif %}

@@ -62,6 +62,31 @@ services:
     ports:
       - "9121:9121"
 
+  # https cert-expiry probes. vmsingle drives it via the blackbox-https scrape job.
+  blackbox:
+    image: {{ monitoring_blackbox_image }}
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/blackbox/blackbox.yml"
+    volumes:
+      - {{ monitoring_config_dir }}/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+
+  # Synology NAS over SNMPv3. snmp.yml carries the module OIDs; the v3 auth/priv
+  # passwords come from the container env (./.env) and are expanded into the config
+  # at load time via --config.expand-environment-variables, so no plaintext secrets
+  # land in the on-disk config file.
+  snmp_exporter:
+    image: {{ monitoring_snmp_exporter_image }}
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/snmp_exporter/snmp.yml"
+      - "--config.expand-environment-variables"
+    environment:
+      SNMP_V3_AUTH_PASSWORD: "${SNMP_V3_AUTH_PASSWORD}"
+      SNMP_V3_PRIV_PASSWORD: "${SNMP_V3_PRIV_PASSWORD}"
+    volumes:
+      - {{ monitoring_config_dir }}/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+
   grafana:
     image: {{ monitoring_grafana_image }}
     restart: unless-stopped

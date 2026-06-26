@@ -1,0 +1,15 @@
+{# Managed by the monitoring role. blackbox_exporter modules. https_2xx probes an
+   https endpoint and records its TLS cert expiry (probe_ssl_earliest_cert_expiry,
+   a unix timestamp); the cert-expiry dashboard panel computes days-to-expiry. #}
+modules:
+  https_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      fail_if_not_ssl: true
+      preferred_ip_protocol: "ip4"
+{% if monitoring_blackbox_tls_skip_verify | default(false) %}
+      tls_config:
+        insecure_skip_verify: true
+{% endif %}

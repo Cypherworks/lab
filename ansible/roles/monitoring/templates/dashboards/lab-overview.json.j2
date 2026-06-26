@@ -3,41 +3,340 @@
   "uid": "lab-overview",
   "title": "Lab Overview",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": true,
   "time": { "from": "now-6h", "to": "now" },
   "refresh": "30s",
   "panels": [
     {
+      "id": 100,
+      "type": "row",
+      "title": "Hosts",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
       "id": 1,
-      "type": "timeseries",
-      "title": "CPU temperature (°C)",
+      "type": "stat",
+      "title": "Host up/down",
       "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        { "refId": "A", "expr": "up{job=\"node\"}", "legendFormat": "{{instance}}", "instant": true }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "CPU busy (%)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "RAM used (%)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Disk used (%) — root fs",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{mountpoint=\"/\"})", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Network throughput (bytes/s)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (instance) (rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*\"}[5m]))", "legendFormat": "{{instance}} rx" },
+        { "refId": "B", "expr": "- sum by (instance) (rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*\"}[5m]))", "legendFormat": "{{instance}} tx" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Load average (1m)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "refId": "A", "expr": "node_load1", "legendFormat": "{{instance}}" }
+      ]
+    },
+
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Services (up / down / degraded)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Service targets up",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        { "refId": "A", "expr": "up{job=~\"blocky|patroni|etcd|redis|headscale\"}", "legendFormat": "{{job}} {{instance}}", "instant": true }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "HA health (degraded = amber)",
+      "description": "Folds the HA tier into up/degraded states: Patroni primary present, Redis master present, etcd quorum (a leader is visible), blocky up, Headscale up.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DEGRADED", "color": "orange" }, "1": { "text": "OK", "color": "green" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "orange", "value": null }, { "color": "green", "value": 1 } ] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        { "refId": "A", "expr": "clamp_max(sum(patroni_primary), 1)", "legendFormat": "Patroni primary", "instant": true },
+        { "refId": "B", "expr": "clamp_max(count(redis_instance_info{role=\"master\"}), 1)", "legendFormat": "Redis master", "instant": true },
+        { "refId": "C", "expr": "clamp_max(max(etcd_server_has_leader), 1)", "legendFormat": "etcd quorum", "instant": true },
+        { "refId": "D", "expr": "clamp_max(sum(up{job=\"blocky\"}), 1)", "legendFormat": "blocky", "instant": true },
+        { "refId": "E", "expr": "clamp_max(sum(up{job=\"headscale\"}), 1)", "legendFormat": "Headscale", "instant": true }
+      ]
+    },
+
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Temperatures",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "collapsed": false
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Host temperature (°C)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
+      "fieldConfig": { "defaults": { "unit": "celsius" } },
       "targets": [
         { "refId": "A", "expr": "max by (instance) (node_hwmon_temp_celsius)", "legendFormat": "{{instance}} hwmon" },
         { "refId": "B", "expr": "max by (instance) (node_thermal_zone_temp)", "legendFormat": "{{instance}} thermal" }
       ]
     },
+
     {
-      "id": 2,
-      "type": "stat",
-      "title": "Targets up",
-      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
-      "targets": [ { "refId": "A", "expr": "sum(up)" } ]
+      "id": 400,
+      "type": "row",
+      "title": "Certificates",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 29 },
+      "collapsed": false
     },
     {
-      "id": 3,
-      "type": "timeseries",
-      "title": "Memory used (%)",
+      "id": 30,
+      "type": "stat",
+      "title": "TLS cert expiry (days)",
+      "description": "blackbox probe_ssl_earliest_cert_expiry is a unix timestamp; days = (expiry - now) / 86400.",
       "datasource": { "type": "prometheus", "uid": "victoriametrics" },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
-      "fieldConfig": { "defaults": { "unit": "percent", "max": 100 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "d",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 14 }, { "color": "green", "value": 30 } ] }
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
       "targets": [
-        { "refId": "A", "expr": "100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)", "legendFormat": "{{instance}}" }
+        { "refId": "A", "expr": "(probe_ssl_earliest_cert_expiry - time()) / 86400", "legendFormat": "{{instance}}", "instant": true }
       ]
+    },
+
+    {
+      "id": 500,
+      "type": "row",
+      "title": "NAS (Synology)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "collapsed": false
+    },
+    {
+      "id": 40,
+      "type": "stat",
+      "title": "NAS system status",
+      "description": "SYNOLOGY-SYSTEM-MIB systemStatus: 1 Normal, 2 Failed.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 39 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "Normal", "color": "green" }, "2": { "text": "Failed", "color": "red" } } }
+          ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "synology_system_status", "legendFormat": "system", "instant": true }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "NAS disk temps (°C)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 9, "x": 6, "y": 39 },
+      "fieldConfig": { "defaults": { "unit": "celsius" } },
+      "targets": [
+        { "refId": "A", "expr": "synology_disk_temperature", "legendFormat": "{{diskID}}" }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "NAS storage used (%) — 1h",
+      "description": "raidTotalSize/raidFreeSize from SYNOLOGY-RAID-MIB.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 9, "x": 15, "y": 39 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "timeFrom": "1h",
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - synology_raid_free_size / synology_raid_total_size)", "legendFormat": "{{raidName}}" }
+      ]
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "NAS storage used (%) — 12h",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 45 },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 } },
+      "timeFrom": "12h",
+      "targets": [
+        { "refId": "A", "expr": "100 * (1 - synology_raid_free_size / synology_raid_total_size)", "legendFormat": "{{raidName}}" }
+      ]
+    },
+
+    {
+      "id": 600,
+      "type": "row",
+      "title": "Headscale (overlay)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
+      "collapsed": false
+    },
+    {
+      "id": 50,
+      "type": "stat",
+      "title": "Headscale up",
+      "description": "Headscale exports NO connected-nodes gauge and NO throughput/byte metric (control plane only; data is peer-to-peer/DERP). Confirmed against hscontrol/metrics.go and issue #2650. The activity panel uses the mapresponse counters as a session/activity proxy.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 52 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "expr": "up{job=\"headscale\"}", "legendFormat": "headscale", "instant": true }
+      ]
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Headscale map-response activity (proxy for node sessions)",
+      "description": "Headscale has no connected-nodes/throughput metric. This is rate of map responses sent + sessions ended — a control-plane activity proxy, NOT a node count or bandwidth figure.",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 18, "x": 6, "y": 52 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(headscale_mapresponse_sent_total[5m]))", "legendFormat": "map responses sent/s" },
+        { "refId": "B", "expr": "sum(rate(headscale_mapresponse_ended_total[5m]))", "legendFormat": "sessions ended/s" }
+      ]
+    },
+
+    {
+      "id": 700,
+      "type": "row",
+      "title": "DNS (blocky)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 58 },
+      "collapsed": false
+    },
+    {
+      "id": 60,
+      "type": "timeseries",
+      "title": "DNS query rate (q/s)",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 59 },
+      "fieldConfig": { "defaults": { "unit": "qps" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (instance) (rate(blocky_query_total[5m]))", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "id": 61,
+      "type": "timeseries",
+      "title": "DNS block rate (blocked/s)",
+      "description": "blocky_response_total with response_type=\"BLOCKED\". Query rate uses blocky_query_total (no response_type label).",
+      "datasource": { "type": "prometheus", "uid": "victoriametrics" },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 59 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "refId": "A", "expr": "sum by (instance) (rate(blocky_response_total{response_type=\"BLOCKED\"}[5m]))", "legendFormat": "{{instance}}" }
+      ]
+    },
+
+    {
+      "id": 800,
+      "type": "row",
+      "title": "CCTV",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 },
+      "collapsed": false
+    },
+    {
+      "id": 70,
+      "type": "text",
+      "title": "CCTV feed (placeholder)",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 66 },
+      "options": {
+        "mode": "markdown",
+        "content": "**CCTV feed parked** — see task #18. Panel reserved for the camera feed/stats once the feed lands."
+      }
     }
   ]
 }

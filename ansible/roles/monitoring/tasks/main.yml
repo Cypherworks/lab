@@ -51,6 +51,8 @@
     - { src: alert-rules.yml.j2, dest: alert-rules.yml }
     - { src: alertmanager.yml.j2, dest: alertmanager.yml }
     - { src: ntfy.yml.j2, dest: ntfy.yml }
+    - { src: blackbox.yml.j2, dest: blackbox.yml }
+    - { src: snmp.yml.j2, dest: snmp.yml }
     - { src: grafana-datasource.yml.j2, dest: grafana/provisioning/datasources/datasource.yml }
     - { src: grafana-dashboards.yml.j2, dest: grafana/provisioning/dashboards/dashboards.yml }
     - { src: dashboards/lab-overview.json.j2, dest: grafana/dashboards/lab-overview.json }
