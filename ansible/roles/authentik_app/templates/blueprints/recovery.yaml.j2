@@ -1,0 +1,180 @@
+# Managed by the authentik_app role. Password-recovery flow, bound to the default
+# brand so recovery links can be created. Adapted from authentik's own example
+# blueprint blueprints/example/flows-recovery-email-verification.yaml.
+#
+# No SMTP yet: an admin generates a recovery link (Directory > Users > the user >
+# the "..." menu > Create recovery link) which restores the flow past the email
+# stage straight to the password prompt — no mail sent. The email stage is kept so
+# the self-service path (user requests a reset, gets a link) works once SMTP is set.
+version: 1
+metadata:
+  name: lab - recovery flow
+entries:
+  - identifiers:
+      slug: lab-recovery-flow
+    id: flow
+    model: authentik_flows.flow
+    attrs:
+      name: Lab recovery flow
+      title: Reset your password
+      designation: recovery
+      authentication: require_unauthenticated
+
+  - identifiers:
+      name: lab-recovery-field-password
+    id: prompt-field-password
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      order: 0
+      placeholder_expression: false
+
+  - identifiers:
+      name: lab-recovery-field-password-repeat
+    id: prompt-field-password-repeat
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      order: 1
+      placeholder_expression: false
+
+  # Skips the identification stage when the flow is restored from a recovery link
+  # (the link already identifies the user). Verbatim from authentik's example.
+  - identifiers:
+      name: lab-recovery-skip-if-restored
+    id: skip-if-restored
+    model: authentik_policies_expression.expressionpolicy
+    attrs:
+      expression: |
+        return bool(request.context.get('is_restored', True))
+
+  - identifiers:
+      name: lab-recovery-email
+    id: email-stage
+    model: authentik_stages_email.emailstage
+    attrs:
+      use_global_settings: true
+      host: localhost
+      port: 25
+      username: ""
+      use_tls: false
+      use_ssl: false
+      timeout: 10
+      from_address: system@authentik.local
+      token_expiry: minutes=30
+      subject: authentik
+      template: email/password_reset.html
+      activate_user_on_success: true
+
+  - identifiers:
+      name: lab-recovery-user-write
+    id: user-write
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: never_create
+
+  - identifiers:
+      name: lab-recovery-identification
+    id: identification
+    model: authentik_stages_identification.identificationstage
+    attrs:
+      user_fields:
+        - email
+        - username
+
+  - identifiers:
+      name: lab-recovery-user-login
+    id: user-login
+    model: authentik_stages_user_login.userloginstage
+
+  - identifiers:
+      name: lab-recovery-prompt-password
+    id: prompt-stage
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields:
+        - !KeyOf prompt-field-password
+        - !KeyOf prompt-field-password-repeat
+      validation_policies: []
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf identification
+      order: 10
+    id: binding-identification
+    model: authentik_flows.flowstagebinding
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: true
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf email-stage
+      order: 20
+    model: authentik_flows.flowstagebinding
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: true
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt-stage
+      order: 30
+    model: authentik_flows.flowstagebinding
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf user-write
+      order: 40
+    model: authentik_flows.flowstagebinding
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf user-login
+      order: 100
+    model: authentik_flows.flowstagebinding
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false
+      policy_engine_mode: any
+      invalid_response_action: retry
+
+  - identifiers:
+      policy: !KeyOf skip-if-restored
+      target: !KeyOf binding-identification
+      order: 0
+    model: authentik_policies.policybinding
+    attrs:
+      negate: false
+      enabled: true
+      timeout: 30
+
+  # Bind the recovery flow to the default brand — this clears "set a recovery flow
+  # for the current brand" and lets admins generate recovery links.
+  - identifiers:
+      domain: authentik-default
+    model: authentik_brands.brand
+    attrs:
+      flow_recovery: !KeyOf flow

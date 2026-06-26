@@ -1,0 +1,146 @@
+# Managed by the authentik_app role. Invitation-based enrolment flow: invited users
+# set their own username/password. Adapted from authentik's example blueprint
+# blueprints/example/flows-invitation-enrollment-minimal.yaml, with fixed values.
+#
+# This creates the FLOW + stages only. Lloyd creates the actual invitations
+# (Directory > Invitations > Create), choosing this flow; the invitation URL is
+# handed to the user (no SMTP needed). The invitation stage requires an invitation
+# (continue_flow_without_invitation: false), so the flow can't be used to self-
+# register without one. It does NOT touch the brand or the authentication flow.
+version: 1
+metadata:
+  name: lab - invitation enrolment
+entries:
+  - identifiers:
+      slug: lab-invitation-enrollment
+    id: flow
+    model: authentik_flows.flow
+    attrs:
+      name: Lab invitation enrolment
+      title: Complete your enrolment
+      designation: enrollment
+      authentication: require_unauthenticated
+
+  - identifiers:
+      name: lab-invitation-stage
+    id: invitation-stage
+    model: authentik_stages_invitation.invitationstage
+    attrs:
+      continue_flow_without_invitation: false
+
+  - identifiers:
+      name: lab-invitation-field-username
+    id: prompt-field-username
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: username
+      label: Username
+      type: username
+      required: true
+      placeholder: Username
+      placeholder_expression: false
+      order: 0
+
+  - identifiers:
+      name: lab-invitation-field-name
+    id: prompt-field-name
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: name
+      label: Name
+      type: text
+      required: true
+      placeholder: Name
+      placeholder_expression: false
+      order: 1
+
+  - identifiers:
+      name: lab-invitation-field-email
+    id: prompt-field-email
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: email
+      label: Email
+      type: email
+      required: true
+      placeholder: Email
+      placeholder_expression: false
+      order: 2
+
+  - identifiers:
+      name: lab-invitation-field-password
+    id: prompt-field-password
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password
+      label: Password
+      type: password
+      required: true
+      placeholder: Password
+      placeholder_expression: false
+      order: 3
+
+  - identifiers:
+      name: lab-invitation-field-password-repeat
+    id: prompt-field-password-repeat
+    model: authentik_stages_prompt.prompt
+    attrs:
+      field_key: password_repeat
+      label: Password (repeat)
+      type: password
+      required: true
+      placeholder: Password (repeat)
+      placeholder_expression: false
+      order: 4
+
+  - identifiers:
+      name: lab-invitation-prompt
+    id: prompt-stage
+    model: authentik_stages_prompt.promptstage
+    attrs:
+      fields:
+        - !KeyOf prompt-field-username
+        - !KeyOf prompt-field-name
+        - !KeyOf prompt-field-email
+        - !KeyOf prompt-field-password
+        - !KeyOf prompt-field-password-repeat
+
+  - identifiers:
+      name: lab-invitation-user-write
+    id: user-write
+    model: authentik_stages_user_write.userwritestage
+    attrs:
+      user_creation_mode: always_create
+      user_type: internal
+
+  - identifiers:
+      name: lab-invitation-user-login
+    id: user-login
+    model: authentik_stages_user_login.userloginstage
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf invitation-stage
+      order: 5
+    model: authentik_flows.flowstagebinding
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: true
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf prompt-stage
+      order: 10
+    model: authentik_flows.flowstagebinding
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf user-write
+      order: 20
+    model: authentik_flows.flowstagebinding
+
+  - identifiers:
+      target: !KeyOf flow
+      stage: !KeyOf user-login
+      order: 100
+    model: authentik_flows.flowstagebinding

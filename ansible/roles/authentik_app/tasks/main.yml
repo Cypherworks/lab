@@ -59,6 +59,8 @@
   loop:
     - headscale
     - core
+    - recovery
+    - invitation
   notify: Restart authentik
 
 - name: Render the Authentik env
