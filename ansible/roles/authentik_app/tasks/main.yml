@@ -85,6 +85,7 @@
     - recovery
     - invitation
     - nas
+    - grafana
   notify: Restart authentik
 
 - name: Render the Authentik env

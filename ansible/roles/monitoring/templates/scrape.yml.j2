@@ -1,0 +1,45 @@
+{# Managed by the monitoring role. vmsingle promscrape config (Prometheus format).
+   Targets come from the deploy (inventory-derived); an empty list omits the job. #}
+global:
+  scrape_interval: {{ monitoring_scrape_interval }}
+
+scrape_configs:
+{% if monitoring_node_targets %}
+  - job_name: node
+    static_configs:
+      - targets: {{ monitoring_node_targets | to_json }}
+{% endif %}
+{% if monitoring_blocky_targets %}
+  - job_name: blocky
+    metrics_path: /metrics
+    static_configs:
+      - targets: {{ monitoring_blocky_targets | to_json }}
+{% endif %}
+{% if monitoring_patroni_targets %}
+  - job_name: patroni
+    metrics_path: /metrics
+    static_configs:
+      - targets: {{ monitoring_patroni_targets | to_json }}
+{% endif %}
+{% if monitoring_etcd_targets %}
+  # etcd serves /metrics on the client port; if etcd has client TLS this needs a
+  # scheme/cert, or etcd's --listen-metrics-urls set to a plain-HTTP endpoint.
+  - job_name: etcd
+    metrics_path: /metrics
+    static_configs:
+      - targets: {{ monitoring_etcd_targets | to_json }}
+{% endif %}
+{% if monitoring_redis_targets %}
+  # redis_exporter multi-target: vmsingle hits the exporter once per redis endpoint.
+  - job_name: redis
+    metrics_path: /scrape
+    static_configs:
+      - targets: {{ monitoring_redis_targets | to_json }}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: redis_exporter:9121
+{% endif %}

@@ -1,0 +1,34 @@
+---
+# Prometheus node_exporter on the bare-metal hosts (x86 nodes + Pis). Debian's
+# package ships a hardened systemd unit; the default collectors include hwmon and
+# thermal_zone, which is what gives us CPU temperature on both the x86 ThinkCentres
+# (coretemp via hwmon) and the ARM Pis (thermal_zone) — the priority, given the heat.
+- name: Install node_exporter
+  become: true
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Bind to the host's lab address, not 0.0.0.0 — metrics are reachable only from the
+# lab network, never any other interface. The collector set is left at the package
+# default (includes hwmon/thermal for temps); extra flags go in node_exporter_args.
+- name: Configure node_exporter listen address
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/default/prometheus-node-exporter
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by the node_exporter role.
+      ARGS="--web.listen-address={{ node_exporter_listen_address }}:{{ node_exporter_port }} {{ node_exporter_extra_args }}"
+  notify: Restart node_exporter
+
+- name: Enable and start node_exporter
+  become: true
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started

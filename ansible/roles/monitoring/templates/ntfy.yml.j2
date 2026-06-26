@@ -1,0 +1,7 @@
+{# Managed by the monitoring role. Minimal ntfy server. NOTE: no auth yet — the
+   topic name is effectively the secret. Add an auth-file + access control before
+   exposing it beyond the lab (follow-up). #}
+base-url: "{{ monitoring_ntfy_base_url }}"
+listen-http: ":80"
+behind-proxy: true
+cache-file: "/var/cache/ntfy/cache.db"

@@ -1,0 +1,14 @@
+{# Managed by the monitoring role. All alerts → the alertmanager-ntfy bridge → ntfy.
+   VERIFY the bridge's webhook path/port on apply (upstream README unreachable). #}
+route:
+  receiver: ntfy
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: ntfy
+    webhook_configs:
+      - url: "http://alertmanager-ntfy:8080/hook"
+        send_resolved: true

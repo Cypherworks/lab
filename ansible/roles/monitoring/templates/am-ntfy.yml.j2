@@ -1,0 +1,15 @@
+{# Managed by the monitoring role. alertmanager-ntfy bridge config.
+   NOTE: this schema is UNVERIFIED — the upstream README was unreachable at build
+   time. Treat as a starting point and confirm against the image's docs on apply
+   (the keys, the listen address, and the ntfy auth method may differ). #}
+http:
+  addr: ":8080"
+
+ntfy:
+  baseURL: "http://ntfy"
+  topic: "{{ monitoring_ntfy_topic }}"
+
+notification:
+  priority: "default"
+  tags:
+    - "warning"

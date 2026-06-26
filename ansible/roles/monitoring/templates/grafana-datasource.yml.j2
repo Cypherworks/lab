@@ -1,0 +1,11 @@
+{# Managed by the monitoring role. VictoriaMetrics as a Prometheus-type datasource. #}
+apiVersion: 1
+datasources:
+  - name: VictoriaMetrics
+    uid: victoriametrics
+    type: prometheus
+    access: proxy
+    url: http://vmsingle:8428
+    isDefault: true
+    jsonData:
+      timeInterval: "{{ monitoring_scrape_interval }}"

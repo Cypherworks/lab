@@ -1,0 +1,56 @@
+# Managed by the authentik_app role. Grafana OIDC SSO — mirrors the headscale/nas
+# pattern. Per-app group (grafana-users) gates the application (default-deny). The
+# redirect URI is Grafana's generic_oauth callback. Client id/secret via !Env (SOPS).
+version: 1
+metadata:
+  name: lab - grafana oidc
+entries:
+  - model: authentik_core.group
+    id: group-grafana-users
+    identifiers:
+      name: grafana-users
+    attrs:
+      name: grafana-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-grafana
+    identifiers:
+      name: Grafana
+    attrs:
+      name: Grafana
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env GRAFANA_OIDC_CLIENT_ID
+      client_secret: !Env GRAFANA_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+        - url: "{{ grafana_oidc_redirect_uri }}"
+          matching_mode: strict
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    id: app-grafana
+    identifiers:
+      slug: grafana
+    attrs:
+      name: Grafana
+      slug: grafana
+      provider: !KeyOf provider-grafana
+      policy_engine_mode: any
+
+  # Restrict to grafana-users (default-deny). grafana-admins (mapped to Grafana
+  # Admin by the role) should also be a member to reach the app.
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-grafana
+      group: !KeyOf group-grafana-users
+      order: 0
+    attrs:
+      enabled: true
