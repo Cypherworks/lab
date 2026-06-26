@@ -87,6 +87,25 @@ services:
     volumes:
       - {{ monitoring_config_dir }}/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
 
+  # RTSP→MSE/WebRTC/HLS restream for the CCTV strip. The camera RTSP URLs carry
+  # access tokens, so they come from the container env (./.env) and go2rtc expands
+  # the ${...} placeholders in go2rtc.yaml at load time — no plaintext on disk.
+  # Reached only via Caddy on the lab domain; the embed uses MSE (single HTTP port).
+  go2rtc:
+    image: {{ monitoring_go2rtc_image }}
+    restart: unless-stopped
+    environment:
+      GO2RTC_FRONT_URL: "${GO2RTC_FRONT_URL}"
+      GO2RTC_GARAGE_CARPORT_URL: "${GO2RTC_GARAGE_CARPORT_URL}"
+{% if monitoring_go2rtc_username %}
+      GO2RTC_USERNAME: "${GO2RTC_USERNAME}"
+      GO2RTC_PASSWORD: "${GO2RTC_PASSWORD}"
+{% endif %}
+    volumes:
+      - {{ monitoring_config_dir }}/go2rtc.yaml:/config/go2rtc.yaml:ro
+    ports:
+      - "{{ monitoring_go2rtc_api_port }}:{{ monitoring_go2rtc_api_port }}"
+
   grafana:
     image: {{ monitoring_grafana_image }}
     restart: unless-stopped
@@ -105,6 +124,10 @@ services:
       GF_AUTH_GENERIC_OAUTH_API_URL: "{{ monitoring_grafana_oidc_api_url }}"
       GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "{{ monitoring_grafana_role_path }}"
       GF_AUTH_SIGNOUT_REDIRECT_URL: "{{ monitoring_grafana_oidc_signout_url }}"
+      # Allow the CCTV text panel to render its go2rtc <iframe>. Scoped to the text
+      # panel only; Grafana stays behind Authentik OIDC. Not allow_embedding — that's
+      # for embedding Grafana elsewhere, which we don't do.
+      GF_PANELS_DISABLE_SANITIZE_HTML: "true"
     volumes:
       - grafanadata:/var/lib/grafana
       - {{ monitoring_config_dir }}/grafana/provisioning:/etc/grafana/provisioning:ro

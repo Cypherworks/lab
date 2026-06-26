@@ -1,0 +1,16 @@
+{# Managed by the monitoring role. RTSP→MSE/WebRTC/HLS restream for the CCTV strip.
+   The RTSP source URLs carry access tokens, so they never land here in plaintext:
+   go2rtc expands ${VAR} from the environment at load time (env injected via ./.env),
+   exactly like snmp_exporter's --config.expand-environment-variables pattern. #}
+api:
+  listen: ":{{ monitoring_go2rtc_api_port }}"
+{% if monitoring_go2rtc_username %}
+  username: ${GO2RTC_USERNAME}
+  password: ${GO2RTC_PASSWORD}
+{% endif %}
+
+# Restreams. The browser plays these via MSE (pure HTTP/WS — proxies cleanly through
+# Caddy on one TLS port). WebRTC needs direct UDP/TCP 8555 and is left for on-LAN use.
+streams:
+  front: ${GO2RTC_FRONT_URL}
+  garage_carport: ${GO2RTC_GARAGE_CARPORT_URL}

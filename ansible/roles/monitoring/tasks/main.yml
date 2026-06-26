@@ -53,10 +53,12 @@
     - { src: ntfy.yml.j2, dest: ntfy.yml }
     - { src: blackbox.yml.j2, dest: blackbox.yml }
     - { src: snmp.yml.j2, dest: snmp.yml }
+    - { src: go2rtc.yaml.j2, dest: go2rtc.yaml }
     - { src: grafana-datasource.yml.j2, dest: grafana/provisioning/datasources/datasource.yml }
     - { src: grafana-dashboards.yml.j2, dest: grafana/provisioning/dashboards/dashboards.yml }
     - { src: dashboards/lab-overview.json.j2, dest: grafana/dashboards/lab-overview.json }
     - { src: dashboards/lab-services-nas.json.j2, dest: grafana/dashboards/lab-services-nas.json }
+    - { src: dashboards/cctv.json.j2, dest: grafana/dashboards/cctv.json }
   notify: Restart monitoring
 
 - name: Render the monitoring env (secrets)

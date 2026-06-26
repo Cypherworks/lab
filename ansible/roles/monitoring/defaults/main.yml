@@ -19,6 +19,7 @@ monitoring_ntfy_image: "binwiederhier/ntfy:v2.11.0"
 monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
 monitoring_blackbox_image: "prom/blackbox-exporter:v0.25.0"
 monitoring_snmp_exporter_image: "prom/snmp-exporter:v0.26.0"
+monitoring_go2rtc_image: "alexxit/go2rtc:1.9.14"
 
 monitoring_retention: "30d"          # modest, given constrained storage
 monitoring_scrape_interval: "30s"
@@ -88,3 +89,23 @@ monitoring_snmp_v3_auth_password: ""         # SNMPv3 auth password
 monitoring_snmp_v3_priv_password: ""         # SNMPv3 privacy (encryption) password
 monitoring_snmp_v3_auth_protocol: "SHA"
 monitoring_snmp_v3_priv_protocol: "AES"
+
+# go2rtc CCTV restream. The two RTSP source URLs carry Scrypted access tokens, so
+# they are SECRETS — supplied by the deploy from SOPS, expanded from the container
+# env into go2rtc.yaml at load time (never written plaintext to the on-disk config).
+# go2rtc listens on one HTTP port (MSE/HLS/UI); Caddy fronts it on the lab domain and
+# the embed plays MSE (pure HTTP/WS, proxies cleanly). WebRTC would need direct
+# UDP/TCP 8555 so it's left for on-LAN use only — not published here.
+monitoring_go2rtc_api_port: 1984
+monitoring_go2rtc_front_url: ""              # rtsp://...  (SOPS — has an access token)
+monitoring_go2rtc_garage_carport_url: ""    # rtsp://...  (SOPS — has an access token)
+# Optional go2rtc Basic auth. Left empty by default: the auth boundary is Caddy TLS +
+# lab-only reachability + Grafana's Authentik OIDC. Enabling it would make the browser
+# prompt for credentials inside the iframe, breaking the seamless embed. Set both to
+# turn it on for direct (non-embed) access.
+monitoring_go2rtc_username: ""
+monitoring_go2rtc_password: ""
+# Browser-facing go2rtc base URL (Caddy front, lab domain) that the Grafana CCTV
+# iframe points at. The user's browser loads this, so it must be the Caddy route, not
+# the internal compose port. Set from the deploy (e.g. https://cctv.cypherworks.co.uk).
+monitoring_go2rtc_public_url: ""
