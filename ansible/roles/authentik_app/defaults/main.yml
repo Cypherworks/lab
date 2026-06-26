@@ -10,15 +10,17 @@ authentik_image: "ghcr.io/goauthentik/server:2025.6.4"
 authentik_compose_dir: /opt/authentik
 authentik_server_port: 9000
 
-# Postgres via the local haproxy_patroni frontend (follows the Patroni leader).
-authentik_pg_host: "127.0.0.1"
+# Postgres/Redis via the node's local HAProxy frontends — reached on the node's
+# lab IP (not loopback), because the containers run on the compose bridge, not
+# host networking. ansible_default_ipv4.address is the app node's VLAN-30 address.
+authentik_pg_host: "{{ ansible_default_ipv4.address }}"
 authentik_pg_port: 5000
 authentik_pg_name: authentik
 authentik_pg_user: authentik
 
 # Redis via the local HAProxy role:master frontend (Authentik has no Sentinel
 # support, so it must see a single endpoint; Sentinel drives the failover).
-authentik_redis_host: "127.0.0.1"
+authentik_redis_host: "{{ ansible_default_ipv4.address }}"
 authentik_redis_port: 6379
 
 # Secrets — from SOPS, never defaulted in real use:

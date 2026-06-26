@@ -1,20 +1,22 @@
 {# Managed by authentik_app. Server + worker only; data tier is external. #}
+{# NOT host networking: server and worker both bind :9000, so sharing the node's
+   netns made them collide (the worker won the bind and served broken pages). On
+   the default compose bridge each gets its own netns; only the server's :9000 is
+   published for Caddy. They reach the data tier via the node's lab IP, where the
+   HAProxy frontends bind (not loopback). #}
 services:
   server:
     image: {{ authentik_image }}
     restart: unless-stopped
     command: server
     env_file: ./.env
-    # host networking so the container reaches the node-local HAProxy frontends
-    # (127.0.0.1:5000 Postgres / 127.0.0.1:6379 Redis) and exposes the server on
-    # the app node's own address for Caddy to balance.
-    network_mode: host
+    ports:
+      - "9000:9000"
 
   worker:
     image: {{ authentik_image }}
     restart: unless-stopped
     command: worker
     env_file: ./.env
-    network_mode: host
     # No docker.sock mount: embedded-docker outpost management is deliberately
     # off (outposts are deployed as their own Incus services, not via this socket).

@@ -1,14 +1,16 @@
 ---
-# Local HAProxy on each Authentik app node, routing 127.0.0.1:5000 to the current
-# Patroni primary via the REST /primary healthcheck (200 only on the leader).
+# Local HAProxy on each Authentik app node, routing to the current Patroni primary
+# via the REST /primary healthcheck (200 only on the leader). Bound to the node's
+# lab IP (not loopback) so the authentik containers — on the compose bridge, not
+# host networking — can reach it via the node's address.
 
-haproxy_patroni_bind: "127.0.0.1:5000"
+haproxy_patroni_bind: "{{ ansible_default_ipv4.address }}:5000"
 haproxy_patroni_rest_port: 8008
 
 # Optional Redis master frontend (Authentik has no Sentinel support, so it reaches
 # Redis through this local endpoint, which follows the Sentinel-promoted master).
 # Set haproxy_redis_backends (from inventory) to enable; password comes from SOPS.
-haproxy_redis_bind: "127.0.0.1:6379"
+haproxy_redis_bind: "{{ ansible_default_ipv4.address }}:6379"
 haproxy_redis_backends: []
 haproxy_redis_password: ""
 
