@@ -12,3 +12,42 @@ entries:
       username: akadmin
     attrs:
       email: "{{ authentik_admin_email }}"
+
+  # Superadmin group — akadmin only, NOT bound to any application. Per-app access
+  # is granted via dedicated per-app groups (e.g. headscale-users), never this one.
+  # Membership is managed by hand; the blueprint only ensures the group exists.
+  - model: authentik_core.group
+    id: group-lab-admins
+    identifiers:
+      name: lab-admins
+    attrs:
+      name: lab-admins
+      is_superuser: true
+
+  # Branding on the default brand. Only branding_* fields are set here; the recovery
+  # blueprint sets flow_recovery on this same brand, and authentik merges per-field,
+  # so the two coexist. Logo/favicon paths + the media files come from the deploy.
+  - model: authentik_brands.brand
+    identifiers:
+      domain: authentik-default
+    attrs:
+      branding_title: "Cypher Works"
+{% if authentik_branding_logo_path %}
+      branding_logo: "{{ authentik_branding_logo_path }}"
+{% endif %}
+{% if authentik_branding_favicon_path %}
+      branding_favicon: "{{ authentik_branding_favicon_path }}"
+{% endif %}
+      # Crimson accent sampled from the logo. authentik has no documented variable
+      # list (it uses --ak-* and PatternFly --pf-* vars); these cover the accent on
+      # buttons/links/active states. Eyeball after first apply and adjust if needed.
+      branding_custom_css: |
+        :root {
+          --ak-accent: #c0392b;
+          --pf-global--primary-color--100: #c0392b;
+          --pf-global--primary-color--200: #a93226;
+          --pf-global--active-color--100: #c0392b;
+          --pf-global--active-color--400: #c0392b;
+          --pf-global--link--Color: #c0392b;
+          --pf-global--link--Color--hover: #a93226;
+        }
