@@ -1,6 +1,6 @@
 {# Headscale control-plane config. Managed by the headscale role. #}
 server_url: https://{{ headscale_domain }}
-listen_addr: 0.0.0.0:443
+listen_addr: {{ headscale_listen_addr }}
 metrics_listen_addr: 127.0.0.1:9090
 grpc_listen_addr: 127.0.0.1:50443
 

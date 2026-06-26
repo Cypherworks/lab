@@ -1,0 +1,29 @@
+# Managed by the sni_router role. Dedicated L4 SNI passthrough — no http server,
+# terminates no TLS. ssl_preread reads the SNI from the TLS ClientHello and the
+# raw connection is proxied on untouched (the full TLS handshake, including the
+# acme-tls/1 ALPN that Headscale's TLS-ALPN-01 cert renewal needs, happens
+# end-to-end between the client and the chosen backend).
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections 1024;
+}
+
+stream {
+    map $ssl_preread_server_name $sni_upstream {
+{% for route in sni_routes %}
+        {{ route.sni }}  {{ route.upstream }};
+{% endfor %}
+        default  {{ sni_default_upstream }};
+    }
+
+    server {
+        listen {{ sni_listen_port }};
+        ssl_preread on;
+        proxy_pass $sni_upstream;
+        proxy_timeout {{ sni_proxy_timeout }};
+    }
+}

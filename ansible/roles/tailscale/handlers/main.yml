@@ -1,0 +1,4 @@
+---
+# No handlers — tailscale up applies state directly. Placeholder for future
+# (e.g. restart tailscaled on config change).
+[]
