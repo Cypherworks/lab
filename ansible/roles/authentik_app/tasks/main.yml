@@ -43,9 +43,8 @@
     # (the blueprint reads creds via !Env).
     mode: "0755"
 
-# authentik file-watches the mounted dir and reconciles, so no restart is needed
-# for a blueprint change once the volume's in place (the compose change below
-# triggers the first recreate that mounts it).
+# authentik runs blueprint discovery at worker startup, not via a live file-watch,
+# so a re-rendered blueprint is only picked up on restart — hence the notify.
 - name: Render the Headscale OIDC blueprint
   become: true
   ansible.builtin.template:
@@ -55,6 +54,7 @@
     group: root
     # Readable by the container's non-root user (mounted in); no secret in the file.
     mode: "0644"
+  notify: Restart authentik
 
 - name: Render the Authentik env
   become: true
