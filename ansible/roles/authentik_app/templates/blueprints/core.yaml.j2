@@ -1,0 +1,14 @@
+# Managed by the authentik_app role. Core/global identity config (not tied to one
+# integration). authentik reconciles it from /blueprints alongside the others.
+version: 1
+metadata:
+  name: lab - core identity
+entries:
+  # Repoint the bootstrap superuser off a personal address so a human can own that
+  # address for their own account. Only the email is set — akadmin keeps its
+  # bootstrap password and stays the break-glass account.
+  - model: authentik_core.user
+    identifiers:
+      username: akadmin
+    attrs:
+      email: "{{ authentik_admin_email }}"

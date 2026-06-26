@@ -22,6 +22,12 @@ entries:
     attrs:
       name: Headscale
       client_type: confidential
+      # authentik 2026.5 added per-provider grant types; a blueprint that omits
+      # them leaves the provider with NONE, so the authorize is rejected as
+      # "invalid_request / malformed". Headscale needs the code flow + refresh.
+      grant_types:
+        - authorization_code
+        - refresh_token
       client_id: !Env HEADSCALE_OIDC_CLIENT_ID
       client_secret: !Env HEADSCALE_OIDC_CLIENT_SECRET
       authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]

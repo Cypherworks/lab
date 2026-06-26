@@ -45,15 +45,20 @@
 
 # authentik runs blueprint discovery at worker startup, not via a live file-watch,
 # so a re-rendered blueprint is only picked up on restart — hence the notify.
-- name: Render the Headscale OIDC blueprint
+# Add an integration by dropping templates/blueprints/<name>.yaml.j2 and adding
+# <name> to this loop.
+- name: Render the authentik blueprints
   become: true
   ansible.builtin.template:
-    src: blueprints/headscale.yaml.j2
-    dest: "{{ authentik_blueprints_dir }}/headscale.yaml"
+    src: "blueprints/{{ item }}.yaml.j2"
+    dest: "{{ authentik_blueprints_dir }}/{{ item }}.yaml"
     owner: root
     group: root
-    # Readable by the container's non-root user (mounted in); no secret in the file.
+    # Readable by the container's non-root user (mounted in); no secrets in the files.
     mode: "0644"
+  loop:
+    - headscale
+    - core
   notify: Restart authentik
 
 - name: Render the Authentik env
