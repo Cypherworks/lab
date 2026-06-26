@@ -48,7 +48,7 @@ oidc:
   issuer: {{ headscale_oidc_issuer }}
   client_id: {{ headscale_oidc_client_id }}
   client_secret: {{ headscale_oidc_client_secret }}
-  scope: ["openid", "profile", "email", "groups"]
+  scope: {{ headscale_oidc_scopes | to_json }}
   allowed_groups:
 {% for group in headscale_oidc_allowed_groups %}
     - {{ group }}

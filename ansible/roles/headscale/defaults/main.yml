@@ -24,3 +24,7 @@ headscale_oidc_client_id: ""
 headscale_oidc_client_secret: ""
 # Only members of this Authentik group may obtain the lab routes.
 headscale_oidc_allowed_groups: ["lab-admins"]
+# Requested scopes. Deliberately NOT "groups": that scope triggers Headscale's
+# "empty OIDC callback params" failure (headscale#2887), and Authentik's "profile"
+# scope already carries the groups claim that allowed_groups matches against.
+headscale_oidc_scopes: ["openid", "profile", "email"]
