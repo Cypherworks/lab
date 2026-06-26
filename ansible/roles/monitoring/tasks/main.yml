@@ -61,6 +61,17 @@
     - { src: dashboards/cctv.json.j2, dest: grafana/dashboards/cctv.json }
   notify: Restart monitoring
 
+- name: Render the HASS scrape token (0600 — docker-secret source for vmsingle)
+  become: true
+  ansible.builtin.template:
+    src: hass_token.j2
+    dest: "{{ monitoring_config_dir }}/hass_token"
+    owner: root
+    group: root
+    mode: "0600"
+  when: monitoring_hass_token | length > 0
+  notify: Restart monitoring
+
 - name: Render the monitoring env (secrets)
   become: true
   ansible.builtin.template:

@@ -5,11 +5,12 @@ services:
   vmsingle:
     image: {{ monitoring_vmsingle_image }}
     restart: unless-stopped
-    environment:
-      # HASS bearer token for the Home Assistant scrape. vmsingle expands the
-      # %{HASS_TOKEN} placeholder in scrape.yml from this env, so the token never
-      # lands in the on-disk scrape config. Empty when no HASS scrape (harmless).
-      HASS_TOKEN: "${HASS_TOKEN}"
+{% if monitoring_hass_token %}
+    # HASS scrape bearer token, mounted read-only at /run/secrets/hass_token and read
+    # by scrape.yml's credentials_file. Docker makes it readable to vmsingle's user.
+    secrets:
+      - hass_token
+{% endif %}
     command:
       - "--storageDataPath=/victoria-metrics-data"
       - "--retentionPeriod={{ monitoring_retention }}"
@@ -148,3 +149,11 @@ volumes:
   ntfycache:
   ntfydata:
   grafanadata:
+{% if monitoring_hass_token %}
+
+# HASS scrape token as a file-based docker secret — 0600 on the host, mounted
+# read-only into vmsingle at /run/secrets/hass_token.
+secrets:
+  hass_token:
+    file: {{ monitoring_config_dir }}/hass_token
+{% endif %}
