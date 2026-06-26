@@ -37,6 +37,10 @@ authentik_branding_files: []
 authentik_branding_logo_path: ""
 authentik_branding_favicon_path: ""
 
+# Login card heading — the default authentication flow's title, set by the core
+# blueprint. Empty leaves authentik's default ("Welcome to authentik!"). Site data.
+authentik_login_title: ""
+
 # Headscale OIDC: the blueprint reads the client id/secret via !Env (one source of
 # truth that the headscale role's OIDC config also reads from SOPS). The redirect
 # URI is the deployment's Headscale callback — supplied by the deploy, not defaulted

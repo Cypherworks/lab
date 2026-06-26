@@ -51,3 +51,14 @@ entries:
           --pf-global--link--Color: #c0392b;
           --pf-global--link--Color--hover: #a93226;
         }
+{% if authentik_login_title %}
+
+  # The login card heading — the default authentication flow's title (default is
+  # "Welcome to authentik!"), separate from the brand. Title only: the flow's
+  # stages, bindings, and login behaviour are untouched.
+  - model: authentik_flows.flow
+    identifiers:
+      slug: default-authentication-flow
+    attrs:
+      title: "{{ authentik_login_title }}"
+{% endif %}
