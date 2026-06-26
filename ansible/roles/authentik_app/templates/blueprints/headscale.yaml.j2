@@ -1,0 +1,46 @@
+# Managed by the authentik_app role. The Headscale OIDC integration as a blueprint
+# — authentik reconciles it from /blueprints. The client id/secret are read from
+# the container env via !Env (set from SOPS in the .env), so authentik and the
+# headscale role share one source of truth. Only the redirect URI is templated.
+version: 1
+metadata:
+  name: lab - headscale oidc
+entries:
+  # The group whose members are allowed onto the lab routes (Headscale's
+  # allowed_groups matches the groups claim against this).
+  - model: authentik_core.group
+    id: group-lab-admins
+    identifiers:
+      name: lab-admins
+    attrs:
+      name: lab-admins
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-headscale
+    identifiers:
+      name: Headscale
+    attrs:
+      name: Headscale
+      client_type: confidential
+      client_id: !Env [HEADSCALE_OIDC_CLIENT_ID]
+      client_secret: !Env [HEADSCALE_OIDC_CLIENT_SECRET]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+        - url: "{{ headscale_oidc_redirect_uri }}"
+          matching_mode: strict
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    id: app-headscale
+    identifiers:
+      slug: headscale
+    attrs:
+      name: Headscale
+      slug: headscale
+      provider: !KeyOf provider-headscale
+      policy_engine_mode: any
