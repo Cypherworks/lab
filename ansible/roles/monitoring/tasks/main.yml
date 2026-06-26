@@ -87,8 +87,9 @@
     pull: missing
 
 # ntfy auth: deny-all by default, so provision the publisher + subscriber users and
-# their topic ACLs. Idempotent — the add is skipped if the user already exists.
-- name: Read ntfy users (waits for ntfy, doubles as the idempotency check)
+# their topic ACLs. Idempotent — re-adding an existing user is tolerated: the add
+# returns "already exists", which failed_when treats as success rather than an error.
+- name: Wait for ntfy to be ready
   become: true
   ansible.builtin.command:
     cmd: "docker compose -f {{ monitoring_compose_dir }}/compose.yaml exec -T ntfy ntfy user list"
@@ -120,8 +121,9 @@
     - { name: "{{ monitoring_ntfy_user }}", password: "{{ monitoring_ntfy_user_password }}" }
   loop_control:
     label: "{{ item.name }}"
-  when: item.name not in monitoring_ntfy_users.stdout
-  changed_when: true
+  register: monitoring_ntfy_useradd
+  changed_when: monitoring_ntfy_useradd.rc == 0
+  failed_when: monitoring_ntfy_useradd.rc != 0 and 'already exists' not in monitoring_ntfy_useradd.stderr
   no_log: true
 
 - name: Set the ntfy topic ACLs (least privilege)
