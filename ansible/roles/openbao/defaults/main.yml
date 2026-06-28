@@ -1,0 +1,43 @@
+---
+# OpenBao — single-node, integrated-raft secrets manager, PKI-first. AWS KMS
+# auto-unseal so it recovers without a human on every restart. Installed from the
+# pinned upstream .deb (same pattern as the headscale role); the package ships the
+# openbao user, the systemd unit (User=openbao, EnvironmentFile=/etc/openbao/
+# openbao.env, -config=/etc/openbao/openbao.hcl), and a self-signed TLS cert under
+# /opt/openbao/tls that we use as the listener's bootstrap cert until the internal
+# PKI can issue one. Site-specific values (advertised addresses, KMS key, creds)
+# stay empty here and are set by the deploy — the role carries no site data.
+openbao_version: "2.5.5"
+openbao_arch: amd64
+openbao_release_base: "https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}"
+openbao_deb_url: "{{ openbao_release_base }}/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+
+# Raft data + the package's self-signed bootstrap cert (package defaults).
+openbao_data_dir: /opt/openbao/data
+openbao_tls_cert_file: /opt/openbao/tls/tls.crt
+openbao_tls_key_file: /opt/openbao/tls/tls.key
+
+# Listener bind. Generic default binds all interfaces; the deploy should pin this to
+# the instance's own address for least exposure (the address is site data).
+openbao_listen_address: "0.0.0.0:8200"
+
+# Addresses this node advertises. Raft needs cluster_addr; api_addr is advertised to
+# clients/peers. Set from the deploy to the instance's own address (site data).
+openbao_api_addr: ""        # e.g. https://<instance-ip>:8200
+openbao_cluster_addr: ""    # e.g. https://<instance-ip>:8201
+openbao_node_id: "{{ inventory_hostname }}"
+
+openbao_ui: true
+
+# mlock needs CAP_IPC_LOCK, which the unprivileged LXC container doesn't grant, so
+# disable it. The systemd unit already sets MemorySwapMax=0, so secrets still can't
+# be swapped to disk — the protection mlock would otherwise provide.
+openbao_disable_mlock: true
+
+# AWS KMS auto-unseal. The key id + region are not secret and live in openbao.hcl;
+# the AWS credentials ARE secret (deploy supplies them from SOPS) and are passed via
+# the systemd EnvironmentFile, never written into the config.
+openbao_kms_key_id: ""
+openbao_aws_region: ""
+openbao_aws_access_key_id: ""
+openbao_aws_secret_access_key: ""
