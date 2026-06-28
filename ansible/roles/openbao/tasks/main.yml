@@ -1,0 +1,45 @@
+---
+# Install OpenBao from the pinned upstream .deb (same pattern as the headscale role).
+# The package creates the openbao user/group, the systemd unit, /etc/openbao/, and a
+# self-signed TLS cert under /opt/openbao/tls.
+- name: Download the pinned OpenBao package
+  become: true
+  ansible.builtin.get_url:
+    url: "{{ openbao_deb_url }}"
+    dest: "/tmp/openbao_{{ openbao_version }}.deb"
+    mode: "0644"
+
+- name: Install OpenBao
+  become: true
+  ansible.builtin.apt:
+    deb: "/tmp/openbao_{{ openbao_version }}.deb"
+
+- name: Render the OpenBao auto-unseal credentials (systemd EnvironmentFile)
+  become: true
+  ansible.builtin.template:
+    src: openbao.env.j2
+    dest: /etc/openbao/openbao.env
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart openbao
+
+- name: Render the OpenBao config
+  become: true
+  ansible.builtin.template:
+    src: openbao.hcl.j2
+    dest: /etc/openbao/openbao.hcl
+    owner: root
+    group: openbao
+    mode: "0640"
+  notify: Restart openbao
+
+# Starts uninitialised + sealed; `bao operator init` is a one-time manual step (it
+# emits the recovery keys + root token to capture into the break-glass kit and SOPS).
+# Once initialised, the awskms seal auto-unseals on every subsequent start.
+- name: Enable and start OpenBao
+  become: true
+  ansible.builtin.systemd_service:
+    name: openbao
+    enabled: true
+    state: started
