@@ -1,0 +1,15 @@
+{# Managed by the vaultwarden role. Single Vaultwarden container, SQLite in /data.
+   Config + the admin token come from ./vaultwarden.env (env_file, so values pass to
+   the container literally — see the env template for why that matters). #}
+services:
+  vaultwarden:
+    image: {{ vaultwarden_image }}
+    restart: unless-stopped
+    env_file: ./vaultwarden.env
+    volumes:
+      - vaultwardendata:/data
+    ports:
+      - "{{ vaultwarden_http_port }}:80"
+
+volumes:
+  vaultwardendata:

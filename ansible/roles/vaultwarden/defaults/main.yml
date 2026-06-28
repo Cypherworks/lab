@@ -1,0 +1,34 @@
+---
+# Vaultwarden (Bitwarden-compatible password manager) on one Incus instance, via
+# docker compose. SQLite in the /data volume — self-contained, with the fewest
+# possible dependencies, as befits a root-of-trust service. Deliberately NOT behind
+# Authentik forward-auth: the vault is already zero-knowledge (the master password
+# derives the encryption key; the server can't decrypt it), and fronting it with the
+# IdP whose password it stores would create a circular lock-out and break the native
+# Bitwarden clients. Protected instead by its own master password + in-app 2FA, and
+# kept LAN/overlay-only via Caddy.
+
+vaultwarden_compose_dir: /opt/vaultwarden
+
+# Pin to a confirmed-current stable tag before apply (registry tag must exist).
+vaultwarden_image: "vaultwarden/server:1.36.0"
+
+# Host port -> the container's HTTP (:80). Caddy reverse-proxies to this and also
+# carries the websocket upgrade for live sync (modern Vaultwarden needs no separate
+# ws port).
+vaultwarden_http_port: 8080
+
+# Public URL Caddy serves it on; required for WebAuthn/2FA, attachments, and links.
+# Set by the deploy (the role stays domain-free).
+vaultwarden_domain: ""
+
+# Public signups. Off by default (secure-by-design). Bootstrap the first account via
+# the admin panel invite (works with signups disabled), or flip this true for a
+# single registration and back.
+vaultwarden_signups_allowed: false
+
+# Admin panel token — an argon2 PHC string, a secret supplied by the deploy from
+# all.sops.yml. Generate with:
+#   docker run --rm -it vaultwarden/server /vaultwarden hash
+# Empty disables the admin panel entirely.
+vaultwarden_admin_token: ""

@@ -1,0 +1,6 @@
+---
+- name: Restart vaultwarden
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ vaultwarden_compose_dir }}"
+    state: restarted
