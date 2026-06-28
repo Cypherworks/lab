@@ -24,6 +24,9 @@ scrape_configs:
 {{ labelled_job('node', monitoring_node_targets) -}}
 {{ labelled_job('blocky', monitoring_blocky_targets) -}}
 {{ labelled_job('patroni', monitoring_patroni_targets) -}}
+{# speedtest-tracker exposes a native Prometheus endpoint at /prometheus (no auth;
+   secured by an in-app source-IP allowlist set to this monitoring instance). #}
+{{ labelled_job('speedtest', monitoring_speedtest_targets, '/prometheus') -}}
 {% if monitoring_etcd_targets %}
   # etcd serves /metrics on the client port; if etcd has client TLS this needs a
   # scheme/cert, or etcd's --listen-metrics-urls set to a plain-HTTP endpoint.
