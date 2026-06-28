@@ -1,0 +1,59 @@
+---
+# Same shape as the monitoring/speedtest roles: Docker from the official repo, then
+# a compose stack. (A shared 'docker' role would DRY the install — noted, not done.)
+- name: Add Docker's official APT repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "https://download.docker.com/linux/debian"
+    suites: "{{ ansible_distribution_release }}"
+    components: [stable]
+    signed_by: https://download.docker.com/linux/debian/gpg
+
+- name: Install Docker Engine + Compose v2 plugin
+  become: true
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Create the vaultwarden directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ vaultwarden_compose_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render the vaultwarden env (config + admin token)
+  become: true
+  ansible.builtin.template:
+    src: vaultwarden.env.j2
+    dest: "{{ vaultwarden_compose_dir }}/vaultwarden.env"
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart vaultwarden
+
+- name: Render the vaultwarden compose
+  become: true
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ vaultwarden_compose_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Restart vaultwarden
+
+- name: Start the vaultwarden stack
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ vaultwarden_compose_dir }}"
+    state: present
+    pull: missing
