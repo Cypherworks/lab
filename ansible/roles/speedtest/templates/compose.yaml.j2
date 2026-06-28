@@ -1,0 +1,21 @@
+{# Managed by the speedtest role. Single linuxserver speedtest-tracker container,
+   SQLite in the /config volume. APP_KEY comes from ./.env interpolation. #}
+services:
+  speedtest-tracker:
+    image: {{ speedtest_image }}
+    restart: unless-stopped
+    environment:
+      PUID: "{{ speedtest_puid }}"
+      PGID: "{{ speedtest_pgid }}"
+      TZ: "{{ speedtest_timezone }}"
+      APP_KEY: "${APP_KEY}"
+      APP_URL: "{{ speedtest_app_url }}"
+      DB_CONNECTION: "sqlite"
+      SPEEDTEST_SCHEDULE: "{{ speedtest_schedule }}"
+    volumes:
+      - speedtestdata:/config
+    ports:
+      - "{{ speedtest_http_port }}:80"
+
+volumes:
+  speedtestdata:

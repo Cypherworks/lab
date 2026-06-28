@@ -1,0 +1,29 @@
+---
+# Speedtest Tracker on one Incus instance, via docker compose. Periodically runs
+# Ookla speedtests and graphs upload/download/latency over time — visibility into
+# the uncontrolled upstream NAT's actual quality. SQLite-backed (single /config
+# volume), so it carries no dependency on the lab's Patroni data tier.
+
+speedtest_compose_dir: /opt/speedtest
+
+# Pin to a confirmed-current stable tag before apply (registry tag must exist).
+speedtest_image: "lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls159"
+
+# Host port -> the container's HTTP (:80). Caddy reverse-proxies to this.
+speedtest_http_port: 8080
+
+# Public URL Caddy serves it on; the app builds absolute links from this. Set by
+# the deploy (the role stays domain-free).
+speedtest_app_url: ""
+
+# Test cadence (cron). Every 6 hours is plenty for trend-spotting without
+# saturating the line.
+speedtest_schedule: "0 */6 * * *"
+
+speedtest_timezone: "Etc/UTC"
+speedtest_puid: 1000
+speedtest_pgid: 1000
+
+# Laravel APP_KEY — encrypts stored data. A secret, supplied by the deploy from
+# all.sops.yml; generate with `openssl rand -base64 32` prefixed with `base64:`.
+speedtest_app_key: ""

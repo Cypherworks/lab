@@ -1,0 +1,6 @@
+---
+- name: Restart speedtest
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ speedtest_compose_dir }}"
+    state: restarted
