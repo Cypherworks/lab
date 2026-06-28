@@ -45,6 +45,7 @@ dns:
 # MFA + device identity happen here: enrolment redirects to Authentik (reached via
 # the EC2 passthrough), which enforces MFA. Only allowed_groups get authorised.
 oidc:
+  only_start_if_oidc_is_available: {{ headscale_oidc_only_start_if_available | string | lower }}
   issuer: {{ headscale_oidc_issuer }}
   client_id: {{ headscale_oidc_client_id }}
   client_secret: {{ headscale_oidc_client_secret }}

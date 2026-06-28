@@ -24,6 +24,12 @@ headscale_acme_email: lloyd@cypherworks.co.uk
 # flip on and devices enrol with MFA at the IdP. Until then, short-lived pre-auth
 # keys (issued by hand) bootstrap the routers + the laptop.
 headscale_oidc_enabled: false
+# Start headscale even when the OIDC provider (Authentik) is unreachable at boot.
+# False here on purpose: the EC2 reaches auth.cw over the very overlay headscale
+# runs, so a hard OIDC-at-startup dependency deadlocks (Authentik blip -> headscale
+# won't start -> overlay degrades -> can't reach Authentik). Starting anyway breaks
+# the loop; OIDC enrolment resumes by itself once Authentik is reachable again.
+headscale_oidc_only_start_if_available: false
 headscale_oidc_issuer: ""
 headscale_oidc_client_id: ""
 headscale_oidc_client_secret: ""
