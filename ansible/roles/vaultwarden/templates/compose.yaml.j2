@@ -1,6 +1,6 @@
 {# Managed by the vaultwarden role. Single Vaultwarden container, SQLite in /data.
-   Config + the admin token come from ./vaultwarden.env (env_file, so values pass to
-   the container literally — see the env template for why that matters). #}
+   Config + the admin token come from ./vaultwarden.env (compose interpolates that
+   file, so the argon2 token's $ chars are doubled there — see the env template). #}
 services:
   vaultwarden:
     image: {{ vaultwarden_image }}
