@@ -1,0 +1,8 @@
+---
+# Docker Engine + the Compose v2 plugin. Override to add packages if a consumer needs
+# more (e.g. docker-buildx-plugin).
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-compose-plugin

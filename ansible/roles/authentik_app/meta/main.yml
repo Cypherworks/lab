@@ -1,0 +1,4 @@
+---
+# Docker Engine + Compose v2 install (shared, so it lives in one place).
+dependencies:
+  - role: docker

@@ -1,27 +1,5 @@
 ---
-# Same shape as the monitoring/speedtest roles: Docker from the official repo, then
-# a compose stack. (A shared 'docker' role would DRY the install — noted, not done.)
-- name: Add Docker's official APT repository
-  become: true
-  ansible.builtin.deb822_repository:
-    name: docker
-    types: [deb]
-    uris: "https://download.docker.com/linux/debian"
-    suites: "{{ ansible_distribution_release }}"
-    components: [stable]
-    signed_by: https://download.docker.com/linux/debian/gpg
-
-- name: Install Docker Engine + Compose v2 plugin
-  become: true
-  ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-compose-plugin
-    state: present
-    update_cache: true
-
+# Docker itself comes from the shared `docker` role (meta dependency).
 - name: Create the vaultwarden directory
   become: true
   ansible.builtin.file:

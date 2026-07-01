@@ -1,0 +1,20 @@
+---
+# Docker Engine + Compose v2 from Docker's official APT repo. A shared mechanism the
+# service roles (monitoring, speedtest, vaultwarden, authentik_app) depend on via
+# meta, so the install lives in one place instead of being copied into each.
+- name: Add Docker's official APT repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "https://download.docker.com/linux/debian"
+    suites: "{{ ansible_distribution_release }}"
+    components: [stable]
+    signed_by: https://download.docker.com/linux/debian/gpg
+
+- name: Install Docker Engine + Compose v2 plugin
+  become: true
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+    update_cache: true
