@@ -41,3 +41,20 @@ openbao_kms_key_id: ""
 openbao_aws_region: ""
 openbao_aws_access_key_id: ""
 openbao_aws_secret_access_key: ""
+
+# --- PKI ---------------------------------------------------------------------
+# The PKI reconcile runs only once OpenBao is initialised and the root token is
+# supplied (from SOPS). Empty token = PKI step skipped. The root CA is generated
+# exactly once (guarded on an existing CA), so re-runs and post-restore runs never
+# overwrite it — the whole point of preserving CA continuity across a rebuild.
+openbao_root_token: ""
+openbao_pki_mount: pki
+openbao_pki_max_lease_ttl: "87600h"   # 10y ceiling for the root
+openbao_pki_root_ttl: "87600h"
+# Site data — set by the deploy. common_name names the root; the URLs are where
+# clients fetch the CA + CRL (served via Caddy). roles is a list of issuing roles:
+#   - { name: lab, allowed_domains: "example.com", allow_subdomains: true, max_ttl: "720h" }
+openbao_pki_root_common_name: ""
+openbao_pki_issuing_url: ""
+openbao_pki_crl_url: ""
+openbao_pki_roles: []

@@ -43,3 +43,9 @@
     name: openbao
     enabled: true
     state: started
+
+# PKI reconcile runs only once OpenBao is initialised and the root token is supplied
+# (from SOPS) — before that, the manual `bao operator init` hasn't happened yet.
+- name: Reconcile the PKI engine
+  ansible.builtin.include_tasks: pki.yml
+  when: openbao_root_token | length > 0
