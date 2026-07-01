@@ -29,8 +29,8 @@ bootstrap:
     - encoding: UTF8
     - data-checksums
   pg_hba:
-    - host replication replicator 10.200.0.0/16 md5
-    - host all all 10.200.0.0/16 md5
+    - host replication replicator {{ patroni_lab_cidr }} md5
+    - host all all {{ patroni_lab_cidr }} md5
     - local all all trust
 
 postgresql:

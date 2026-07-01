@@ -26,7 +26,7 @@
     dest: "{{ speedtest_compose_dir }}/compose.yaml"
     owner: root
     group: root
-    mode: "0640"
+    mode: "0600"
   notify: Restart speedtest
 
 - name: Start the speedtest stack

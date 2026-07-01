@@ -13,6 +13,9 @@ patroni_bootstrap_marker: "{{ patroni_conf_dir }}/.default-cluster-removed"
 patroni_venv: /opt/patroni
 patroni_version: "3.3.2"
 
+# CIDR allowed in pg_hba (replication + client). Site data — set by the deploy.
+patroni_lab_cidr: ""
+
 patroni_rest_user: patroni
 patroni_rest_port: 8008
 
