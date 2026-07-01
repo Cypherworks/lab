@@ -1,0 +1,9 @@
+{# Managed by the openbao role. #}
+[Unit]
+Description=OpenBao raft snapshot to S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/openbao-snapshot.sh

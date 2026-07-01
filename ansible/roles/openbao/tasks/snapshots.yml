@@ -1,0 +1,129 @@
+---
+# Daily raft snapshot to S3. The snapshot job authenticates via AppRole (snapshot-
+# only policy, short-lived token per run), so no standing admin token sits on the
+# box; the S3 upload uses the scoped openbao-snapshot IAM user. The AppRole secret_id
+# is generated once and guarded on its creds file, so re-runs don't churn it.
+- name: Install the AWS CLI for S3 uploads
+  become: true
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+    update_cache: true
+
+- name: Create the snapshot working dir
+  become: true
+  ansible.builtin.file:
+    path: "{{ openbao_snapshot_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Configure the snapshot AppRole + policy
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_root_token }}"
+    BAO_SKIP_VERIFY: "true"
+  block:
+    - name: Write the snapshot policy (read the raft snapshot path only)
+      ansible.builtin.command:
+        cmd: "bao policy write {{ openbao_snapshot_policy_name }} -"
+        stdin: |
+          path "sys/storage/raft/snapshot" {
+            capabilities = ["read"]
+          }
+      changed_when: true
+
+    - name: Enable the AppRole auth method
+      ansible.builtin.command:
+        cmd: "bao auth enable approle"
+      register: openbao_approle_enable
+      changed_when: openbao_approle_enable.rc == 0
+      failed_when:
+        - openbao_approle_enable.rc != 0
+        - "'path is already in use' not in openbao_approle_enable.stderr"
+
+    - name: Write the snapshot AppRole role
+      ansible.builtin.command:
+        argv:
+          - bao
+          - write
+          - "auth/approle/role/{{ openbao_snapshot_approle }}"
+          - "token_policies={{ openbao_snapshot_policy_name }}"
+          - "token_ttl=5m"
+          - "token_max_ttl=10m"
+          - "secret_id_ttl=0"
+          - "secret_id_num_uses=0"
+      changed_when: true
+
+    - name: Read the AppRole role_id
+      ansible.builtin.command:
+        cmd: "bao read -field=role_id auth/approle/role/{{ openbao_snapshot_approle }}/role-id"
+      register: openbao_approle_role_id
+      changed_when: false
+      no_log: true
+
+    - name: Check for an existing AppRole secret_id
+      become: true
+      ansible.builtin.stat:
+        path: "{{ openbao_snapshot_dir }}/approle.env"
+      register: openbao_approle_creds
+
+    - name: Generate a secret_id (once — guarded so re-runs don't rotate it)
+      ansible.builtin.command:
+        cmd: "bao write -field=secret_id -f auth/approle/role/{{ openbao_snapshot_approle }}/secret-id"
+      register: openbao_approle_secret_id
+      changed_when: true
+      no_log: true
+      when: not openbao_approle_creds.stat.exists
+
+    - name: Write the AppRole creds file
+      become: true
+      ansible.builtin.copy:
+        content: |
+          BAO_APPROLE_ROLE_ID={{ openbao_approle_role_id.stdout }}
+          BAO_APPROLE_SECRET_ID={{ openbao_approle_secret_id.stdout }}
+        dest: "{{ openbao_snapshot_dir }}/approle.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      when: not openbao_approle_creds.stat.exists
+
+- name: Write the S3 uploader credentials
+  become: true
+  ansible.builtin.template:
+    src: snapshot-aws.env.j2
+    dest: "{{ openbao_snapshot_dir }}/aws.env"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the snapshot script
+  become: true
+  ansible.builtin.template:
+    src: openbao-snapshot.sh.j2
+    dest: /usr/local/bin/openbao-snapshot.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the snapshot systemd units
+  become: true
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - openbao-snapshot.service
+    - openbao-snapshot.timer
+
+- name: Enable and start the snapshot timer
+  become: true
+  ansible.builtin.systemd_service:
+    name: openbao-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: true

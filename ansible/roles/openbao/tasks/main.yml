@@ -64,3 +64,10 @@
   when:
     - openbao_root_token | length > 0
     - openbao_oidc_enabled | bool
+
+# Daily raft snapshots to S3 (AppRole-authed) for DR.
+- name: Configure raft snapshots
+  ansible.builtin.include_tasks: snapshots.yml
+  when:
+    - openbao_root_token | length > 0
+    - openbao_snapshot_enabled | bool

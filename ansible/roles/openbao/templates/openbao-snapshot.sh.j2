@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Managed by the openbao role. Daily raft snapshot -> S3. AppRole login for a short-
+# lived, snapshot-only token; the scoped openbao-snapshot IAM user for the upload.
+# Retention is enforced by the bucket's 5-day lifecycle rule, not here.
+set -euo pipefail
+
+export BAO_ADDR="{{ openbao_api_addr }}"
+export BAO_SKIP_VERIFY=true
+
+# shellcheck source=/dev/null
+source "{{ openbao_snapshot_dir }}/approle.env"
+# shellcheck source=/dev/null
+source "{{ openbao_snapshot_dir }}/aws.env"
+
+token="$(bao write -field=token auth/approle/login \
+  role_id="${BAO_APPROLE_ROLE_ID}" secret_id="${BAO_APPROLE_SECRET_ID}")"
+
+snap="{{ openbao_snapshot_dir }}/openbao-$(date -u +%Y%m%d-%H%M%S).snapshot"
+trap 'rm -f "${snap}"' EXIT
+
+BAO_TOKEN="${token}" bao operator raft snapshot save "${snap}"
+aws s3 cp "${snap}" "s3://{{ openbao_snapshot_bucket }}/$(basename "${snap}")"
