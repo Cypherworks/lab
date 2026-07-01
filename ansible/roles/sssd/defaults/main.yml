@@ -11,6 +11,7 @@
 sssd_packages:
   - sssd
   - sssd-ldap
+  - sssd-tools        # sssctl — domain-status / cache diagnostics
   - libnss-sss
   - ldap-utils
 
