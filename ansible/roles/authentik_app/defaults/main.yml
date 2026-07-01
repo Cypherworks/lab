@@ -60,15 +60,12 @@ grafana_oidc_redirect_uri: ""
 authentik_admin_email: ""
 
 # LDAP outpost (SSSD host auth). All site data — set in the deploy. base_dn is what
-# the outpost serves; outpost_host is the public Authentik URL the container dials.
-# outpost_pk is a PINNED UUID: pinning it makes the auto-created service account's
-# username deterministic (ak-outpost-<pk, dashes stripped>), which lets the blueprint
-# set the SA's token key with no manual step (see blueprints/ldap.yaml.j2). Generate a
-# fresh UUID per deployment; never reuse another outpost's. ldap_outpost_token (the SA
-# token key) is a secret from SOPS.
+# the outpost serves; outpost_host is the public Authentik URL the container dials
+# back on. ldap_outpost_token (the SA token key / outpost AUTHENTIK_TOKEN) is a secret
+# from SOPS. The blueprint binds that key to the outpost's auto-created service
+# account (see blueprints/ldap.yaml.j2).
 authentik_ldap_base_dn: ""
 authentik_ldap_outpost_host: ""
-authentik_ldap_outpost_pk: ""
 ldap_outpost_token: ""
 
 # Secrets — from SOPS, never defaulted in real use:
