@@ -7,10 +7,15 @@ set -euo pipefail
 export BAO_ADDR="{{ openbao_api_addr }}"
 export BAO_SKIP_VERIFY=true
 
+# set -a so the sourced KEY=value lines are EXPORTED — the aws CLI reads its creds
+# from the environment, and a plain `source` only sets shell-local vars the aws
+# subprocess never sees.
+set -a
 # shellcheck source=/dev/null
 source "{{ openbao_snapshot_dir }}/approle.env"
 # shellcheck source=/dev/null
 source "{{ openbao_snapshot_dir }}/aws.env"
+set +a
 
 token="$(bao write -field=token auth/approle/login \
   role_id="${BAO_APPROLE_ROLE_ID}" secret_id="${BAO_APPROLE_SECRET_ID}")"
