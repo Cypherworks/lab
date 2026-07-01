@@ -5,14 +5,16 @@
 # is the identity/authorisation half.
 #
 # Deterministic outpost token (works around goauthentik/authentik#9711, which has
-# no blueprint field to set an outpost token directly): we PIN the outpost's pk, so
-# Authentik's auto-created service account has a predictable username —
-# `ak-outpost-<pk-with-dashes-stripped>` (confirmed against the embedded outpost in
-# an `ak export_blueprint` dump). We then create that SA's API token with a fixed
-# `key` from SOPS, so the outpost container's AUTHENTIK_TOKEN matches with zero
-# manual steps. The SA is created by the outpost's save signal, so the token entry
-# is ordered AFTER the outpost; if the SA isn't present on the very first apply it
-# self-heals on the next worker reconcile (still no human action).
+# no blueprint field to set an outpost token directly). A blueprint applies as ONE
+# transaction, so we can't reference the outpost's auto-created service account from
+# the same file — it doesn't exist until the outpost saves, and a failed !Find would
+# roll the whole blueprint (outpost included) back, a deadlock that never converges.
+# Instead we CREATE the service account explicitly, before the outpost, with the
+# username the outpost expects: `ak-outpost-<pk, dashes stripped>` (confirmed against
+# the embedded outpost in an `ak export_blueprint` dump). Outpost.user does a
+# get_or_create on that username, so the outpost ADOPTS this SA rather than making
+# its own. The token then references the SA by !KeyOf and sets a fixed `key` from
+# SOPS — all resolvable in the one transaction, single pass, zero manual steps.
 version: 1
 metadata:
   name: lab - ldap outpost
@@ -71,10 +73,25 @@ entries:
     attrs:
       enabled: true
 
-  # LDAP outpost, pk PINNED so its service-account username is deterministic (see
-  # header). We deploy the outpost container ourselves (its own compose service on
-  # the app nodes), so only the meaningful config keys are set; the docker/k8s
-  # deployment fields are irrelevant and left to default.
+  # The outpost's service account, created BEFORE the outpost with exactly the
+  # username the outpost derives from its pk (ak-outpost-<pk, dashes stripped>).
+  # Outpost.user get_or_creates on this username, so the outpost adopts this SA. This
+  # is what lets the token below resolve in the same transaction (see header).
+  - model: authentik_core.user
+    id: outpost-ldap-sa
+    identifiers:
+      username: "ak-outpost-{{ authentik_ldap_outpost_pk | replace('-', '') }}"
+    attrs:
+      username: "ak-outpost-{{ authentik_ldap_outpost_pk | replace('-', '') }}"
+      name: LDAP Outpost Service-Account
+      type: internal_service_account
+      path: goauthentik.io/outposts
+      is_active: true
+
+  # LDAP outpost, pk PINNED so its service-account username matches the SA above. We
+  # deploy the outpost container ourselves (its own compose service on the app
+  # nodes), so only the meaningful config keys are set; the docker/k8s deployment
+  # fields are irrelevant and left to default.
   - model: authentik_outposts.outpost
     id: outpost-ldap
     identifiers:
@@ -89,14 +106,17 @@ entries:
         authentik_host_insecure: false
         log_level: info
 
-  # The outpost SA's API token with a fixed key (from SOPS via !Env). username is
-  # derived from the pinned pk: ak-outpost-<pk, dashes stripped>.
+  # The SA's API token with a fixed key (from SOPS via !Env) — the outpost
+  # container's AUTHENTIK_TOKEN. References the SA by !KeyOf (created above), so no
+  # cross-transaction lookup.
   - model: authentik_core.token
     identifiers:
       identifier: ldap-outpost-api
     attrs:
-      user: !Find [authentik_core.user, [username, "ak-outpost-{{ authentik_ldap_outpost_pk | replace('-', '') }}"]]
+      user: !KeyOf outpost-ldap-sa
       intent: api
       key: !Env LDAP_OUTPOST_TOKEN
+      expiring: false
+      description: LDAP outpost API token (managed by the ldap blueprint)
       expiring: false
       description: LDAP outpost API token (managed by the ldap blueprint)
