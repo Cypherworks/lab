@@ -23,6 +23,18 @@ services:
     restart: unless-stopped
     command: worker
     env_file: ./.env
+{% if ldaps_cert and ldaps_key %}
+    # LDAPS server cert/key for the ldap blueprint's certificatekeypair, read via
+    # !Env. Multi-line PEMs can't live in .env (single-line only), so they're set
+    # here — the worker is what applies blueprints. This compose file is 0640
+    # root:root and is NOT mounted into the container, so the key isn't exposed in a
+    # container-readable file. #40 tracks automating this.
+    environment:
+      LDAPS_CERT: |
+        {{ ldaps_cert | indent(8) }}
+      LDAPS_KEY: |
+        {{ ldaps_key | indent(8) }}
+{% endif %}
     volumes:
       - {{ authentik_blueprints_dir }}:/blueprints/custom:ro
       - {{ authentik_media_dir }}:/media

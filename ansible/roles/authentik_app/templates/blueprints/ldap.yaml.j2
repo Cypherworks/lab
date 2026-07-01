@@ -29,10 +29,27 @@ entries:
     attrs:
       name: ssh-users
 
+{% if ldaps_cert and ldaps_key %}
+  # LDAPS server cert for the outpost's 6636 listener, from OpenBao's infra PKI role
+  # (CN ldap.cypherworks.co.uk, IP SANs = the app nodes SSSD dials). Issued once, held
+  # in SOPS, injected via !Env (the multi-line PEMs are set on the worker's compose
+  # environment, kept out of any container-readable file). SSSD trusts the OpenBao CA
+  # and validates the outpost cert against it. #40 tracks automating the rotation.
+  # Guarded on the cert being present: without it the outpost falls back to a
+  # self-signed cert on 6636 (fine to stand up; SSSD trust needs the CA-signed one).
+  - model: authentik_crypto.certificatekeypair
+    id: ldaps-cert
+    identifiers:
+      name: ldaps-outpost
+    attrs:
+      name: ldaps-outpost
+      certificate_data: !Env LDAPS_CERT
+      key_data: !Env LDAPS_KEY
+{% endif %}
+
   # LDAP provider. Field set verified against LDAPProviderSerializer. base_dn is site
-  # data (deploy). No certificate yet: the outpost serves LDAPS on 6636 with a
-  # self-signed cert; SSSD trusts it in the host step, and we swap to an internal-CA
-  # cert in the hardening step.
+  # data (deploy). certificate = the CA-signed keypair above (when present), so both
+  # outpost instances serve it on 6636 (replaces the outpost's self-signed default).
   - model: authentik_providers_ldap.ldapprovider
     id: provider-ldap
     identifiers:
@@ -40,6 +57,9 @@ entries:
     attrs:
       name: LDAP
       base_dn: "{{ authentik_ldap_base_dn }}"
+{% if ldaps_cert and ldaps_key %}
+      certificate: !KeyOf ldaps-cert
+{% endif %}
       # The "Bind flow" — reuse the default authentication flow (password stage
       # already includes the LDAPBackend + InbuiltBackend, per the export).
       authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
