@@ -127,3 +127,59 @@ entries:
       key: !Env LDAP_OUTPOST_TOKEN
       expiring: false
       description: LDAP outpost API token (managed by the ldap blueprint)
+
+  # --- LDAP search/bind account ------------------------------------------------
+  # SSSD binds as this service account to look users up (then binds as each user to
+  # authenticate them). It needs the "search full LDAP directory" permission to see
+  # ssh-users members — granted via a role attached to a group it belongs to.
+  - model: authentik_rbac.role
+    id: role-ldap-search
+    identifiers:
+      name: ldap-search
+    attrs:
+      name: ldap-search
+      permissions:
+        - authentik_providers_ldap.search_full_directory
+
+  - model: authentik_core.user
+    id: user-ldap-search
+    identifiers:
+      username: ldap-search
+    attrs:
+      username: ldap-search
+      name: LDAP Search
+      type: service_account
+      path: goauthentik.io/service-accounts
+
+  # Carries the role to the user (roles attach to groups; users inherit via
+  # membership) and gates the LDAP app for it — so the account can bind.
+  - model: authentik_core.group
+    id: group-ldap-search
+    identifiers:
+      name: ldap-search
+    attrs:
+      name: ldap-search
+      roles:
+        - !KeyOf role-ldap-search
+      users:
+        - !KeyOf user-ldap-search
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-ldap
+      group: !KeyOf group-ldap-search
+      order: 1
+    attrs:
+      enabled: true
+
+  # App-password token — the bind credential SSSD presents (ldap_default_authtok).
+  # Fixed key from SOPS via !Env, same pattern as the outpost token.
+  - model: authentik_core.token
+    identifiers:
+      identifier: ldap-search-password
+    attrs:
+      user: !KeyOf user-ldap-search
+      intent: app_password
+      key: !Env LDAP_SEARCH_PASSWORD
+      expiring: false
+      description: LDAP search/bind app password (managed by the ldap blueprint)

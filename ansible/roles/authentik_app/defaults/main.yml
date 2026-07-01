@@ -71,6 +71,8 @@ authentik_admin_email: ""
 authentik_ldap_base_dn: ""
 authentik_ldap_outpost_host: ""
 ldap_outpost_token: ""
+# App-password key for the ldap-search bind account — SSSD's bind credential. SOPS.
+ldap_search_password: ""
 # LDAPS server cert/key (PEM) for the outpost's 6636 listener, from SOPS. Empty =
 # the outpost serves a self-signed cert and the provider certificate is left unset.
 ldaps_cert: ""
