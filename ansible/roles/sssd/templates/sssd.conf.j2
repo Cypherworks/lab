@@ -1,0 +1,41 @@
+# Managed by the sssd role. LDAP identity (NSS) against the Authentik LDAP outpost.
+# Identity only — no PAM/auth wiring here (see the role header).
+[sssd]
+config_file_version = 2
+services = nss
+domains = {{ sssd_domain_name }}
+
+[nss]
+default_shell = {{ sssd_default_shell }}
+fallback_homedir = {{ sssd_fallback_homedir }}
+
+[domain/{{ sssd_domain_name }}]
+id_provider = ldap
+ldap_uri = {{ sssd_ldap_uris | join(', ') }}
+ldap_search_base = {{ sssd_ldap_base_dn }}
+ldap_user_search_base = {{ sssd_ldap_user_search_base }}
+ldap_group_search_base = {{ sssd_ldap_group_search_base }}
+
+# Search/bind account. authtok is the app password (0600 file keeps it protected).
+ldap_default_bind_dn = {{ sssd_ldap_bind_dn }}
+ldap_default_authtok = {{ ldap_search_password }}
+
+# LDAPS, validated against the OpenBao CA.
+ldap_tls_reqcert = demand
+ldap_tls_cacert = {{ sssd_ldap_ca_cert_path }}
+
+# Authentik LDAP schema (hybrid AD/rfc2307bis). Login name = cn (uid is a hash).
+ldap_schema = rfc2307bis
+ldap_user_object_class = user
+ldap_user_name = cn
+ldap_user_uid_number = uidNumber
+ldap_user_gid_number = gidNumber
+ldap_user_home_directory = homeDirectory
+ldap_user_gecos = displayName
+ldap_user_member_of = memberOf
+ldap_group_object_class = group
+ldap_group_name = cn
+ldap_group_gid_number = gidNumber
+ldap_group_member = member
+
+enumerate = {{ 'true' if sssd_enumerate else 'false' }}

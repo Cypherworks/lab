@@ -1,0 +1,48 @@
+---
+# Identity-only SSSD: installs SSSD, writes the LDAP config + CA, points NSS at it.
+# No PAM, no sshd — cannot affect login or sudo. Verify with `id <user>` / `getent`.
+- name: Install SSSD and LDAP client packages
+  become: true
+  ansible.builtin.apt:
+    name: "{{ sssd_packages }}"
+    state: present
+    update_cache: true
+
+- name: Install the OpenBao CA the outpost's LDAPS cert chains to
+  become: true
+  ansible.builtin.copy:
+    content: "{{ sssd_ldap_ca_cert }}"
+    dest: "{{ sssd_ldap_ca_cert_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart sssd
+
+- name: Render the SSSD config
+  become: true
+  ansible.builtin.template:
+    src: sssd.conf.j2
+    dest: /etc/sssd/sssd.conf
+    owner: root
+    group: root
+    # 0600 is mandatory — sssd refuses to start on a looser config, and it holds the
+    # bind app password.
+    mode: "0600"
+  notify: Restart sssd
+
+- name: Point NSS at SSSD for passwd/group
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/nsswitch.conf
+    regexp: "^{{ item.db }}:"
+    line: "{{ item.db }}: {{ item.value }}"
+  loop: "{{ sssd_nsswitch }}"
+  loop_control:
+    label: "{{ item.db }}"
+
+- name: Enable and start SSSD
+  become: true
+  ansible.builtin.systemd_service:
+    name: sssd
+    enabled: true
+    state: started
