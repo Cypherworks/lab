@@ -75,8 +75,12 @@ entries:
 
   # The outpost's service account, created BEFORE the outpost with exactly the
   # username the outpost derives from its pk (ak-outpost-<pk, dashes stripped>).
-  # Outpost.user get_or_creates on this username, so the outpost adopts this SA. This
-  # is what lets the token below resolve in the same transaction (see header).
+  # Outpost.user get_or_creates on this username, so the outpost adopts this SA and
+  # assigns it the view_outpost permission when it accesses .user. This is what lets
+  # the token below resolve in the same transaction (see header).
+  # type is `service_account`, NOT `internal_service_account`: the serializer rejects
+  # setting the internal type ("Setting a user to internal service account is not
+  # allowed"). A regular service account works — it's a machine identity with a token.
   - model: authentik_core.user
     id: outpost-ldap-sa
     identifiers:
@@ -84,7 +88,7 @@ entries:
     attrs:
       username: "ak-outpost-{{ authentik_ldap_outpost_pk | replace('-', '') }}"
       name: LDAP Outpost Service-Account
-      type: internal_service_account
+      type: service_account
       path: goauthentik.io/outposts
       is_active: true
 
