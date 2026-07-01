@@ -65,6 +65,7 @@
     - nas
     - grafana
     - openbao
+    - ldap
   notify: Restart authentik
 
 - name: Render the Authentik env

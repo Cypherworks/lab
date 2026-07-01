@@ -1,0 +1,102 @@
+# Managed by the authentik_app role. LDAP provider + outpost for SSSD host auth.
+# Hosts run SSSD against the LDAP outpost; users in ssh-users get a POSIX identity
+# and can log in (home dirs auto-created by pam_mkhomedir) and sudo (password auth
+# against Authentik). The SSH *cert* is signed separately by OpenBao's SSH CA; this
+# is the identity/authorisation half.
+#
+# Deterministic outpost token (works around goauthentik/authentik#9711, which has
+# no blueprint field to set an outpost token directly): we PIN the outpost's pk, so
+# Authentik's auto-created service account has a predictable username —
+# `ak-outpost-<pk-with-dashes-stripped>` (confirmed against the embedded outpost in
+# an `ak export_blueprint` dump). We then create that SA's API token with a fixed
+# `key` from SOPS, so the outpost container's AUTHENTIK_TOKEN matches with zero
+# manual steps. The SA is created by the outpost's save signal, so the token entry
+# is ordered AFTER the outpost; if the SA isn't present on the very first apply it
+# self-heals on the next worker reconcile (still no human action).
+version: 1
+metadata:
+  name: lab - ldap outpost
+entries:
+  # Per-app access group. Membership grants a POSIX identity + host login. Gates the
+  # application (policy binding below) — default-deny, so non-members can't bind.
+  - model: authentik_core.group
+    id: group-ssh-users
+    identifiers:
+      name: ssh-users
+    attrs:
+      name: ssh-users
+
+  # LDAP provider. Field set verified against LDAPProviderSerializer. base_dn is site
+  # data (deploy). No certificate yet: the outpost serves LDAPS on 6636 with a
+  # self-signed cert; SSSD trusts it in the host step, and we swap to an internal-CA
+  # cert in the hardening step.
+  - model: authentik_providers_ldap.ldapprovider
+    id: provider-ldap
+    identifiers:
+      name: LDAP
+    attrs:
+      name: LDAP
+      base_dn: "{{ authentik_ldap_base_dn }}"
+      # The "Bind flow" — reuse the default authentication flow (password stage
+      # already includes the LDAPBackend + InbuiltBackend, per the export).
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      # cached = run the auth flow then cache the bind (Authentik's documented
+      # default); direct = always re-run the flow. Cached is fine for SSSD.
+      bind_mode: cached
+      search_mode: cached
+      # Password-only login (belt-and-braces sudo). MFA-over-LDAP would force users
+      # to append a TOTP to the password — not wanted here.
+      mfa_support: false
+      # POSIX id ranges. uidNumber/gidNumber are derived from these.
+      uid_start_number: 2000
+      gid_start_number: 4000
+
+  # Application gates who may bind: only ssh-users members (policy binding below).
+  - model: authentik_core.application
+    id: app-ldap
+    identifiers:
+      slug: ldap
+    attrs:
+      name: LDAP
+      slug: ldap
+      provider: !KeyOf provider-ldap
+      policy_engine_mode: any
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-ldap
+      group: !KeyOf group-ssh-users
+      order: 0
+    attrs:
+      enabled: true
+
+  # LDAP outpost, pk PINNED so its service-account username is deterministic (see
+  # header). We deploy the outpost container ourselves (its own compose service on
+  # the app nodes), so only the meaningful config keys are set; the docker/k8s
+  # deployment fields are irrelevant and left to default.
+  - model: authentik_outposts.outpost
+    id: outpost-ldap
+    identifiers:
+      pk: "{{ authentik_ldap_outpost_pk }}"
+    attrs:
+      name: LDAP
+      type: ldap
+      providers:
+        - !KeyOf provider-ldap
+      config:
+        authentik_host: "{{ authentik_ldap_outpost_host }}"
+        authentik_host_insecure: false
+        log_level: info
+
+  # The outpost SA's API token with a fixed key (from SOPS via !Env). username is
+  # derived from the pinned pk: ak-outpost-<pk, dashes stripped>.
+  - model: authentik_core.token
+    identifiers:
+      identifier: ldap-outpost-api
+    attrs:
+      user: !Find [authentik_core.user, [username, "ak-outpost-{{ authentik_ldap_outpost_pk | replace('-', '') }}"]]
+      intent: api
+      key: !Env LDAP_OUTPOST_TOKEN
+      expiring: false
+      description: LDAP outpost API token (managed by the ldap blueprint)
