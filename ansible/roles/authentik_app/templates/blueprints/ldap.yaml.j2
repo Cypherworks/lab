@@ -60,14 +60,14 @@ entries:
 {% if ldaps_cert and ldaps_key %}
       certificate: !KeyOf ldaps-cert
 {% endif %}
-      # Bind flow = authentication_flow: "authentication when the app is accessed by
-      # an un-authenticated user", i.e. an LDAP bind. Its password stage validates the
-      # bind credential (incl. app passwords, via TokenBackend). Leaving this unset
-      # made binds fall back to authorization_flow and reject valid app passwords.
-      # authorization_flow is the provider-authorization flow (implicit consent — no
-      # interactive consent over LDAP).
+      # BOTH flows are default-authentication-flow, and both must be — the outpost
+      # runs authorization_flow during an UNAUTHENTICATED "warmup", so it has to be an
+      # authentication-designation flow (authentication: none); the consent flows are
+      # require_authenticated and throw FlowNonApplicable there. authentication_flow
+      # validates the bind credential (its password stage accepts app passwords via
+      # TokenBackend). Unbind = invalidation_flow.
       authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       # cached = run the auth flow then cache the bind (Authentik's documented
       # default); direct = always re-run the flow. Cached is fine for SSSD.
