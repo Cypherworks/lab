@@ -1,0 +1,58 @@
+# Managed by the authentik_app role. OpenBao OIDC SSO — mirrors the grafana pattern.
+# Per-app group (openbao-users) gates the application (default-deny). The redirect
+# URIs are OpenBao's UI + CLI callbacks. Client id/secret via !Env (SOPS). The app
+# slug (openbao) sets the issuer OpenBao points its oidc_discovery_url at.
+version: 1
+metadata:
+  name: lab - openbao oidc
+entries:
+  - model: authentik_core.group
+    id: group-openbao-users
+    identifiers:
+      name: openbao-users
+    attrs:
+      name: openbao-users
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-openbao
+    identifiers:
+      name: OpenBao
+    attrs:
+      name: OpenBao
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env OPENBAO_OIDC_CLIENT_ID
+      client_secret: !Env OPENBAO_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+{% for uri in openbao_oidc_redirect_uris %}
+        - url: "{{ uri }}"
+          matching_mode: strict
+{% endfor %}
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    id: app-openbao
+    identifiers:
+      slug: openbao
+    attrs:
+      name: OpenBao
+      slug: openbao
+      provider: !KeyOf provider-openbao
+      policy_engine_mode: any
+
+  # Restrict to openbao-users (default-deny).
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-openbao
+      group: !KeyOf group-openbao-users
+      order: 0
+    attrs:
+      enabled: true

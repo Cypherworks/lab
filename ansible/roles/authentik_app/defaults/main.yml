@@ -73,3 +73,9 @@ nas_oidc_client_id: ""
 nas_oidc_client_secret: ""
 grafana_oidc_client_id: ""
 grafana_oidc_client_secret: ""
+# OpenBao OIDC — the blueprint reads the client id/secret via !Env (same SOPS source
+# the openbao role's OIDC config reads). redirect_uris are OpenBao's UI + CLI
+# callbacks and must match the openbao role's allowed_redirect_uris exactly.
+openbao_oidc_client_id: ""
+openbao_oidc_client_secret: ""
+openbao_oidc_redirect_uris: []

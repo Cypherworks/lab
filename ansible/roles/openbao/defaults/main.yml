@@ -71,3 +71,21 @@ openbao_listener_cert_role: ""
 openbao_listener_cert_ttl: "2160h"   # 90d
 openbao_listener_common_name: ""
 openbao_listener_ip_sans: ""
+
+# --- OIDC (human login via Authentik) ---------------------------------------
+# Enables `bao login -method=oidc` so humans authenticate through Authentik instead
+# of copy-pasting a token. Circular-dependency-safe: this is the human path only —
+# machine auth stays on AppRole/token, so if Authentik is down you fall back to a
+# token / the recovery keys. Requires the root token; disabled leaves token login.
+openbao_oidc_enabled: false
+openbao_oidc_discovery_url: ""
+openbao_oidc_client_id: ""
+openbao_oidc_client_secret: ""
+openbao_oidc_default_role: "default"
+# OIDC login roles. Each: name, token_policies (list), allowed_redirect_uris (list),
+# and optional user_claim / groups_claim / oidc_scopes / ttl.
+openbao_oidc_roles: []
+
+# Named ACL policies to manage (idempotent `bao policy write`). Each: name, rules
+# (the HCL policy body). Lets OIDC users get real policies without the root token.
+openbao_policies: []

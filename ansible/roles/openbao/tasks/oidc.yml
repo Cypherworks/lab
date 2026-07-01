@@ -1,0 +1,58 @@
+---
+# Human login via Authentik OIDC. Idempotent: policies and the config/role writes
+# are safe to re-apply; enabling the auth method tolerates "already in use". All
+# commands use the root token from SOPS.
+- name: Configure OpenBao OIDC (Authentik)
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_root_token }}"
+    BAO_SKIP_VERIFY: "true"
+  block:
+    - name: Write the ACL policies
+      ansible.builtin.command:
+        cmd: "bao policy write {{ item.name }} -"
+        stdin: "{{ item.rules }}"
+      loop: "{{ openbao_policies }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+
+    - name: Enable the OIDC auth method
+      ansible.builtin.command:
+        cmd: "bao auth enable oidc"
+      register: openbao_oidc_enable
+      changed_when: openbao_oidc_enable.rc == 0
+      failed_when:
+        - openbao_oidc_enable.rc != 0
+        - "'path is already in use' not in openbao_oidc_enable.stderr"
+
+    - name: Write the OIDC config
+      ansible.builtin.command:
+        argv:
+          - bao
+          - write
+          - auth/oidc/config
+          - "oidc_discovery_url={{ openbao_oidc_discovery_url }}"
+          - "oidc_client_id={{ openbao_oidc_client_id }}"
+          - "oidc_client_secret={{ openbao_oidc_client_secret }}"
+          - "default_role={{ openbao_oidc_default_role }}"
+      changed_when: true
+      no_log: true
+
+    - name: Write the OIDC login roles
+      ansible.builtin.command:
+        argv:
+          - bao
+          - write
+          - "auth/oidc/role/{{ item.name }}"
+          - "role_type=oidc"
+          - "user_claim={{ item.user_claim | default('sub') }}"
+          - "groups_claim={{ item.groups_claim | default('groups') }}"
+          - "oidc_scopes={{ item.oidc_scopes | default('profile,email') }}"
+          - "allowed_redirect_uris={{ item.allowed_redirect_uris | join(',') }}"
+          - "token_policies={{ item.token_policies | join(',') }}"
+          - "ttl={{ item.ttl | default('1h') }}"
+      loop: "{{ openbao_oidc_roles }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true

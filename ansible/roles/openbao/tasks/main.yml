@@ -57,3 +57,10 @@
   when:
     - openbao_root_token | length > 0
     - openbao_listener_cert_role | length > 0
+
+# Human login via Authentik OIDC (machine auth stays on AppRole/token).
+- name: Configure OIDC login
+  ansible.builtin.include_tasks: oidc.yml
+  when:
+    - openbao_root_token | length > 0
+    - openbao_oidc_enabled | bool

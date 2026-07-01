@@ -86,6 +86,7 @@
     - invitation
     - nas
     - grafana
+    - openbao
   notify: Restart authentik
 
 - name: Render the Authentik env
