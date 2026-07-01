@@ -98,7 +98,10 @@ openbao_policies: []
 # <mount>/config/ca) to the hosts.
 openbao_ssh_enabled: false
 openbao_ssh_mount: ssh-client-signer
-openbao_ssh_default_extensions: '{"permit-pty":""}'
+# A real map (not a string) — SSH cert extensions are a map field; the role is
+# written as a JSON body so it types correctly.
+openbao_ssh_default_extensions:
+  permit-pty: ""
 openbao_ssh_allowed_extensions: "permit-pty,permit-port-forwarding"
 # Signing roles. Each: name, allowed_users (comma list or *), and optional ttl /
 # default_extensions / allowed_extensions.

@@ -31,18 +31,20 @@
       when: openbao_ssh_ca.rc != 0 or (openbao_ssh_ca.stdout | trim | length == 0)
       changed_when: true
 
+    # Written as a JSON body on stdin (`bao write <path> -`) so default_extensions is
+    # typed as a map, not a string (a k=v CLI arg would stringify it).
     - name: Create the SSH signing roles
       ansible.builtin.command:
-        argv:
-          - bao
-          - write
-          - "{{ openbao_ssh_mount }}/roles/{{ item.name }}"
-          - key_type=ca
-          - allow_user_certificates=true
-          - "allowed_users={{ item.allowed_users | default('*') }}"
-          - "default_extensions={{ item.default_extensions | default(openbao_ssh_default_extensions) }}"
-          - "allowed_extensions={{ item.allowed_extensions | default(openbao_ssh_allowed_extensions) }}"
-          - "ttl={{ item.ttl | default('1h') }}"
+        cmd: "bao write {{ openbao_ssh_mount }}/roles/{{ item.name }} -"
+        stdin: "{{ openbao_ssh_role_body | to_json }}"
+      vars:
+        openbao_ssh_role_body:
+          key_type: ca
+          allow_user_certificates: true
+          allowed_users: "{{ item.allowed_users | default('*') }}"
+          default_extensions: "{{ item.default_extensions | default(openbao_ssh_default_extensions) }}"
+          allowed_extensions: "{{ item.allowed_extensions | default(openbao_ssh_allowed_extensions) }}"
+          ttl: "{{ item.ttl | default('1h') }}"
       loop: "{{ openbao_ssh_roles }}"
       loop_control:
         label: "{{ item.name }}"
