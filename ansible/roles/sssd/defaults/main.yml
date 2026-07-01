@@ -1,0 +1,51 @@
+---
+# SSSD LDAP client against the Authentik LDAP outpost — IDENTITY (NSS) ONLY.
+# id_provider=ldap gives the host LDAP-backed users/groups (getent, id). This role
+# deliberately does NOT touch PAM or sshd: it can't affect login or sudo. The auth
+# side (PAM sudo password, ssh-users access filter, pam_mkhomedir) and the SSH CA
+# trust are a separate, carefully-rolled-out step.
+#
+# Site data (uris, bases, bind DN, CA cert) is set by the deploy; the bind password
+# resolves from SOPS (ldap_search_password, shared with the Authentik blueprint).
+
+sssd_packages:
+  - sssd
+  - sssd-ldap
+  - libnss-sss
+  - ldap-utils
+
+sssd_domain_name: cypherworks
+
+# LDAP outpost endpoints — per-node LDAPS, SSSD fails over between them. Site data.
+sssd_ldap_uris: []            # e.g. [ldaps://10.200.30.40:636, ldaps://10.200.30.41:636]
+sssd_ldap_base_dn: ""          # e.g. dc=ldap,dc=cypherworks,dc=co,dc=uk
+sssd_ldap_user_search_base: "ou=users,{{ sssd_ldap_base_dn }}"
+sssd_ldap_group_search_base: "ou=groups,{{ sssd_ldap_base_dn }}"
+
+# Search/bind account (the ldap-search service account). authtok = its app password
+# (ldap_search_password, from SOPS).
+sssd_ldap_bind_dn: ""          # e.g. cn=ldap-search,ou=users,dc=ldap,cypherworks…
+ldap_search_password: ""
+
+# OpenBao CA the outpost's LDAPS cert chains to. reqcert=demand validates against it.
+# sssd_ldap_ca_cert is the PEM (public, not secret); written to sssd_ldap_ca_cert_path.
+sssd_ldap_ca_cert: ""
+sssd_ldap_ca_cert_path: /etc/sssd/openbao-ca.pem
+
+# Authentik LDAP schema is a hybrid (AD-ish objectClass=user/group + posixAccount +
+# rfc2307bis member DNs). The login name is `cn` — `uid` is a hash, so the rfc2307
+# default (name=uid) would surface usernames as hashes. No loginShell attribute is
+# served, so a default shell is required or logins get no shell.
+sssd_default_shell: /bin/bash
+sssd_fallback_homedir: /home/%u
+
+# NSS databases to point at SSSD. Whole-line (idempotent); the default matches the
+# Debian/Ubuntu stock lines plus sss. shadow is intentionally omitted here — that's
+# auth territory, part of the later PAM step.
+sssd_nsswitch:
+  - { db: passwd, value: "files systemd sss" }
+  - { db: group, value: "files systemd sss" }
+
+# enumerate=false: look users up on demand (recommended) rather than pulling the
+# whole directory.
+sssd_enumerate: false
