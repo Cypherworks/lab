@@ -11,3 +11,12 @@
   become: true
   ansible.builtin.command: "{{ caddy_binary }} reload --adapter caddyfile --config {{ caddy_config_path }}"
   changed_when: true
+
+# Full restart — only for a trust-store change, which a reload can't pick up (Caddy
+# caches the system cert pool at startup). Defined last so if a run also changed the
+# Caddyfile, the reload runs first and this restart lands on the current config.
+- name: Restart Caddy
+  become: true
+  ansible.builtin.systemd_service:
+    name: caddy
+    state: restarted
