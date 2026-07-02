@@ -1,57 +1,83 @@
 # unifi-networks
 
-Creates UniFi networks (VLANs) from a data map. Generic mechanism: the consuming
-deployment supplies the VLAN definitions; this module just maps them to
-`unifi_network` resources, one per entry, routed by the gateway.
+Creates UniFi corporate networks (VLANs) with optional DHCP, mDNS reflection and isolation from a map of objects.
 
-## Provider
+Part of the [`lab`](https://github.com/Cypherworks/lab) Terraform module collection. Generic and data-driven: pass a map of objects; the module does `for_each` over it. No site data lives here.
 
-Uses [`filipowm/unifi`](https://registry.terraform.io/providers/filipowm/unifi)
-(`1.0.0`). It creates VLANs correctly, round-trips cleanly, and supports
-controller 6.x+. The ubiquiti-community forks were dropped: early 0.41.x can't
-set `vlan_enabled` (VLAN creates fail), and 0.41.25/0.52.x can't round-trip
-`forward`/tagged-VLAN/`multicast_dns`.
+## Requirements
+
+| Name | Version |
+|------|---------|
+| terraform | >= 1.10 |
+| unifi (filipowm/unifi) | 1.0.0 |
+
+## Inputs
+
+| Name | Type | Default | Required | Description |
+|------|------|---------|:--------:|-------------|
+| networks | map(object) | n/a | yes | UniFi corporate networks (VLANs) to create, keyed by a stable identifier. |
+
+`networks` object fields:
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|:--------:|-------------|
+| name | string | n/a | yes | Network name. |
+| vlan_id | number | n/a | yes | VLAN ID. |
+| subnet | string | n/a | yes | Gateway IP + prefix, e.g. `10.0.20.1/24`. |
+| purpose | string | `"corporate"` | no | UniFi network purpose. |
+| dhcp | object | `null` | no | DHCP settings; omit to leave DHCP disabled. |
+| multicast_dns | bool | `false` | no | mDNS reflection onto this VLAN. |
+| network_isolation | bool | `false` | no | Block intra-VLAN client traffic. |
+| internet_access | bool | `true` | no | Allow internet access. |
+| ipv6_disabled | bool | `true` | no | Disable IPv6 (sets `ipv6_interface_type = "none"`). |
+
+`dhcp` object fields:
+
+| Field | Type | Default | Required | Description |
+|-------|------|---------|:--------:|-------------|
+| start | string | n/a | yes | DHCP pool start address. |
+| stop | string | n/a | yes | DHCP pool end address. |
+| dns | list(string) | `null` | no | DNS servers handed to clients. |
+| lease | number | `null` | no | Lease time in seconds. |
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| network_ids | Map of network key => UniFi network ID, for wiring WLANs and firewall rules. |
 
 ## Usage
 
 ```hcl
 module "networks" {
-  source = "github.com/lloydoliver/homelab//terraform/modules/unifi-networks?ref=main"
+  source = "github.com/Cypherworks/lab//terraform/modules/unifi-networks?ref=<commit-sha>"
 
   networks = {
     servers = {
-      name   = "Servers"
-      vlan   = 20
-      subnet = "10.0.20.1/24"
-      dhcp   = { start = "10.0.20.100", stop = "10.0.20.199" }
+      name    = "Servers"
+      vlan_id = 20
+      subnet  = "10.0.20.1/24"
+      dhcp = {
+        start = "10.0.20.100"
+        stop  = "10.0.20.199"
+        dns   = ["10.0.20.10"]
+        lease = 86400
+      }
     }
-    iot = {
-      name              = "IoT"
-      vlan              = 50
-      subnet            = "10.0.50.1/24"
+    sandbox = {
+      name              = "Sandbox"
+      vlan_id           = 60
+      subnet            = "10.0.60.1/24"
       network_isolation = true
-      multicast_dns     = true
     }
   }
 }
 ```
 
-## Inputs
+Pin `ref` to a specific commit SHA or tag, never a moving branch.
 
-`networks` is a map keyed by a stable identifier. Per entry:
+## Notes
 
-| Field | Required | Default | Notes |
-|---|---|---|---|
-| `name` | yes | | Display name in the controller |
-| `vlan` | yes | | VLAN ID |
-| `subnet` | yes | | Gateway IP + prefix, CIDR (e.g. `10.0.20.1/24`) |
-| `domain_name` | no | | Search domain |
-| `internet_access` | no | `true` | |
-| `network_isolation` | no | `false` | Block inter-client/inter-VLAN routing |
-| `multicast_dns` | no | `false` | mDNS reflection for this network |
-| `igmp_snooping` | no | `false` | |
-| `dhcp` | no | | Omit for no DHCP server. `start`/`stop` required when set; `dns_servers`, `leasetime`, `dns_enabled`, `enabled` optional |
+DHCP is enabled for a network when a `dhcp` object is supplied and disabled when it is omitted. Client DNS servers come from `dhcp.dns`. IPv6 is off by default across the lab.
 
-## Outputs
-
-- `network_ids` — map of key => UniFi network ID, for wiring WLANs/firewall rules.
+The filipowm/unifi 1.0.0 provider creates networks but cannot update them in place; an edit to an existing network returns "not found". Apply changes (subnet, DHCP pool, isolation, etc.) by rebuild (destroy and recreate the affected network).

@@ -1,23 +1,53 @@
 # sni_router
 
-An L4 SNI passthrough router (nginx `stream` + `ssl_preread`) for the Headscale
-EC2. It listens on :443, reads the SNI from the TLS ClientHello **without
-terminating TLS**, and proxies the raw connection to a backend chosen by hostname.
+L4 SNI passthrough router (nginx `stream` + `ssl_preread`) that proxies raw TLS connections by SNI without terminating TLS.
 
-This lets one public :443 serve two names:
+Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a generic, parameterised role. Supply site data (IPs, secrets, hostnames) from your inventory and SOPS, not from the role.
 
-- `headscale.cypherworks.co.uk` → Headscale on a local port (`127.0.0.1:8443`).
-  Raw passthrough preserves the `acme-tls/1` ALPN, so Headscale's TLS-ALPN-01 cert
-  renewal and its embedded DERP relay keep working behind the router.
-- `auth.cypherworks.co.uk` → the lab Caddy (`10.200.30.10:443`) over the Tailscale
-  overlay (the EC2 must be on the tailnet — see the `tailscale` role). Caddy
-  terminates with the wildcard cert and proxies to Authentik.
+## Requirements
 
-Because it never terminates the `auth.cw` TLS, a compromise of the EC2 cannot read
-or forge the Authentik login — it's a dumb encrypted pipe.
+- Debian/Ubuntu on the target (apt, systemd). Installs `nginx` and `libnginx-mod-stream`.
+- Ansible `ansible.builtin` only. No external collections.
+- Backends that terminate their own TLS (Headscale locally, or the lab Caddy over the overlay).
 
-| Variable | Purpose |
-| --- | --- |
-| `sni_routes` | `[{ sni, upstream }]` host→backend map |
-| `sni_default_upstream` | where an unknown SNI goes |
-| `sni_listen_port` | public listen port (443) |
+## Role variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `sni_listen_port` | `443` | Port the stream server listens on. |
+| `sni_routes` | `[]` | Site data. List of `{ sni: <hostname>, upstream: <host:port> }` route entries. |
+| `sni_default_upstream` | `127.0.0.1:8443` | Backend for an unrecognised SNI (Headscale, which rejects it). |
+| `sni_proxy_timeout` | `10m` | Stream proxy idle timeout. Long, because Headscale holds long-poll connections. |
+
+`sni_routes` is empty by default and supplied by the deployment.
+
+## Dependencies
+
+None.
+
+## What it does
+
+1. Installs `nginx` and `libnginx-mod-stream`.
+2. Renders `/etc/nginx/nginx.conf` (`0644`) from `nginx.conf.j2`, validated with `nginx -t -c %s` before it is written. The config is stream-only: a `map $ssl_preread_server_name $sni_upstream` built from `sni_routes` (with `default` pointing at `sni_default_upstream`), and one `server` that listens on `sni_listen_port` with `ssl_preread on`, `proxy_pass $sni_upstream` and `proxy_timeout {{ sni_proxy_timeout }}`. Notifies a reload.
+3. Removes `/etc/nginx/sites-enabled/default` (this box serves no HTTP). Notifies a reload.
+4. Enables and starts nginx.
+
+Handler: `Reload nginx`.
+
+## Example
+
+```yaml
+- hosts: edge
+  roles:
+    - role: sni_router
+      vars:
+        sni_routes:
+          - { sni: "headscale.cypherworks.co.uk", upstream: "127.0.0.1:8443" }
+          - { sni: "auth.cypherworks.co.uk",      upstream: "10.200.30.10:443" }
+```
+
+## Notes
+
+- No TLS is terminated here. `ssl_preread` reads the SNI from the ClientHello and the raw connection is proxied on untouched, so the full handshake (including the `acme-tls/1` ALPN that Headscale's TLS-ALPN-01 renewal needs) happens end to end between client and backend.
+- The point is to keep a public host (the EC2) a dumb pipe: it routes by SNI but cannot read the auth login or any other plaintext.
+- `nginx -t` gates the config write, so a bad map or upstream fails the task rather than reloading nginx into a broken state.
