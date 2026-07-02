@@ -6,6 +6,9 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        # Bare-token templates must render with NO trailing newline — an appended
+        # \n would corrupt the token when read.
+        exclude: '(^|/)hass_token\.j2$'
       - id: check-yaml
       - id: check-merge-conflict
       - id: check-added-large-files
