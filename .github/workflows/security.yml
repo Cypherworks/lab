@@ -1,0 +1,106 @@
+name: Security scans
+
+# Compliance-evidence scans, all on GitHub-hosted runners (no lab access). Findings
+# from Checkov/Trivy upload to the Security tab (SARIF) AND as artifacts, so there's
+# an auditable per-PR trail. Scanners HARD-FAIL on any finding — a check must show
+# red if it found something. Anything intentionally accepted is an inline
+# `#checkov:skip=<id>:<reason>` (a documented, reviewable risk acceptance), not a
+# silently-passed scan.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    # Validates the workflow files themselves (syntax, shell, deprecated patterns).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -color
+
+  zizmor:
+    # Security-audits the workflows (injection, unpinned actions, over-broad perms).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: pip install zizmor
+      - name: zizmor
+        run: zizmor .
+
+  checkov:
+    # IaC misconfiguration scan (Terraform/Ansible/Dockerfiles), mapped to CIS/NIST.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: bridgecrewio/checkov-action@a7683e7b72a04503521247973281ec8142e1ac1f # v12
+        with:
+          directory: .
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+          soft_fail: false
+      - uses: github/codeql-action/upload-sarif@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: checkov
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: checkov-sarif
+          path: results.sarif
+
+  trivy:
+    # Filesystem scan: dependency CVEs + secrets + IaC misconfig, in one pass.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: trivy fs
+        run: |
+          docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
+            --scanners vuln,secret,misconfig --exit-code 1 \
+            --format sarif --output /repo/trivy.sarif /repo
+      - uses: github/codeql-action/upload-sarif@411c4c9a36b3fca4d674f06b6396b2c6d23522c6 # v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: trivy-sarif
+          path: trivy.sarif
+
+  sbom:
+    # Software bill of materials — retained as an artifact (know-your-components).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: sbom.cdx.json
