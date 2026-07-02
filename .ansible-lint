@@ -1,4 +1,13 @@
 ---
+# Start on the `basic` profile in CI — catches real problems without the full
+# production nitpick set. Ratchet up to `production` once clean against basic.
+profile: basic
+
+exclude_paths:
+  - .github/
+  # Jinja templates are rendered by the deploy, not standalone Ansible YAML.
+  - ansible/roles/*/templates/
+
 # Roles consume shared inventory vocabulary (lab_*, ops_*) supplied by the
 # consuming deployment, not role-private vars, so the role-name-prefix
 # convention doesn't apply.
