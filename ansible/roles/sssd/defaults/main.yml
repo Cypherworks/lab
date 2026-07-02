@@ -66,6 +66,10 @@ sssd_auto_private_groups: hybrid
 sssd_enable_pam_auth: false
 # LDAP group whose members are allowed to log in (PAM access filter on memberOf).
 sssd_ssh_access_group: ssh-users
+# LDAP group granted sudo (password-authenticated) via a sudoers.d drop-in. Separate
+# from login: a user needs sssd_ssh_access_group to log in AND this to escalate.
+# Empty = no sudo rule installed.
+sssd_sudo_group: ssh-sudoers
 # PAM profiles enabled via pam-auth-update when auth is on. mkhomedir auto-creates
 # home dirs on first login; sss wires pam_sss for auth/account/session.
 sssd_pam_profiles:

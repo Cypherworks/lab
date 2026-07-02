@@ -78,3 +78,17 @@
       ansible.builtin.command: "pam-auth-update --enable {{ sssd_pam_profiles | join(' ') }}"
       when: sssd_mkhomedir_active.rc != 0
       changed_when: true
+
+    # Sudo for the LDAP sudo group, password-authenticated (belt-and-braces — pam_sss
+    # validates the Authentik password). Separate from login: ssh-users gets you in,
+    # this group lets you escalate. visudo-validated so a bad rule can't break sudo.
+    - name: Grant password-authenticated sudo to the LDAP sudo group
+      become: true
+      ansible.builtin.copy:
+        content: "%{{ sssd_sudo_group }} ALL=(ALL:ALL) ALL\n"
+        dest: /etc/sudoers.d/ssh-sudoers
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "/usr/sbin/visudo -cf %s"
+      when: sssd_sudo_group | length > 0
