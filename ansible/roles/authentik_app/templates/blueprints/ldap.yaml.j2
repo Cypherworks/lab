@@ -29,6 +29,45 @@ entries:
     attrs:
       name: ssh-users
 
+  # Password-only bind flow for LDAP: identification + password + login, and
+  # crucially NO MFA-validation stage. default-authentication-flow includes MFA
+  # validation, which an MFA-enrolled user (passkey/TOTP) can't satisfy over a
+  # password-only LDAP bind — so their sudo password is rejected ("flow error
+  # password: Invalid password"). This flow gives the Authentik password as
+  # belt-and-braces for sudo without requiring MFA over LDAP. Reuses the existing
+  # stage objects (no new stages); authentication: none so the unauthenticated
+  # outpost warmup applies to it.
+  - model: authentik_flows.flow
+    id: flow-ldap-bind
+    identifiers:
+      slug: ldap-bind
+    attrs:
+      name: LDAP Bind
+      title: LDAP Bind
+      designation: authentication
+      authentication: none
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow-ldap-bind
+      stage: !Find [authentik_stages_identification.identificationstage, [name, default-authentication-identification]]
+    attrs:
+      order: 10
+      evaluate_on_plan: true
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow-ldap-bind
+      stage: !Find [authentik_stages_password.passwordstage, [name, default-authentication-password]]
+    attrs:
+      order: 20
+      evaluate_on_plan: true
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !KeyOf flow-ldap-bind
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, default-authentication-login]]
+    attrs:
+      order: 30
+      evaluate_on_plan: true
+
 {% if ldaps_cert and ldaps_key %}
   # LDAPS server cert for the outpost's 6636 listener, from OpenBao's infra PKI role
   # (CN ldap.<domain>, IP SANs = the app nodes SSSD dials). Issued once, held
@@ -60,14 +99,14 @@ entries:
 {% if ldaps_cert and ldaps_key %}
       certificate: !KeyOf ldaps-cert
 {% endif %}
-      # BOTH flows are default-authentication-flow, and both must be — the outpost
-      # runs authorization_flow during an UNAUTHENTICATED "warmup", so it has to be an
-      # authentication-designation flow (authentication: none); the consent flows are
-      # require_authenticated and throw FlowNonApplicable there. authentication_flow
-      # validates the bind credential (its password stage accepts app passwords via
-      # TokenBackend). Unbind = invalidation_flow.
-      authentication_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+      # BOTH flows point at the dedicated password-only ldap-bind flow (above). Both
+      # must be authentication-designation flows (authentication: none): the outpost
+      # runs authorization_flow during an UNAUTHENTICATED "warmup", and consent flows
+      # (require_authenticated) throw FlowNonApplicable there. authentication_flow
+      # validates the bind credential — via ldap-bind so MFA-enrolled users aren't
+      # blocked on a password-only bind. Unbind = invalidation_flow.
+      authentication_flow: !KeyOf flow-ldap-bind
+      authorization_flow: !KeyOf flow-ldap-bind
       invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
       # cached = run the auth flow then cache the bind (Authentik's documented
       # default); direct = always re-run the flow. Cached is fine for SSSD.
