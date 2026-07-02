@@ -5,11 +5,12 @@
 # cert for your own username — that's the audit guarantee.
 #
 # Usage:
-#   BAO_ADDR=https://bao.cypherworks.co.uk ./bao-ssh-sign.sh <authentik-username> [pubkey]
+#   export BAO_ADDR=https://<your-openbao-host>
+#   ./bao-ssh-sign.sh <username> [pubkey]
 #
-#   <authentik-username>  your Authentik login (e.g. loliver) — must match your
-#                         identity or OpenBao rejects the request.
-#   [pubkey]              public key to sign (default: ~/.ssh/id_ed25519.pub).
+#   <username>  your Authentik login — must match your identity or OpenBao rejects
+#               the request (the role templates the cert principal to your identity).
+#   [pubkey]    public key to sign (default: ~/.ssh/id_ed25519.pub).
 #
 # Writes the cert next to the key as <key>-cert.pub, which ssh loads automatically —
 # so afterwards `ssh <you>@<host>` just works until the cert expires (1h).
@@ -18,14 +19,15 @@
 # cert expires (or wrap in a shell alias).
 set -euo pipefail
 
-BAO_ADDR="${BAO_ADDR:-https://bao.cypherworks.co.uk}"
+die() { echo "error: $*" >&2; exit 1; }
+
+# No site defaults here — this is a generic mechanism. Set BAO_ADDR to your OpenBao.
+BAO_ADDR="${BAO_ADDR:?set BAO_ADDR to your OpenBao address, e.g. https://bao.example.com}"
 BAO_SSH_MOUNT="${BAO_SSH_MOUNT:-ssh-client-signer}"
 BAO_SSH_ROLE="${BAO_SSH_ROLE:-user}"
 export BAO_ADDR
 
-die() { echo "error: $*" >&2; exit 1; }
-
-[ $# -ge 1 ] || die "usage: BAO_ADDR=… $0 <authentik-username> [pubkey]"
+[ $# -ge 1 ] || die "usage: BAO_ADDR=https://<your-openbao> $0 <username> [pubkey]"
 principal="$1"
 pubkey="${2:-$HOME/.ssh/id_ed25519.pub}"
 [ -r "$pubkey" ] || die "public key not found: $pubkey (pass one as arg 2)"
