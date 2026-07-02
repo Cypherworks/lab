@@ -1,0 +1,15 @@
+# Documented, reviewable risk acceptances for Checkov. Each skip is a deliberate
+# decision with a reason — NOT a blanket silence. Everything else hard-fails.
+skip-check:
+  # Redundant with gitleaks + detect-private-key (dedicated secret scanners already
+  # in pre-commit/CI). This generic base64-entropy heuristic false-positives on
+  # non-secrets — e.g. etcd_cluster_token ("authentik-etcd"), a public bootstrap
+  # cluster identifier, not a credential.
+  - CKV_SECRET_6
+  # Our only http uri calls are to loopback (127.0.0.1 Grafana admin API during
+  # provisioning) and the internal Patroni REST API (no TLS by default). No external
+  # http, no MITM surface.
+  - CKV2_ANSIBLE_1
+  # Config task blocks group steps under a shared environment/become and are
+  # intentionally fail-fast; a rescue would mask real configuration errors.
+  - CKV2_ANSIBLE_3
