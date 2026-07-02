@@ -104,7 +104,10 @@ openbao_ssh_default_extensions:
   permit-pty: ""
 openbao_ssh_allowed_extensions: "permit-pty,permit-port-forwarding"
 # Signing roles. Each: name, allowed_users (comma list or *), and optional ttl /
-# default_extensions / allowed_extensions.
+# default_extensions / allowed_extensions. Set principals_from_oidc: true instead of
+# allowed_users to restrict the cert principal to the caller's own OIDC identity
+# (allowed_users_template on the entity alias) — so a user can only sign a cert for
+# their own username. Requires the OIDC auth method (its accessor is looked up).
 openbao_ssh_roles: []
 
 # --- Snapshots (raft DR backups to S3) --------------------------------------
