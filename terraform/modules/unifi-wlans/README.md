@@ -22,7 +22,7 @@ resource "unifi_user_group" "default" {
 }
 
 module "wlans" {
-  source = "github.com/lloydoliver/homelab//terraform/modules/unifi-wlans?ref=main"
+  source = "github.com/Cypherworks/lab//terraform/modules/unifi-wlans?ref=main"
 
   wlans = {
     trusted = {

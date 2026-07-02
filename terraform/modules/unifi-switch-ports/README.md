@@ -19,7 +19,7 @@ same `unifi_device`.
 
 ```hcl
 module "switch" {
-  source = "github.com/lloydoliver/homelab//terraform/modules/unifi-switch-ports?ref=main"
+  source = "github.com/Cypherworks/lab//terraform/modules/unifi-switch-ports?ref=main"
 
   switch_mac = var.switch_mac
 

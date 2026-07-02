@@ -9,7 +9,7 @@ scoped with `source`.
 
 ```hcl
 module "port_forwards" {
-  source = "github.com/lloydoliver/homelab//terraform/modules/unifi-port-forwards?ref=main"
+  source = "github.com/Cypherworks/lab//terraform/modules/unifi-port-forwards?ref=main"
 
   port_forwards = {
     cctv_nfs = {

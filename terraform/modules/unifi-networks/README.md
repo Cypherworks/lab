@@ -16,7 +16,7 @@ set `vlan_enabled` (VLAN creates fail), and 0.41.25/0.52.x can't round-trip
 
 ```hcl
 module "networks" {
-  source = "github.com/lloydoliver/homelab//terraform/modules/unifi-networks?ref=main"
+  source = "github.com/Cypherworks/lab//terraform/modules/unifi-networks?ref=main"
 
   networks = {
     servers = {

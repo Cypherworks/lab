@@ -14,7 +14,7 @@ drop covering RFC1918→RFC1918 in `LAN_IN`.
 
 ```hcl
 module "firewall" {
-  source = "github.com/lloydoliver/homelab//terraform/modules/unifi-firewall?ref=main"
+  source = "github.com/Cypherworks/lab//terraform/modules/unifi-firewall?ref=main"
 
   firewall_groups = {
     cameras = { name = "cctv-cameras", type = "address-group", members = ["192.0.2.10", "192.0.2.11"] }
