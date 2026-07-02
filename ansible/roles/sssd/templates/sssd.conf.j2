@@ -16,6 +16,11 @@ filter_groups = {{ sssd_local_exempt_users | join(', ') }}
 
 [domain/{{ sssd_domain_name }}]
 id_provider = ldap
+# Authentik gives each user a private primary group (gidNumber == uidNumber) but no
+# group object for it, so the primary GID has no name. hybrid synthesizes that
+# private group when uid == gid and no real group owns that gid — resolving it
+# without overriding users who have a genuine primary group.
+auto_private_groups = {{ sssd_auto_private_groups }}
 {% if sssd_enable_pam_auth %}
 # Auth (sudo password against Authentik) + access gate. Local accounts are unknown
 # to SSSD, so this gate never applies to them — only LDAP users must be in the

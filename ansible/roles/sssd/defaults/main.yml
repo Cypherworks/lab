@@ -52,6 +52,11 @@ sssd_nsswitch:
 # whole directory.
 sssd_enumerate: false
 
+# Synthesize a user-private primary group when uid == gid and no real group owns that
+# gid — resolves Authentik's nameless private primary groups. hybrid respects a real
+# primary group if the user has one; true would always force gid=uid.
+sssd_auto_private_groups: hybrid
+
 # --- PAM auth (login/sudo) — CONNECTIVITY-SENSITIVE, default OFF -------------
 # When false (default) this role is identity-only (NSS) and cannot affect login or
 # sudo. Flip to true ONLY with console/break-glass access to the host: it adds
