@@ -1,0 +1,45 @@
+name: PR checks
+
+# Runs on every PR (and pushes to main). GitHub-hosted runners — no lab access, no
+# secrets: the pre-commit sops check only verifies encryption, gitleaks scans for
+# plaintext. The in-lab apply/build runner is separate (self-hosted, later).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    # gitleaks, SOPS-encrypted guard, YAML validity, whitespace/EOF — the same
+    # guardrails as the local pre-commit hooks, enforced on every PR.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: pre-commit/action@v3.0.1
+
+  ansible-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-lint + the collections the roles use
+        run: |
+          pip install ansible-lint
+          ansible-galaxy collection install community.general community.docker
+      - run: ansible-lint
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: ./scripts
