@@ -29,6 +29,16 @@ entries:
     attrs:
       name: ssh-users
 
+  # Sudo grant, separate from login. ssh-users lets you log in; ssh-sudoers (added to
+  # the hosts' sudoers) lets you sudo (password-authenticated). A user needs BOTH to
+  # log in AND escalate. Membership is managed by hand in Authentik.
+  - model: authentik_core.group
+    id: group-ssh-sudoers
+    identifiers:
+      name: ssh-sudoers
+    attrs:
+      name: ssh-sudoers
+
   # Password-only bind flow for LDAP: identification + password + login, and
   # crucially NO MFA-validation stage. default-authentication-flow includes MFA
   # validation, which an MFA-enrolled user (passkey/TOTP) can't satisfy over a
