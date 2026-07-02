@@ -2,8 +2,10 @@ name: Security scans
 
 # Compliance-evidence scans, all on GitHub-hosted runners (no lab access). Findings
 # from Checkov/Trivy upload to the Security tab (SARIF) AND as artifacts, so there's
-# an auditable per-PR trail. The scanners SOFT-FAIL for now — the evidence is the
-# finding plus its documented disposition; flip to hard-fail once triaged/baselined.
+# an auditable per-PR trail. Scanners HARD-FAIL on any finding — a check must show
+# red if it found something. Anything intentionally accepted is an inline
+# `#checkov:skip=<id>:<reason>` (a documented, reviewable risk acceptance), not a
+# silently-passed scan.
 on:
   pull_request:
   push:
@@ -31,8 +33,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install zizmor
-      - name: zizmor (evidence; non-blocking for now)
-        run: zizmor . || true
+      - name: zizmor
+        run: zizmor .
 
   checkov:
     # IaC misconfiguration scan (Terraform/Ansible/Dockerfiles), mapped to CIS/NIST.
@@ -44,7 +46,7 @@ jobs:
           directory: .
           output_format: cli,sarif
           output_file_path: console,results.sarif
-          soft_fail: true
+          soft_fail: false
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
@@ -64,7 +66,8 @@ jobs:
       - name: trivy fs
         run: |
           docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
-            --scanners vuln,secret,misconfig --format sarif --output /repo/trivy.sarif /repo
+            --scanners vuln,secret,misconfig --exit-code 1 \
+            --format sarif --output /repo/trivy.sarif /repo
       - uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
