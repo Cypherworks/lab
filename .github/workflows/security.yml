@@ -1,0 +1,88 @@
+name: Security scans
+
+# Compliance-evidence scans, all on GitHub-hosted runners (no lab access). Findings
+# from Checkov/Trivy upload to the Security tab (SARIF) AND as artifacts, so there's
+# an auditable per-PR trail. The scanners SOFT-FAIL for now — the evidence is the
+# finding plus its documented disposition; flip to hard-fail once triaged/baselined.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write   # upload-sarif -> code scanning (free on public repos)
+
+jobs:
+  actionlint:
+    # Validates the workflow files themselves (syntax, shell, deprecated patterns).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -color
+
+  zizmor:
+    # Security-audits the workflows (injection, unpinned actions, over-broad perms).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install zizmor
+      - name: zizmor (evidence; non-blocking for now)
+        run: zizmor . || true
+
+  checkov:
+    # IaC misconfiguration scan (Terraform/Ansible/Dockerfiles), mapped to CIS/NIST.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+          soft_fail: true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: checkov
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-sarif
+          path: results.sarif
+
+  trivy:
+    # Filesystem scan: dependency CVEs + secrets + IaC misconfig, in one pass.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: trivy fs
+        run: |
+          docker run --rm -v "$PWD:/repo" aquasec/trivy:latest fs \
+            --scanners vuln,secret,misconfig --format sarif --output /repo/trivy.sarif /repo
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-sarif
+          path: trivy.sarif
+
+  sbom:
+    # Software bill of materials — retained as an artifact (know-your-components).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: sbom.cdx.json

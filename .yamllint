@@ -1,0 +1,13 @@
+# Relaxed baseline — catches structural YAML problems without fighting Ansible's
+# style (long lines, yes/no truthy). Encrypted SOPS files are skipped (their values
+# are opaque ciphertext). Jinja templates (*.j2) aren't scanned — they aren't YAML.
+extends: relaxed
+rules:
+  line-length: disable
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "yes", "no"]
+    check-keys: false
+ignore: |
+  *.sops.yml
+  *.sops.yaml
