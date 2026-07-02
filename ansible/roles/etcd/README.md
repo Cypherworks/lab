@@ -1,29 +1,62 @@
 # etcd
 
-Pinned etcd cluster — the Patroni DCS (quorum) for the Authentik HA data tier.
-Each member's bind address is its entry in `etcd_members`, matched by
-`inventory_hostname`, so the multi-homed Pi witness binds its VLAN-30 foot
-(10.200.30.13) rather than its VLAN-20 DNS address.
+Installs a pinned etcd cluster to serve as the distributed configuration store (DCS) that Patroni uses for leader election and automatic PostgreSQL failover.
 
-## Required inventory vars
+Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a generic, parameterised role. Supply site data (IPs, secrets, hostnames) from your inventory and SOPS, not from the role.
+
+## Requirements
+
+- Debian/Ubuntu target with systemd.
+- Outbound access to GitHub releases to fetch the pinned etcd tarball (amd64 or arm64, selected from `ansible_architecture`).
+- Every member listed in `etcd_members` must be reachable on TCP 2379 (client) and 2380 (peer).
+- `inventory_hostname` of each target must match a `name` entry in `etcd_members` so the role can derive that host's bind IP.
+
+## Role variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `etcd_version` | `3.5.16` | Pinned etcd release to download. |
+| `etcd_arch` | `arm64` if `ansible_architecture == aarch64` else `amd64` | Release architecture, derived per host. |
+| `etcd_release_base` | `https://github.com/etcd-io/etcd/releases/download` | Base URL for release downloads. |
+| `etcd_archive` | `etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz` | Tarball filename. |
+| `etcd_url` | `{{ etcd_release_base }}/v{{ etcd_version }}/{{ etcd_archive }}` | Full download URL. |
+| `etcd_data_dir` | `/var/lib/etcd` | etcd data directory. |
+| `etcd_conf_dir` | `/etc/etcd` | Config directory. |
+| `etcd_config_file` | `{{ etcd_conf_dir }}/etcd.conf.yml` | Rendered config path. |
+| `etcd_cluster_token` | `authentik-etcd` | `initial-cluster-token` shared by all members. |
+| `etcd_initial_cluster_state` | `new` | `new` on first bring-up; set to `existing` (per host, temporarily) when re-adding a member to a live cluster. |
+| `etcd_bind_ip` | derived from `etcd_members` by matching `inventory_hostname` | This host's bind address for peer and client URLs. |
+
+Required from inventory (no default): `etcd_members` — the full member list, each entry `{ name: <inventory_hostname>, ip: <bind IP> }`.
+
+## Dependencies
+
+None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patroni` depends on; stand up the etcd cluster before Patroni starts.
+
+## What it does
+
+1. Creates the `etcd` system group and user (nologin, home at the data dir, no home created).
+2. Downloads the pinned release tarball to `/tmp` and extracts only the `etcd` and `etcdctl` binaries into `/usr/local/bin` (guarded by `creates`).
+3. Sets the binaries executable and root-owned.
+4. Creates the config directory (`root:etcd`, 0750) and data directory (`etcd:etcd`, 0700).
+5. Renders `etcd.conf.yml` from `etcd_members`, building `initial-cluster` from every member and setting `initial-cluster-state` to `etcd_initial_cluster_state`. The host binds its `etcd_members` IP (so a multi-homed witness binds its VLAN-30 foot, not another interface), plus `127.0.0.1` for local clients.
+6. Installs the systemd unit and enables/starts etcd, reloading systemd and restarting on config or unit change.
+
+## Example
 
 ```yaml
-etcd_members:
-  - { name: etcd-tc1, ip: 10.200.30.31 }
-  - { name: etcd-tc2, ip: 10.200.30.32 }
-  - { name: pi-dns-1, ip: 10.200.30.13 }   # the Pi's VLAN-30 sub-interface
+- hosts: etcd
+  roles:
+    - role: etcd
+      vars:
+        etcd_members:
+          - { name: etcd-tc1, ip: 10.200.30.31 }
+          - { name: etcd-tc2, ip: 10.200.30.32 }
+          - { name: pi-dns-1, ip: 10.200.30.13 }
 ```
 
-`name` must equal the host's `inventory_hostname`. Quorum is a majority (2 of 3).
+## Notes
 
-## ⚠️ Security follow-up — TLS
-
-v1 runs **plain HTTP** for peer and client traffic. It's intra-VLAN-30 only, but
-this cluster carries the Postgres leader state, so **add peer + client TLS** (a
-small CA + per-member certs) before treating it as fully load-bearing.
-
-## Re-adding a member
-
-`initial-cluster-state: new` bootstraps a fresh cluster. To re-add a wiped member
-to a *live* cluster, register it (`etcdctl member add`) and set
-`etcd_initial_cluster_state: existing` for that host only, then revert.
+- `etcd_initial_cluster_state` is `new` for the initial cluster formation only. Re-running with `new` against an already-bootstrapped member is wrong; flip it to `existing` for that single host when re-adding a replaced member, then return it to `new`.
+- Quorum needs an odd count. The three-member layout (two data nodes plus the Pi witness) gives a third vote so the cluster survives losing one node and Patroni can still elect a Postgres leader.
+- The client URL includes `127.0.0.1:2379` so local `etcdctl` works without hitting the network bind address.
