@@ -31,17 +31,34 @@
       when: openbao_ssh_ca.rc != 0 or (openbao_ssh_ca.stdout | trim | length == 0)
       changed_when: true
 
+    # A role with principals_from_oidc restricts the cert's principal to the caller's
+    # own OIDC identity (allowed_users_template on the entity alias name), so a user
+    # can only mint a cert for their own username — the basis of the audit trail. The
+    # template keys on the OIDC auth accessor, looked up here.
+    - name: Read the auth methods (for the OIDC accessor)
+      ansible.builtin.command: bao auth list -format=json
+      register: openbao_auth_list
+      changed_when: false
+      when: openbao_ssh_roles | selectattr('principals_from_oidc', 'defined') | selectattr('principals_from_oidc') | list | length > 0
+
+    - name: Set the OIDC accessor
+      ansible.builtin.set_fact:
+        openbao_oidc_accessor: "{{ (openbao_auth_list.stdout | from_json)['oidc/'].accessor }}"
+      when: openbao_auth_list is not skipped
+
     # Written as a JSON body on stdin (`bao write <path> -`) so default_extensions is
-    # typed as a map, not a string (a k=v CLI arg would stringify it).
+    # typed as a map and allowed_users_template as a bool (k=v CLI args stringify).
     - name: Create the SSH signing roles
       ansible.builtin.command:
         cmd: "bao write {{ openbao_ssh_mount }}/roles/{{ item.name }} -"
         stdin: "{{ openbao_ssh_role_body | to_json }}"
       vars:
+        _oidc_principal: "{{ '{{identity.entity.aliases.' ~ openbao_oidc_accessor | default('') ~ '.name}}' }}"
         openbao_ssh_role_body:
           key_type: ca
           allow_user_certificates: true
-          allowed_users: "{{ item.allowed_users | default('*') }}"
+          allowed_users: "{{ _oidc_principal if (item.principals_from_oidc | default(false)) else (item.allowed_users | default('*')) }}"
+          allowed_users_template: "{{ item.principals_from_oidc | default(false) | bool }}"
           default_extensions: "{{ item.default_extensions | default(openbao_ssh_default_extensions) }}"
           allowed_extensions: "{{ item.allowed_extensions | default(openbao_ssh_allowed_extensions) }}"
           ttl: "{{ item.ttl | default('1h') }}"
