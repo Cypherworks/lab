@@ -36,6 +36,15 @@ command -v bao >/dev/null || die "the 'bao' CLI is not installed"
 # The signed cert lands beside the key: id_ed25519.pub -> id_ed25519-cert.pub.
 cert="${pubkey%.pub}-cert.pub"
 
+# Skip if the current cert is still fresh — makes this safe to call before every ssh
+# (e.g. from an ssh_config `Match exec`). Uses the cert file's age as a proxy for its
+# TTL; renew once it's within the last few minutes of a ~1h cert. Force a re-sign with
+# BAO_SSH_RENEW_AFTER_MIN=0 or by deleting the cert.
+renew_after="${BAO_SSH_RENEW_AFTER_MIN:-55}"
+if [ -r "$cert" ] && [ -z "$(find "$cert" -mmin +"$renew_after" 2>/dev/null)" ]; then
+  exit 0
+fi
+
 # Log in via Authentik OIDC only if there's no valid token already (opens a browser).
 if ! bao token lookup >/dev/null 2>&1; then
   echo "Logging in to OpenBao via Authentik (browser)…" >&2
