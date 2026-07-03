@@ -44,37 +44,70 @@
     enabled: true
     state: started
 
-# PKI reconcile runs only once OpenBao is initialised and the root token is supplied
-# (from SOPS) — before that, the manual `bao operator init` hasn't happened yet.
+# Resolve the management token that drives the reconcile: the provisioner AppRole if
+# its creds are set (from SOPS), otherwise the bootstrap root token. This is what lets
+# the standing root token be revoked once the AppRole is established.
+- name: Log in with the provisioner AppRole
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command:
+    argv:
+      - bao
+      - write
+      - -field=token
+      - auth/approle/login
+      - "role_id={{ openbao_provisioner_role_id }}"
+      - "secret_id={{ openbao_provisioner_secret_id }}"
+  register: openbao_provisioner_login
+  changed_when: false
+  no_log: true
+  when:
+    - openbao_provisioner_role_id | length > 0
+    - openbao_provisioner_secret_id | length > 0
+
+- name: Select the management token (provisioner AppRole, else the bootstrap root token)
+  ansible.builtin.set_fact:
+    openbao_mgmt_token: "{{ openbao_provisioner_login.stdout if (openbao_provisioner_login is not skipped) else openbao_root_token }}"
+  no_log: true
+
+# Provisioner AppRole + policy — the non-root identity everything below authenticates
+# as. Written with the root token on first bootstrap, self-maintaining thereafter.
+- name: Configure the provisioner AppRole + policy
+  ansible.builtin.include_tasks: provisioner.yml
+  when: openbao_mgmt_token | length > 0
+
+# The reconcile runs once OpenBao is initialised and a management token is available
+# (from the step above); the manual `bao operator init` must have happened first.
 - name: Reconcile the PKI engine
   ansible.builtin.include_tasks: pki.yml
-  when: openbao_root_token | length > 0
+  when: openbao_mgmt_token | length > 0
 
 # Swap the self-signed bootstrap listener cert for one issued by the internal CA,
 # once the PKI + an issuing role exist. Guarded (one-shot) inside the task file.
 - name: Install the listener cert from the internal PKI
   ansible.builtin.include_tasks: listener_cert.yml
   when:
-    - openbao_root_token | length > 0
+    - openbao_mgmt_token | length > 0
     - openbao_listener_cert_role | length > 0
 
 # Human login via Authentik OIDC (machine auth stays on AppRole/token).
 - name: Configure OIDC login
   ansible.builtin.include_tasks: oidc.yml
   when:
-    - openbao_root_token | length > 0
+    - openbao_mgmt_token | length > 0
     - openbao_oidc_enabled | bool
 
 # Daily raft snapshots to S3 (AppRole-authed) for DR.
 - name: Configure raft snapshots
   ansible.builtin.include_tasks: snapshots.yml
   when:
-    - openbao_root_token | length > 0
+    - openbao_mgmt_token | length > 0
     - openbao_snapshot_enabled | bool
 
 # SSH CA — signs short-lived user certs (hosts trust it via TrustedUserCAKeys).
 - name: Configure the SSH CA
   ansible.builtin.include_tasks: ssh.yml
   when:
-    - openbao_root_token | length > 0
+    - openbao_mgmt_token | length > 0
     - openbao_ssh_enabled | bool

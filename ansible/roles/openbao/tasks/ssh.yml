@@ -6,7 +6,7 @@
 - name: Configure the SSH CA
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
-    BAO_TOKEN: "{{ openbao_root_token }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
     BAO_SKIP_VERIFY: "true"
   block:
     - name: Enable the SSH secrets engine
