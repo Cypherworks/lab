@@ -165,3 +165,38 @@
     - not _incus_is_bootstrap
     - not _incus_is_member
   changed_when: true
+
+# --- Weekly btrfs scrub (early corruption detection) ---
+- name: Locate the btrfs binary (path differs across distros)
+  become: true
+  ansible.builtin.command: which btrfs
+  register: _incus_btrfs_bin_lookup
+  changed_when: false
+  when: incus_scrub_enabled
+
+- name: Set the btrfs binary path
+  ansible.builtin.set_fact:
+    _incus_btrfs_bin: "{{ _incus_btrfs_bin_lookup.stdout }}"
+  when: incus_scrub_enabled
+
+- name: Install the btrfs scrub service + timer
+  become: true
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - incus-btrfs-scrub.service
+    - incus-btrfs-scrub.timer
+  when: incus_scrub_enabled
+
+- name: Enable the btrfs scrub timer
+  become: true
+  ansible.builtin.systemd_service:
+    name: incus-btrfs-scrub.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: incus_scrub_enabled

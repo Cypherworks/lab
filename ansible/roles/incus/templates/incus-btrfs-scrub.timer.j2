@@ -1,0 +1,11 @@
+{# Managed by the incus role. Weekly btrfs scrub of the Incus storage pool. #}
+[Unit]
+Description=Weekly btrfs scrub of the Incus storage pool
+
+[Timer]
+OnCalendar={{ incus_scrub_schedule }}
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

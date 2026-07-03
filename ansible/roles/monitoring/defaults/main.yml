@@ -80,6 +80,17 @@ monitoring_grafana_role_path: "contains(groups[*], 'grafana-admins') && 'Admin' 
 monitoring_ntfy_base_url: ""                 # public base URL ntfy serves on
 monitoring_ntfy_topic: "lab-alerts"
 monitoring_ntfy_user: ""                     # human username (web UI + phone app), from deploy
+# Relays a wake-up push through ntfy.sh's APNS/FCM so the phone app gets INSTANT
+# notifications from a self-hosted server (iOS can't hold a background connection).
+# Only a poll trigger is sent upstream — message content never leaves the lab. Set to
+# "" to disable (Android can instead use the app's per-topic "instant delivery").
+monitoring_ntfy_upstream_base_url: "https://ntfy.sh"
+# Alert notification priority + tags (ntfy). high = sound/vibrate so it isn't missed.
+monitoring_ntfy_alert_priority: "high"
+monitoring_ntfy_alert_tags: "warning"
+# How often Alertmanager re-notifies an alert that is still firing. 24h so an ongoing
+# outage (e.g. a host down) reminds once a day rather than every few hours.
+monitoring_alertmanager_repeat_interval: "24h"
 
 # Secrets — from SOPS (deploy), never defaulted in real use.
 monitoring_grafana_admin_password: ""

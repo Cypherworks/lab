@@ -30,6 +30,15 @@ groups:
           summary: "Disk filling on {{ '{{ $labels.instance }}' }} ({{ '{{ $labels.mountpoint }}' }})"
           description: "Over {{ monitoring_disk_used_percent }}% used."
 
+      - alert: FilesystemReadOnly
+        expr: node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Filesystem read-only on {{ '{{ $labels.instance }}' }} ({{ '{{ $labels.mountpoint }}' }})"
+          description: "The filesystem was remounted read-only — usually a storage or corruption error. Check dmesg and btrfs device stats now."
+
       - alert: PatroniNoPrimary
         expr: sum(patroni_primary) < 1
         for: 1m

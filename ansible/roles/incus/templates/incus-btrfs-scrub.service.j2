@@ -1,0 +1,11 @@
+{# Managed by the incus role. Oneshot btrfs scrub of the Incus storage pool. #}
+[Unit]
+Description=btrfs scrub of the Incus storage pool
+After=incus.service
+
+[Service]
+Type=oneshot
+# -B runs in the foreground so the unit's result reflects the scrub outcome.
+ExecStart={{ _incus_btrfs_bin }} scrub start -B {{ incus_scrub_pool_path }}
+Nice=19
+IOSchedulingClass=idle

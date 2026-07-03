@@ -19,6 +19,13 @@ incus_storage_vg: ubuntu-vg
 incus_storage_lv: incus
 incus_storage_size: 120g
 
+# Weekly btrfs scrub of the storage pool — reads and verifies every block against its
+# checksum, surfacing corruption early (and self-healing duplicated metadata) before
+# it can force the pool read-only. Read/verify only; no writes.
+incus_scrub_enabled: true
+incus_scrub_schedule: "Sun *-*-* 03:00:00"   # systemd OnCalendar
+incus_scrub_pool_path: "/var/lib/incus/storage-pools/{{ incus_storage_pool }}"
+
 # Remote API listener so the Incus client and Terraform can manage the host.
 incus_https_address: "[::]:8443"
 
