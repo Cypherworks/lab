@@ -3,13 +3,14 @@
   become: true
   ansible.builtin.get_url:
     url: "{{ headscale_deb_url }}"
-    dest: "/tmp/headscale_{{ headscale_version }}.deb"
+    dest: "/tmp/{{ headscale_deb_name }}"
+    checksum: "{{ headscale_checksum | default(omit, true) }}"
     mode: "0644"
 
 - name: Install Headscale
   become: true
   ansible.builtin.apt:
-    deb: "/tmp/headscale_{{ headscale_version }}.deb"
+    deb: "/tmp/{{ headscale_deb_name }}"
 
 - name: Render the Headscale config
   become: true

@@ -3,7 +3,12 @@
 headscale_version: "0.26.1"
 headscale_arch: arm64
 headscale_release_base: "https://github.com/juanfont/headscale/releases/download/v{{ headscale_version }}"
-headscale_deb_url: "{{ headscale_release_base }}/headscale_{{ headscale_version }}_linux_{{ headscale_arch }}.deb"
+headscale_deb_name: "headscale_{{ headscale_version }}_linux_{{ headscale_arch }}.deb"
+headscale_deb_url: "{{ headscale_release_base }}/{{ headscale_deb_name }}"
+# Integrity check for the .deb, verified against Headscale's own published checksums
+# file (get_url fetches it and matches on the package filename). Override with a
+# literal "sha256:<hash>" to pin, or set to "" to skip verification.
+headscale_checksum: "sha256:{{ headscale_release_base }}/checksums.txt"
 
 headscale_domain: headscale.cypherworks.co.uk
 # Standalone default is the public 443. Behind the EC2 sni_router, override this to

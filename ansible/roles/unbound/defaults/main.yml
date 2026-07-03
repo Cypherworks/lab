@@ -1,6 +1,6 @@
 ---
-# Recursive, validating resolver. Listens on loopback only; AdGuard Home (or any
-# local frontend) forwards to it. Not exposed to the network directly.
+# Recursive, validating resolver. Listens on loopback only; blocky (or any local
+# frontend) forwards to it. Not exposed to the network directly.
 unbound_listen: 127.0.0.1
 unbound_port: 5335
 
