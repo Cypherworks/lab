@@ -1,0 +1,9 @@
+[Unit]
+Description=Scheduled S3 backup of {{ s3_backup_name }}
+
+[Timer]
+OnCalendar={{ s3_backup_schedule }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

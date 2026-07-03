@@ -1,0 +1,63 @@
+---
+# Scheduled S3 backup. Idempotent: installs the CLI + the command's deps, renders the
+# script/units, enables the timer. The whole role no-ops unless s3_backup_enabled.
+- name: Configure the scheduled S3 backup
+  become: true
+  when: s3_backup_enabled | bool
+  block:
+    - name: Install the AWS CLI and backup dependencies
+      ansible.builtin.apt:
+        name: "{{ ['awscli'] + s3_backup_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create the backup working directory
+      ansible.builtin.file:
+        path: "{{ s3_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Render the S3 uploader credentials
+      ansible.builtin.template:
+        src: aws.env.j2
+        dest: "{{ s3_backup_dir }}/aws.env"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Render the backup command environment
+      ansible.builtin.template:
+        src: backup.env.j2
+        dest: "{{ s3_backup_dir }}/backup.env"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Render the backup script
+      ansible.builtin.template:
+        src: s3-backup.sh.j2
+        dest: "/usr/local/bin/s3-backup-{{ s3_backup_name }}.sh"
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render the backup systemd units
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "/etc/systemd/system/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - { src: s3-backup.service.j2, dest: "s3-backup-{{ s3_backup_name }}.service" }
+        - { src: s3-backup.timer.j2, dest: "s3-backup-{{ s3_backup_name }}.timer" }
+
+    - name: Enable and start the backup timer
+      ansible.builtin.systemd_service:
+        name: "s3-backup-{{ s3_backup_name }}.timer"
+        enabled: true
+        state: started
+        daemon_reload: true
