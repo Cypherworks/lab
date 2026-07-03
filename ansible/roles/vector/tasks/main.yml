@@ -1,0 +1,65 @@
+---
+# Vector log-shipping agent. Installs from a pinned, checksum-verified .deb, grants the
+# vector user journal access, renders one config, and pins the service to it.
+- name: Download the pinned Vector package
+  become: true
+  ansible.builtin.get_url:
+    url: "{{ vector_deb_url }}"
+    dest: "/tmp/vector_{{ vector_version }}_{{ vector_arch }}.deb"
+    checksum: "{{ vector_deb_checksums[vector_arch] }}"
+    mode: "0644"
+
+- name: Install Vector
+  become: true
+  ansible.builtin.apt:
+    deb: "/tmp/vector_{{ vector_version }}_{{ vector_arch }}.deb"
+
+- name: Grant the vector user access to the system journal
+  become: true
+  ansible.builtin.user:
+    name: vector
+    groups: systemd-journal
+    append: true
+  notify: Restart vector
+
+- name: Render the Vector configuration
+  become: true
+  ansible.builtin.template:
+    src: vector.yaml.j2
+    dest: /etc/vector/vector.yaml
+    owner: root
+    group: vector
+    mode: "0640"
+  notify: Restart vector
+
+- name: Ensure the Vector service override directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/system/vector.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Pin the service to the single managed config, so the packaged default config (whatever
+# path/format the .deb ships) can't also load and duplicate the topology.
+- name: Pin the Vector service to the managed config
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/vector.service.d/override.conf
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/vector --config /etc/vector/vector.yaml
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart vector
+
+- name: Enable and start Vector
+  become: true
+  ansible.builtin.systemd_service:
+    name: vector
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,25 @@
+---
+# vector — a per-host log-shipping agent. Installed from a pinned, checksum-verified .deb
+# (same pattern as the headscale/openbao roles), it reads the systemd journal (and any
+# extra file sources) and ships to VictoriaLogs via its Elasticsearch bulk endpoint. Run it
+# on every host and container so system and service logs land in one searchable place. No
+# site data in the role — the deploy supplies the VictoriaLogs endpoint.
+vector_version: "0.56.0"
+vector_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+vector_release_base: "https://github.com/vectordotdev/vector/releases/download/v{{ vector_version }}"
+vector_deb_url: "{{ vector_release_base }}/vector_{{ vector_version }}-1_{{ vector_arch }}.deb"
+# Per-arch .deb SHA256, verified on download (mixed x86 hosts + arm64 Pis).
+vector_deb_checksums:
+  amd64: "sha256:15978ce37ea17e8228bfd7ce28810237c06b77fdeb6943d8aa3de834cb19d4b1"
+  arm64: "sha256:6515dfa01f98940cecf5343b73778b041b30a51e349e3726130a031a5e895e41"
+
+# VictoriaLogs ingestion endpoint (host:port), e.g. 10.200.30.50:9428. Set by the deploy.
+vector_victorialogs_endpoint: ""
+
+# Fields VictoriaLogs groups streams by — host + the systemd unit give one stream per
+# service per host.
+vector_stream_fields: "host,_SYSTEMD_UNIT"
+
+# Optional extra file log sources. Each: { id: <name>, path: <glob> }. journald is always
+# shipped; these are for services that log to files instead of the journal.
+vector_file_sources: []

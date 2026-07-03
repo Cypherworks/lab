@@ -1,4 +1,5 @@
-{# Managed by the monitoring role. VictoriaMetrics as a Prometheus-type datasource. #}
+{# Managed by the monitoring role. VictoriaMetrics as a Prometheus-type datasource,
+   VictoriaLogs via its Grafana plugin (installed through GF_INSTALL_PLUGINS). #}
 apiVersion: 1
 datasources:
   - name: VictoriaMetrics
@@ -9,3 +10,8 @@ datasources:
     isDefault: true
     jsonData:
       timeInterval: "{{ monitoring_scrape_interval }}"
+  - name: VictoriaLogs
+    uid: victorialogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://victorialogs:9428
