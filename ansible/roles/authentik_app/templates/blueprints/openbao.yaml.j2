@@ -13,6 +13,16 @@ entries:
     attrs:
       name: openbao-users
 
+  # Admin group. Its members get the OpenBao `admin` policy automatically, via an
+  # external identity-group mapping on the OpenBao side (openbao_oidc_group_policies).
+  # The name must match what the groups claim carries — the group name, openbao-admins.
+  - model: authentik_core.group
+    id: group-openbao-admins
+    identifiers:
+      name: openbao-admins
+    attrs:
+      name: openbao-admins
+
   - model: authentik_providers_oauth2.oauth2provider
     id: provider-openbao
     identifiers:
@@ -48,11 +58,21 @@ entries:
       provider: !KeyOf provider-openbao
       policy_engine_mode: any
 
-  # Restrict to openbao-users (default-deny).
+  # Restrict to openbao-users OR openbao-admins (default-deny; policy_engine_mode: any
+  # means either binding grants access). So an admin needs only the openbao-admins
+  # group — it grants both app access here and the admin policy in OpenBao.
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf app-openbao
       group: !KeyOf group-openbao-users
       order: 0
+    attrs:
+      enabled: true
+
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-openbao
+      group: !KeyOf group-openbao-admins
+      order: 1
     attrs:
       enabled: true
