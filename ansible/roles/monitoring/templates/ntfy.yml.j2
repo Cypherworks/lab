@@ -2,6 +2,12 @@
    DB persists on the ntfydata volume; the alertmanager + human users and their
    topic ACLs are provisioned by the role's tasks (ntfy user add / ntfy access). #}
 base-url: "{{ monitoring_ntfy_base_url }}"
+{% if monitoring_ntfy_upstream_base_url %}
+# Relays a wake-up push through ntfy.sh (APNS/FCM) so the phone app gets instant
+# notifications from this self-hosted server. Only a poll trigger goes upstream —
+# message content stays here.
+upstream-base-url: "{{ monitoring_ntfy_upstream_base_url }}"
+{% endif %}
 listen-http: ":80"
 behind-proxy: true
 cache-file: "/var/cache/ntfy/cache.db"
