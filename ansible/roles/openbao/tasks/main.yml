@@ -77,6 +77,14 @@
   ansible.builtin.include_tasks: provisioner.yml
   when: openbao_mgmt_token | length > 0
 
+# Audit device first, so everything the reconcile writes below is itself logged.
+# On by default; the provisioner can enable it but not disable it.
+- name: Enable the audit device
+  ansible.builtin.include_tasks: audit.yml
+  when:
+    - openbao_mgmt_token | length > 0
+    - openbao_audit_enabled | bool
+
 # The reconcile runs once OpenBao is initialised and a management token is available
 # (from the step above); the manual `bao operator init` must have happened first.
 - name: Reconcile the PKI engine

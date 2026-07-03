@@ -1,0 +1,62 @@
+---
+# Enable a file audit device so every request/response on the root-of-trust is
+# logged, and rotate that log so it can't fill the node's disk (a full disk stops
+# audit writes, which seals the vault against itself). Idempotent: the device is
+# only enabled if not already present, and a re-enable is tolerated as a safety net.
+# The provisioner token can enable auditing but not disable it (see the policy).
+- name: Ensure the audit log directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ openbao_audit_log_dir }}"
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: "0750"
+
+- name: Check which audit devices are already enabled
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command:
+    cmd: "bao audit list -format=json"
+  register: openbao_audit_list
+  changed_when: false
+  failed_when: false
+
+- name: Enable the file audit device
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command:
+    cmd: >-
+      bao audit enable -path={{ openbao_audit_path }}
+      file file_path={{ openbao_audit_log_file }}
+  register: openbao_audit_enable
+  changed_when: openbao_audit_enable.rc == 0
+  # The list check is the primary guard; tolerating "already in use" covers the case
+  # where the device exists but the list output couldn't be parsed.
+  failed_when:
+    - openbao_audit_enable.rc != 0
+    - "'already in use' not in openbao_audit_enable.stderr"
+  when: >-
+    openbao_audit_list.rc != 0
+    or ((openbao_audit_path ~ '/') not in (openbao_audit_list.stdout | default('{}') | from_json))
+
+# logrotate renames the log and OpenBao reopens it on SIGHUP (see the file audit
+# docs), so rotation loses no records — unlike copytruncate.
+- name: Ensure logrotate is installed
+  become: true
+  ansible.builtin.apt:
+    name: logrotate
+    state: present
+
+- name: Install the audit-log rotation config
+  become: true
+  ansible.builtin.template:
+    src: openbao-audit-logrotate.j2
+    dest: /etc/logrotate.d/openbao-audit
+    owner: root
+    group: root
+    mode: "0644"

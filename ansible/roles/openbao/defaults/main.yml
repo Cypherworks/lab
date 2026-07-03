@@ -61,14 +61,17 @@ openbao_provisioner_policy_name: provisioner
 openbao_provisioner_token_ttl: "15m"
 openbao_provisioner_token_max_ttl: "30m"
 # Path-scoped: everything the reconcile writes, nothing it doesn't. Mounting secrets
-# engines (sys/mounts) and enabling auth methods (sys/auth) are sudo-protected in
-# OpenBao, so those two paths carry sudo — nothing else does. No delete anywhere
-# (can't unmount an engine or drop the CA), and no access to the dangerous sys paths
-# (seal, raw, step-down, rotate) or token-root creation.
+# engines (sys/mounts), enabling auth methods (sys/auth) and enabling audit devices
+# (sys/audit) are sudo-protected in OpenBao, so those three paths carry sudo — nothing
+# else does. No delete anywhere (can't unmount an engine, drop the CA, or — crucially —
+# disable the audit device: turning the audit trail off needs root), and no access to
+# the dangerous sys paths (seal, raw, step-down, rotate) or token-root creation.
 openbao_provisioner_policy_rules: |
   path "sys/mounts/*"                    { capabilities = ["create", "read", "update", "sudo"] }
   path "sys/auth"                        { capabilities = ["read"] }
   path "sys/auth/*"                      { capabilities = ["create", "read", "update", "sudo"] }
+  path "sys/audit"                       { capabilities = ["read", "sudo"] }
+  path "sys/audit/*"                     { capabilities = ["create", "read", "update", "sudo"] }
   path "sys/policies/acl/*"              { capabilities = ["create", "read", "update", "list"] }
   path "{{ openbao_pki_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
   path "{{ openbao_ssh_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
@@ -77,6 +80,25 @@ openbao_provisioner_policy_rules: |
   path "identity/*"                      { capabilities = ["create", "read", "update", "list"] }
 # Computed at run time (the AppRole login token, else the root token). Don't set this.
 openbao_mgmt_token: ""
+
+# --- Audit device (log every request/response) -------------------------------
+# A file audit device so every secret read, PKI issue and SSH-cert sign on the
+# root-of-trust is logged (as a hashed record). Enabled by the reconcile before the
+# secret engines below, so their own setup is audited too — no manual step. On by
+# default: a secrets manager without an audit trail is not secure-by-design.
+#
+# OpenBao blocks requests if its ONLY audit device can't write, so the device is a
+# local file on the instance disk (always writable) rather than a network sink that
+# could take the root-of-trust down with it; shipping to central logging tails this
+# file. Rotated by logrotate — OpenBao reopens the file on SIGHUP, so entries are
+# never lost (no copytruncate). The unbounded log would otherwise fill a small node's
+# disk and, because a full disk stops writes, seal the vault against itself.
+openbao_audit_enabled: true
+openbao_audit_path: file          # the sys/audit device name
+openbao_audit_log_dir: /var/log/openbao
+openbao_audit_log_file: "{{ openbao_audit_log_dir }}/audit.log"
+openbao_audit_log_rotate_count: 14   # keep ~2 weeks of daily audit logs
+openbao_audit_log_maxsize: 100M      # rotate early if it grows past this within a day
 
 # --- PKI ---------------------------------------------------------------------
 # The reconcile (PKI/OIDC/SSH/snapshots) runs once OpenBao is initialised and a
