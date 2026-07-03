@@ -65,7 +65,7 @@ module "switch" {
   }
 
   ports = {
-    "5"  = { profile_key = "access_servers", name = "pi-dns-1" }
+    "5"  = { profile_key = "access_servers", name = "node-1" }
     # NAS LACP across the four consecutive ports 17-20.
     "17" = { profile_key = "access_servers", name = "nas-lag", aggregate_num_ports = 4 }
     # Unused ports shut for zero-trust hygiene.

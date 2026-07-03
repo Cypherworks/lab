@@ -21,11 +21,11 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_deb_name` | `headscale_{{ headscale_version }}_linux_{{ headscale_arch }}.deb` | Package filename. |
 | `headscale_deb_url` | `{{ headscale_release_base }}/{{ headscale_deb_name }}` | Full `.deb` download URL. |
 | `headscale_checksum` | `sha256:{{ headscale_release_base }}/checksums.txt` | Integrity check for the `.deb`. A `sha256:<url>` verifies against Headscale's published checksums file; override with a literal `sha256:<hash>` to pin, or `""` to skip. |
-| `headscale_domain` | `headscale.cypherworks.co.uk` | Public control-plane hostname (`server_url` and the TLS-ALPN cert). |
+| `headscale_domain` | `headscale.example.com` | Public control-plane hostname (`server_url` and the TLS-ALPN cert). |
 | `headscale_listen_addr` | `0.0.0.0:443` | Listen address. Behind the EC2 `sni_router`, override to a local port (e.g. `127.0.0.1:8443`). |
 | `headscale_metrics_listen_addr` | `127.0.0.1:9090` | Prometheus `/metrics` bind. Override to the host's tailnet IP to scrape over the overlay. Never public. |
-| `headscale_base_domain` | `ts.cypherworks.co.uk` | MagicDNS suffix; a tailnet-only subdomain so it never clashes with the real Route53 zone. |
-| `headscale_acme_email` | `lloyd@cypherworks.co.uk` | ACME contact email. |
+| `headscale_base_domain` | `ts.example.com` | MagicDNS suffix; a tailnet-only subdomain so it never clashes with the real Route53 zone. |
+| `headscale_acme_email` | `admin@example.com` | ACME contact email. |
 | `headscale_oidc_enabled` | `false` | Whether to render the OIDC block. |
 | `headscale_oidc_only_start_if_available` | `false` | Deliberately false. See notes on the boot deadlock. |
 | `headscale_oidc_issuer` | `""` | Required when OIDC enabled, from inventory. Authentik issuer URL. |
@@ -58,7 +58,7 @@ Handler: `Restart headscale`.
         headscale_listen_addr: "127.0.0.1:8443"   # behind sni_router
         headscale_metrics_listen_addr: "100.64.0.1:9090"
         headscale_oidc_enabled: true
-        headscale_oidc_issuer: "https://auth.cypherworks.co.uk/application/o/headscale/"
+        headscale_oidc_issuer: "https://auth.example.com/application/o/headscale/"
         headscale_oidc_client_id: "{{ vault_hs_client_id }}"
         headscale_oidc_client_secret: "{{ vault_hs_client_secret }}"
 ```

@@ -42,8 +42,8 @@ Handler: `Reload nginx`.
     - role: sni_router
       vars:
         sni_routes:
-          - { sni: "headscale.cypherworks.co.uk", upstream: "127.0.0.1:8443" }
-          - { sni: "auth.cypherworks.co.uk",      upstream: "10.200.30.10:443" }
+          - { sni: "headscale.example.com", upstream: "127.0.0.1:8443" }
+          - { sni: "auth.example.com",      upstream: "10.0.30.10:443" }
 ```
 
 ## Notes

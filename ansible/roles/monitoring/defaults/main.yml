@@ -46,7 +46,7 @@ monitoring_speedtest_targets: []     # speedtest-tracker native /prometheus (:80
 
 # blackbox_exporter https probes (cert expiry). Plain list of https URLs; the URL
 # becomes the `instance` label (blackbox standard pattern).
-monitoring_blackbox_targets: []      # e.g. ["https://grafana.cypherworks.co.uk"]
+monitoring_blackbox_targets: []      # e.g. ["https://grafana.example.com"]
 
 # snmp_exporter targets — the Synology NAS over SNMPv3. {target: "ip:161", instance}.
 monitoring_snmp_targets: []
@@ -57,7 +57,7 @@ monitoring_headscale_target: ""
 # Home Assistant Prometheus scrape, via Caddy (TLS). Target is the Caddy host
 # (host:443). The bearer token is a SOPS secret, injected via the container env and
 # expanded by vmsingle (%{HASS_TOKEN}) — never written to the on-disk scrape config.
-monitoring_hass_target: ""           # e.g. hass.cypherworks.co.uk:443
+monitoring_hass_target: ""           # e.g. hass.example.com:443
 monitoring_hass_token: ""            # SOPS — HASS long-lived access token
 
 # Alert thresholds — tunable from the deploy.
@@ -66,7 +66,7 @@ monitoring_disk_used_percent: 85
 
 # Grafana — site values from the deploy. OIDC endpoints are authentik's GLOBAL
 # ones (not per-app); verified against integrations.goauthentik.io/monitoring/grafana.
-monitoring_grafana_root_url: ""              # https://grafana.cypherworks.co.uk
+monitoring_grafana_root_url: ""              # https://grafana.example.com
 monitoring_grafana_admin_user: "admin"
 monitoring_grafana_oidc_auth_url: ""         # https://auth.cw/application/o/authorize/
 monitoring_grafana_oidc_token_url: ""        # https://auth.cw/application/o/token/
@@ -114,5 +114,5 @@ monitoring_go2rtc_username: ""
 monitoring_go2rtc_password: ""
 # Browser-facing go2rtc base URL (Caddy front, lab domain) that the Grafana CCTV
 # iframe points at. The user's browser loads this, so it must be the Caddy route, not
-# the internal compose port. Set from the deploy (e.g. https://cctv.cypherworks.co.uk).
+# the internal compose port. Set from the deploy (e.g. https://cctv.example.com).
 monitoring_go2rtc_public_url: ""

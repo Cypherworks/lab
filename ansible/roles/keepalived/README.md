@@ -43,7 +43,7 @@ Handler: `Restart keepalived`.
 ```yaml
 - hosts: dns_nodes
   vars:
-    keepalived_vip: 10.200.20.2
+    keepalived_vip: 10.0.20.2
     keepalived_auth_pass: "{{ vault_keepalived_pass }}"
   roles:
     - role: keepalived

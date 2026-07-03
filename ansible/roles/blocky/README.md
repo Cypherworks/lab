@@ -68,7 +68,7 @@ Handlers: `Restart systemd-resolved` and `Restart blocky`. The systemd unit gran
           default:
             - ads
         blocky_custom_dns:
-          caddy.lab.example: 10.200.30.10
+          caddy.lab.example: 10.0.30.10
 ```
 
 ## Notes

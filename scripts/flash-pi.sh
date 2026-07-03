@@ -8,7 +8,7 @@
 # caller — this script is mechanism; site data lives in homelab-deploy.
 #
 # Usage:
-#   flash-pi.sh --hostname pi-dns-1 --ip 10.200.20.11 --gateway 10.200.20.1 \
+#   flash-pi.sh --hostname node-1 --ip 10.0.20.11 --gateway 10.0.20.1 \
 #               --device /dev/disk4 --pubkey ~/.ssh/id_ed25519.pub \
 #               --image ubuntu-24.04-preinstalled-server-arm64+raspi.img.xz \
 #               [--prefix 24] [--interface eth0] [--dns 1.1.1.1] [--user ansible]

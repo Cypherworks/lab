@@ -15,8 +15,8 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `caddy_domain` | `cypherworks.co.uk` | Base domain; the site block serves `*.{{ caddy_domain }}` and routes by Host header. |
-| `caddy_acme_email` | `lloyd@cypherworks.co.uk` | ACME account email in the global block. |
+| `caddy_domain` | `example.com` | Base domain; the site block serves `*.{{ caddy_domain }}` and routes by Host header. |
+| `caddy_acme_email` | `admin@example.com` | ACME account email in the global block. |
 | `caddy_config_path` | `/etc/caddy/Caddyfile` | Where the Caddyfile is written. |
 | `caddy_binary` | `/usr/local/bin/caddy` | Caddy binary used for `validate` and `reload`. |
 | `caddy_routes` | `[]` | Site data. Declarative list of routes (see below). |
@@ -48,14 +48,14 @@ Handlers, ordered deliberately:
       vars:
         caddy_routes:
           - name: unifi
-            host: unifi.cypherworks.co.uk
-            upstream: 10.200.30.20:8443
+            host: unifi.example.com
+            upstream: 10.0.30.20:8443
             tls_skip_verify: true
             header_up:
               Host: "{http.reverse_proxy.upstream.hostport}"
           - name: bao
-            host: bao.cypherworks.co.uk
-            upstream: https://10.200.30.30:8200
+            host: bao.example.com
+            upstream: https://10.0.30.30:8200
         caddy_trusted_ca_certs:
           openbao-internal: "{{ openbao_ca_pem }}"
 ```

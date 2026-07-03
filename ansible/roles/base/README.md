@@ -55,8 +55,8 @@ NTP/time sync is deliberately not handled here. The CIS hardening layer (CIS 2.3
     - role: base
       vars:
         timezone: Europe/London
-        lab_ip: 10.200.20.15
-        lab_gateway: 10.200.20.1
+        lab_ip: 10.0.20.15
+        lab_gateway: 10.0.20.1
         ops_ssh_authorized_keys:
           - "ssh-ed25519 AAAA... ops@admin"
 ```

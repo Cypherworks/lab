@@ -1,7 +1,7 @@
 variable "port_forwards" {
   description = <<-EOT
     WAN→LAN port forwards (DNAT), keyed by a stable identifier. `src_ip` restricts
-    the source (a single IP or CIDR, e.g. the two cameras as 192.168.178.10/31);
+    the source (a single IP or CIDR, e.g. the two cameras as 192.0.2.10/31);
     omit for unrestricted. The source net is hostile, so scope inbound forwards.
   EOT
   type = map(object({

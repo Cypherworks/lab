@@ -1,9 +1,9 @@
 ---
 # Joins a host to a Headscale/Tailscale overlay. Used to put the Headscale EC2 on
-# its own tailnet so the SNI router can reach the lab Caddy (10.200.30.10) for the
-# auth.cypherworks.co.uk passthrough.
+# its own tailnet so the SNI router can reach the lab Caddy (10.0.30.10) for the
+# auth.example.com passthrough.
 
-tailscale_login_server: "https://headscale.cypherworks.co.uk"
+tailscale_login_server: "https://headscale.example.com"
 # Short-lived pre-auth key minted on Headscale. From SOPS — never defaulted real.
 tailscale_authkey: ""
 # Accept the lab supernet advertised by the HA subnet routers.
