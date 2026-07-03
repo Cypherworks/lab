@@ -1,0 +1,44 @@
+---
+# Provisioner AppRole + policy. This is the non-root identity the reconcile
+# authenticates as, so no standing root token is needed once it's in place. The
+# policy is path-scoped-broad (see defaults): enough to provision PKI/OIDC/SSH/
+# AppRole, but no seal/raw/token-root/sudo and no delete. Idempotent — safe to
+# re-assert every run. On the first bootstrap run this is written with the root token;
+# thereafter the provisioner token re-asserts itself (its policy grants sys/policies
+# and auth/approle). The secret_id is generated once by hand and stored in SOPS, so
+# the role never rotates it out from under the stored copy.
+- name: Configure the provisioner AppRole + policy
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
+    BAO_SKIP_VERIFY: "true"
+  block:
+    - name: Write the provisioner ACL policy
+      ansible.builtin.command:
+        cmd: "bao policy write {{ openbao_provisioner_policy_name }} -"
+        stdin: "{{ openbao_provisioner_policy_rules }}"
+      changed_when: true
+
+    - name: Enable the AppRole auth method
+      ansible.builtin.command:
+        cmd: "bao auth enable approle"
+      register: openbao_provisioner_approle_enable
+      changed_when: openbao_provisioner_approle_enable.rc == 0
+      failed_when:
+        - openbao_provisioner_approle_enable.rc != 0
+        - "'path is already in use' not in openbao_provisioner_approle_enable.stderr"
+
+    # secret_id_ttl=0 / secret_id_num_uses=0 = a non-expiring secret_id (unattended
+    # infra runner). token_ttl/max keep the issued reconcile token short-lived.
+    - name: Write the provisioner AppRole role
+      ansible.builtin.command:
+        argv:
+          - bao
+          - write
+          - "auth/approle/role/{{ openbao_provisioner_approle }}"
+          - "token_policies={{ openbao_provisioner_policy_name }}"
+          - "token_ttl={{ openbao_provisioner_token_ttl }}"
+          - "token_max_ttl={{ openbao_provisioner_token_max_ttl }}"
+          - "secret_id_ttl=0"
+          - "secret_id_num_uses=0"
+      changed_when: true

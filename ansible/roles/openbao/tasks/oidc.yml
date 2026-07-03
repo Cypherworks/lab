@@ -5,7 +5,7 @@
 - name: Configure OpenBao OIDC (Authentik)
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
-    BAO_TOKEN: "{{ openbao_root_token }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
     BAO_SKIP_VERIFY: "true"
   block:
     - name: Write the ACL policies

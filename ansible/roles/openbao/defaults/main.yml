@@ -45,11 +45,40 @@ openbao_aws_region: ""
 openbao_aws_access_key_id: ""
 openbao_aws_secret_access_key: ""
 
+# --- Management auth (drives the reconcile) ----------------------------------
+# The reconcile below (PKI, OIDC, SSH CA, snapshots) needs an admin-capable token.
+# Preferred: a scoped `provisioner` AppRole — broad enough to provision, but not root
+# (no seal/raw/token-mint, no sudo, no delete, and fully audited). If its role_id +
+# secret_id are set (from SOPS), the role logs in with them and uses the resulting
+# short-lived token. Otherwise it falls back to openbao_root_token for first-time
+# bootstrap. Once the AppRole exists and its creds are stored, the standing root token
+# can be revoked and openbao_root_token cleared — the reconcile keeps working.
+openbao_provisioner_role_id: ""
+openbao_provisioner_secret_id: ""
+openbao_provisioner_approle: provisioner
+openbao_provisioner_policy_name: provisioner
+openbao_provisioner_token_ttl: "15m"
+openbao_provisioner_token_max_ttl: "30m"
+# Path-scoped-broad: everything the reconcile writes, nothing it doesn't. No delete
+# (can't unmount an engine or drop the CA), no sudo, no seal/raw/token-root paths.
+openbao_provisioner_policy_rules: |
+  path "sys/mounts/*"                    { capabilities = ["create", "read", "update"] }
+  path "sys/auth"                        { capabilities = ["read"] }
+  path "sys/auth/*"                      { capabilities = ["create", "read", "update"] }
+  path "sys/policies/acl/*"              { capabilities = ["create", "read", "update", "list"] }
+  path "{{ openbao_pki_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
+  path "{{ openbao_ssh_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
+  path "auth/oidc/*"                     { capabilities = ["create", "read", "update", "list"] }
+  path "auth/approle/*"                  { capabilities = ["create", "read", "update", "list"] }
+# Computed at run time (the AppRole login token, else the root token). Don't set this.
+openbao_mgmt_token: ""
+
 # --- PKI ---------------------------------------------------------------------
-# The PKI reconcile runs only once OpenBao is initialised and the root token is
-# supplied (from SOPS). Empty token = PKI step skipped. The root CA is generated
-# exactly once (guarded on an existing CA), so re-runs and post-restore runs never
-# overwrite it — the whole point of preserving CA continuity across a rebuild.
+# The reconcile (PKI/OIDC/SSH/snapshots) runs once OpenBao is initialised and a
+# management token is available — the provisioner AppRole if configured, else this
+# bootstrap root token (see the management-auth section). Empty here AND no AppRole
+# creds = reconcile skipped. The root CA is generated exactly once (guarded on an
+# existing CA), so re-runs and post-restore runs never overwrite it.
 openbao_root_token: ""
 openbao_pki_mount: pki
 openbao_pki_max_lease_ttl: "87600h"   # 10y ceiling for the root

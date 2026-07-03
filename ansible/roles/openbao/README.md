@@ -8,7 +8,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 - A Debian-family host (installs from the upstream `.deb`); an unprivileged LXC container is the intended target.
 - AWS KMS key for auto-unseal, plus AWS credentials for the seal and (optionally) the snapshot uploader, supplied from SOPS.
-- `bao operator init` run once by hand after first start (see What it does); the resulting root token supplied back as `openbao_root_token` for the reconcile steps.
+- `bao operator init` run once by hand after first start (see What it does); the resulting root token supplied back as `openbao_root_token` to bootstrap the reconcile. Once the `provisioner` AppRole is established, the reconcile authenticates with it instead and the root token can be revoked.
 - Caddy (or equivalent) terminating TLS in front of the listener and serving the PKI issuing/CRL URLs.
 - For snapshots: an S3 bucket and a scoped `openbao-snapshot` IAM user.
 
@@ -37,13 +37,28 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `openbao_aws_access_key_id` | `""` | AWS access key for the seal (secret; via EnvironmentFile, from SOPS). |
 | `openbao_aws_secret_access_key` | `""` | AWS secret key for the seal (secret; from SOPS). |
 
-### PKI
+### Management auth
 
-The PKI reconcile runs only when `openbao_root_token` is set. The root CA is generated exactly once (guarded on an existing CA).
+The reconcile (PKI, listener cert, OIDC, SSH CA, snapshots) authenticates with a management token resolved at run time: the `provisioner` AppRole if its creds are set (from SOPS), otherwise `openbao_root_token` for first-time bootstrap. This is what lets the standing root token be revoked once the AppRole is established.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `openbao_root_token` | `""` | Root token from SOPS; empty skips the entire PKI/OIDC/SSH/snapshot reconcile. |
+| `openbao_root_token` | `""` | Bootstrap/break-glass management token from SOPS. Used only when no provisioner AppRole creds are set. Revoke and clear once the AppRole is in place. |
+| `openbao_provisioner_role_id` | `""` | Provisioner AppRole role_id (from SOPS). Setting this + the secret_id switches the reconcile off the root token. |
+| `openbao_provisioner_secret_id` | `""` | Provisioner AppRole secret_id (from SOPS). |
+| `openbao_provisioner_approle` | `provisioner` | AppRole role name. |
+| `openbao_provisioner_policy_name` | `provisioner` | ACL policy name. |
+| `openbao_provisioner_token_ttl` | `15m` | TTL of the short-lived reconcile token. |
+| `openbao_provisioner_token_max_ttl` | `30m` | Max TTL of the reconcile token. |
+| `openbao_provisioner_policy_rules` | *path-scoped-broad HCL* | The provisioner policy: create/read/update on the mount/auth/policy/pki/ssh/oidc/approle paths the reconcile writes. No delete, no sudo, no seal/raw/token-root. |
+| `openbao_mgmt_token` | `""` | Computed at run time (the AppRole login token, else the root token); do not set. |
+
+### PKI
+
+The PKI reconcile runs only when a management token is available (see Management auth). The root CA is generated exactly once (guarded on an existing CA).
+
+| Variable | Default | Description |
+| --- | --- | --- |
 | `openbao_pki_mount` | `pki` | PKI secrets engine mount path. |
 | `openbao_pki_max_lease_ttl` | `87600h` | PKI max lease TTL (10y ceiling). |
 | `openbao_pki_root_ttl` | `87600h` | Root CA TTL. |
@@ -108,11 +123,12 @@ None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the
 1. Installs the pinned OpenBao `.deb`; the package creates the `openbao` user, the systemd unit, `/etc/openbao/`, and a self-signed bootstrap TLS cert.
 2. Renders the auto-unseal credentials as the systemd `EnvironmentFile` (`/etc/openbao/openbao.env`) and the config (`/etc/openbao/openbao.hcl`) — AWS creds never touch the config file.
 3. Enables and starts the service. It comes up **sealed and uninitialised**: run `bao operator init` once by hand to emit the recovery keys and root token, capture them into the break-glass kit and SOPS. After that, the KMS seal auto-unseals on every restart.
-4. With `openbao_root_token` supplied, reconciles the PKI (mount, tune, root CA once, URLs, issuing roles).
-5. Optionally swaps the bootstrap listener cert for one issued by the internal CA (guarded on a `.ca-issued` marker), so Caddy can verify the upstream against the CA.
-6. Optionally configures OIDC login (ACL policies, auth method, config, roles).
-7. Optionally configures the SSH CA (engine, CA keypair once, signing roles; `principals_from_oidc` roles look up the OIDC accessor).
-8. Optionally configures daily raft snapshots: a snapshot-only AppRole (secret_id generated once, guarded on its creds file), the uploader creds, the snapshot script, and a systemd service + timer.
+4. Resolves the management token — logs in with the `provisioner` AppRole if its creds are set, else falls back to `openbao_root_token` — then asserts the provisioner AppRole + policy (idempotent; written with root on first bootstrap, self-maintaining thereafter).
+5. With a management token available, reconciles the PKI (mount, tune, root CA once, URLs, issuing roles).
+6. Optionally swaps the bootstrap listener cert for one issued by the internal CA (guarded on a `.ca-issued` marker), so Caddy can verify the upstream against the CA.
+7. Optionally configures OIDC login (ACL policies, auth method, config, roles).
+8. Optionally configures the SSH CA (engine, CA keypair once, signing roles; `principals_from_oidc` roles look up the OIDC accessor).
+9. Optionally configures daily raft snapshots: a snapshot-only AppRole (secret_id generated once, guarded on its creds file), the uploader creds, the snapshot script, and a systemd service + timer.
 
 ## Example
 
@@ -144,7 +160,8 @@ None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the
 
 ## Notes
 
-- The whole PKI/listener-cert/OIDC/SSH/snapshot reconcile is gated on `openbao_root_token`. Leave it empty until after the manual `bao operator init`.
+- The whole PKI/listener-cert/OIDC/SSH/snapshot reconcile is gated on a management token being resolvable (the provisioner AppRole or `openbao_root_token`). Both empty until after the manual `bao operator init`, so the reconcile stays skipped until then.
+- The `provisioner` AppRole is the non-root identity the reconcile runs as. Its policy is path-scoped-broad — enough to provision, but no delete/sudo/seal/raw/token-root — so once its creds are stored, the standing root token can be revoked (regenerate it later via `bao operator generate-root` + recovery keys).
 - The root CA and the SSH CA are generated exactly once and never regenerated (guarded), so re-runs and post-restore runs preserve trust continuity across a rebuild. Regenerating either would invalidate all existing trust.
 - The listener cert is issued once and guarded on `.ca-issued`; delete the marker (or the future renewal timer) to rotate before expiry.
 - The snapshot AppRole `secret_id` is generated once and guarded on its creds file, so re-runs don't rotate it.
