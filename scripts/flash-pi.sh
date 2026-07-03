@@ -5,7 +5,7 @@
 #
 # macOS only (the operator's MacBook is the imaging host). Destructive: it wipes
 # the target device. The per-host data (IP/gateway/key) is passed in by the
-# caller — this script is mechanism; site data lives in homelab-deploy.
+# caller — this script is mechanism; site data lives in lab-deploy.
 #
 # Usage:
 #   flash-pi.sh --hostname node-1 --ip 10.0.20.11 --gateway 10.0.20.1 \
