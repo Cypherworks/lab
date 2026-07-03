@@ -7,6 +7,13 @@ blocky_arch: arm64 # Pi; x86 nodes would be amd64
 blocky_install_dir: /opt/blocky
 blocky_user: blocky
 
+# Release archive name and the integrity check applied to it. The download is
+# verified against blocky's own published checksums file (get_url fetches it and
+# matches on the archive filename). Override with a literal "sha256:<hash>" to pin,
+# or set to "" to skip verification.
+blocky_archive_name: "blocky_{{ blocky_version }}_Linux_{{ blocky_arch }}.tar.gz"
+blocky_checksum: "sha256:https://github.com/0xERR0R/blocky/releases/download/{{ blocky_version }}/blocky_checksums.txt"
+
 blocky_dns_port: 53
 blocky_http_port: 4000 # query API + Prometheus /metrics
 

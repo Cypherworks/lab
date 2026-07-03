@@ -18,6 +18,8 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `blocky_version` | `v0.32.1` | Pinned blocky release tag; selects the downloaded tarball. |
 | `blocky_arch` | `arm64` | Release architecture. Use `amd64` on x86 nodes. |
 | `blocky_install_dir` | `/opt/blocky` | Install root; versioned subdir plus a `blocky` symlink and `config.yml`. |
+| `blocky_archive_name` | `blocky_{{ blocky_version }}_Linux_{{ blocky_arch }}.tar.gz` | Release archive filename. |
+| `blocky_checksum` | `sha256:https://.../{{ blocky_version }}/blocky_checksums.txt` | Integrity check for the archive. A `sha256:<url>` verifies against blocky's published checksums file; override with a literal `sha256:<hash>` to pin, or `""` to skip. |
 | `blocky_user` | `blocky` | System user the service runs as. |
 | `blocky_dns_port` | `53` | DNS listen port. |
 | `blocky_http_port` | `4000` | HTTP port for the query API and Prometheus `/metrics`. |
@@ -44,7 +46,7 @@ None.
 
 1. When `blocky_disable_resolved_stub` is set: creates `/etc/systemd/resolved.conf.d`, writes `10-no-stub.conf` with `DNSStubListener=no` (`0644`, notifies a `systemd-resolved` restart), and relinks `/etc/resolv.conf` to `/run/systemd/resolve/resolv.conf`. This frees port 53 for blocky.
 2. Creates the `blocky_user` system user (`nologin`, no home created) and the versioned install directory.
-3. Downloads and extracts the pinned blocky tarball from GitHub into `{{ blocky_install_dir }}/{{ blocky_version }}` (idempotent via `creates`).
+3. Downloads the pinned blocky archive from GitHub, verified against `blocky_checksum`, then extracts it into `{{ blocky_install_dir }}/{{ blocky_version }}` (idempotent via `creates`).
 4. Symlinks `{{ blocky_install_dir }}/blocky` to the current version's binary (notifies a restart).
 5. Renders `config.yml` (`0640`, group `blocky_user`) from `config.yml.j2` and installs `/etc/systemd/system/blocky.service` (`0644`), both notifying a restart.
 6. Enables and starts the service with `daemon_reload`.
@@ -73,4 +75,4 @@ Handlers: `Restart systemd-resolved` and `Restart blocky`. The systemd unit gran
 
 - The role rewrites `/etc/resolv.conf` and disables the resolved stub. On a host that other services expect to resolve through `127.0.0.53`, confirm this is acceptable before running.
 - `blocky_http_port` serves both the query API and Prometheus metrics. There is no auth on that port; restrict it with host firewalling if the node is not on a trusted segment.
-- The tarball is fetched over HTTPS from GitHub with no checksum verification in the role. Pin `blocky_version` deliberately and trust the transport.
+- The archive is verified against blocky's published checksums file by default (`blocky_checksum`). This catches transport corruption and tampering of the artifact; for a stronger guarantee against a compromised release, override `blocky_checksum` with a literal `sha256:<hash>` pinned to a reviewed version.

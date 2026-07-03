@@ -50,10 +50,20 @@
     group: root
     mode: "0755"
 
-- name: Download and extract blocky
+- name: Download the blocky release archive
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/0xERR0R/blocky/releases/download/{{ blocky_version }}/{{ blocky_archive_name }}"
+    dest: "{{ blocky_install_dir }}/{{ blocky_version }}/{{ blocky_archive_name }}"
+    checksum: "{{ blocky_checksum | default(omit, true) }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Extract blocky
   become: true
   ansible.builtin.unarchive:
-    src: "https://github.com/0xERR0R/blocky/releases/download/{{ blocky_version }}/blocky_{{ blocky_version }}_Linux_{{ blocky_arch }}.tar.gz"
+    src: "{{ blocky_install_dir }}/{{ blocky_version }}/{{ blocky_archive_name }}"
     dest: "{{ blocky_install_dir }}/{{ blocky_version }}"
     remote_src: true
     creates: "{{ blocky_install_dir }}/{{ blocky_version }}/blocky"

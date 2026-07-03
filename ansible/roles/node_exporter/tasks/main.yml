@@ -13,7 +13,7 @@
 
 # Bind to the host's lab address, not 0.0.0.0 — metrics are reachable only from the
 # lab network, never any other interface. The collector set is left at the package
-# default (includes hwmon/thermal for temps); extra flags go in node_exporter_args.
+# default (includes hwmon/thermal for temps); extra flags go in node_exporter_extra_args.
 - name: Configure node_exporter listen address
   become: true
   ansible.builtin.copy:

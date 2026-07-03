@@ -86,7 +86,7 @@
       become: true
       ansible.builtin.copy:
         content: "%{{ sssd_sudo_group }} ALL=(ALL:ALL) ALL\n"
-        dest: /etc/sudoers.d/ssh-sudoers
+        dest: "/etc/sudoers.d/{{ sssd_sudo_group }}"
         owner: root
         group: root
         mode: "0440"
