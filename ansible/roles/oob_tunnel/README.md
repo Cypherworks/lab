@@ -57,13 +57,44 @@ Set `oob_tunnel_mode`:
 | `oob_tunnel_public_key` | `""` | Tunnel public key (relay). |
 | `oob_tunnel_relay_host_key` | `""` | Optional relay host-key pin; empty = accept-new (TOFU). |
 
+## Keys
+
+Two keys, and only one of them is new:
+
+- The **tunnel machine key** (private half on the client, public half on the relay). The
+  client dials the relay unattended, so it needs its own credential — but it is
+  forwarding-only on the relay and authenticates no one to the client, so it is
+  deliberately low-value. No private key is ever placed on the relay.
+- The **operator's own key**, unchanged. You reach the client with the key you already
+  use, via `ProxyJump` — see below. There is no per-operator key to distribute.
+
 ## Using the tunnel (break-glass)
 
-From the operator's machine, once the tunnel is up:
+Chain through the relay with your existing key using `ProxyJump`, so your key
+authenticates both hops from your own machine and never touches the relay (unlike agent
+forwarding, which exposes your agent on the relay):
 
 ```
-ssh -p <relay_ssh_port> <admin>@<relay_host>          # into the relay
-ssh -p <remote_bind_port> <user>@127.0.0.1            # through the tunnel onto the client
+ssh -J <admin>@<relay_host>:<relay_ssh_port> -p <remote_bind_port> <you>@127.0.0.1
 ```
 
-From the client you can then reach the rest of the network as that host normally would.
+Or as an SSH config entry:
+
+```
+Host oob-client
+    HostName 127.0.0.1
+    Port <remote_bind_port>
+    ProxyJump <admin>@<relay_host>:<relay_ssh_port>
+    User <you>
+```
+
+The relay only ever forwards ciphertext of your client session — it terminates the outer
+tunnel transport but cannot read the inner SSH session. From the client you can then reach
+the rest of the network as that host normally would.
+
+## Hardening notes
+
+- Pin the relay host key (`oob_tunnel_relay_host_key`) to remove the first-connect MITM
+  window; empty falls back to trust-on-first-use.
+- The relay authorises the tunnel key with `permitopen="none"` and a scoped `permitlisten`,
+  so a stolen tunnel key can only create the one intended forward.

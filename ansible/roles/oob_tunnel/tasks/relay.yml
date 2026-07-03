@@ -13,12 +13,16 @@
     create_home: true
     home: "/var/lib/{{ oob_tunnel_relay_user }}"
 
-- name: Authorise the tunnel key for reverse forwarding only
+- name: Authorise the tunnel key for one scoped reverse forward only
   become: true
   ansible.posix.authorized_key:
     user: "{{ oob_tunnel_relay_user }}"
     key: "{{ oob_tunnel_public_key }}"
-    key_options: "restrict,port-forwarding"
+    # restrict = no shell/pty/agent/x11; port-forwarding re-enables forwarding, then
+    # permitopen=none blocks all local (-L) forwards and permitlisten scopes the reverse
+    # (-R) forward to exactly the break-glass port — so a stolen tunnel key can only ever
+    # create the one intended forward, nothing else.
+    key_options: 'restrict,port-forwarding,permitopen="none",permitlisten="127.0.0.1:{{ oob_tunnel_remote_bind_port }}"'
     exclusive: true
 
 # Keep the tunnel working even if a global `AllowTcpForwarding no` is later applied to
