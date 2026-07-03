@@ -161,7 +161,7 @@ None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the
 ## Notes
 
 - The whole PKI/listener-cert/OIDC/SSH/snapshot reconcile is gated on a management token being resolvable (the provisioner AppRole or `openbao_root_token`). Both empty until after the manual `bao operator init`, so the reconcile stays skipped until then.
-- The `provisioner` AppRole is the non-root identity the reconcile runs as. Its policy is path-scoped-broad — enough to provision, but no delete/sudo/seal/raw/token-root — so once its creds are stored, the standing root token can be revoked (regenerate it later via `bao operator generate-root` + recovery keys).
+- The `provisioner` AppRole is the non-root identity the reconcile runs as. Its policy is path-scoped — enough to provision, with `sudo` only on `sys/mounts/*` and `sys/auth/*` (OpenBao requires it to mount engines and enable auth methods), and no delete, no seal/raw/step-down, no token-root. So once its creds are stored, the standing root token can be revoked (regenerate it later via `bao operator generate-root` + recovery keys).
 - The root CA and the SSH CA are generated exactly once and never regenerated (guarded), so re-runs and post-restore runs preserve trust continuity across a rebuild. Regenerating either would invalidate all existing trust.
 - The listener cert is issued once and guarded on `.ca-issued`; delete the marker (or the future renewal timer) to rotate before expiry.
 - The snapshot AppRole `secret_id` is generated once and guarded on its creds file, so re-runs don't rotate it.
