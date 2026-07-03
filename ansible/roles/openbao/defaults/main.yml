@@ -123,6 +123,12 @@ openbao_oidc_roles: []
 # (the HCL policy body). Lets OIDC users get real policies without the root token.
 openbao_policies: []
 
+# Map IdP groups to policies via external identity groups, so a member of the group
+# gets those policies automatically on `bao login -method=oidc` — no role selection.
+# Consumes the login role's groups_claim. Each: { group: <idp-group-name>, policies:
+# [<policy>, ...] }. The group name must match how the IdP emits it in the claim.
+openbao_oidc_group_policies: []
+
 # --- SSH CA (audited short-lived SSH) ----------------------------------------
 # Bao signs short-lived user certs; hosts trust the CA via TrustedUserCAKeys (the
 # host-side sshd config lives outside this role). The CA is generated ONCE and

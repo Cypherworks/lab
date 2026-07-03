@@ -87,6 +87,7 @@ The PKI reconcile runs only when a management token is available (see Management
 | `openbao_oidc_default_role` | `default` | Default OIDC login role. |
 | `openbao_oidc_roles` | `[]` | Login roles, each `{name, token_policies, allowed_redirect_uris}` plus optional `user_claim`/`groups_claim`/`oidc_scopes`/`ttl`. |
 | `openbao_policies` | `[]` | Named ACL policies to manage, each `{name, rules}`. |
+| `openbao_oidc_group_policies` | `[]` | Map IdP groups to policies via external identity groups, each `{group, policies}`. A member gets the policies automatically on login (no role selection); consumes the login role's `groups_claim`. |
 
 ### SSH CA (audited short-lived SSH)
 

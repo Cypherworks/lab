@@ -56,3 +56,43 @@
       loop_control:
         label: "{{ item.name }}"
       changed_when: true
+
+    # Map IdP groups to policies via external identity groups. A member of the group
+    # gets its policies attached automatically on `bao login -method=oidc` (the login
+    # role's groups_claim carries the groups) — no role selection, no per-user config.
+    - name: Look up the OIDC auth accessor
+      ansible.builtin.command: bao auth list -format=json
+      register: openbao_oidc_auth_list
+      changed_when: false
+      when: openbao_oidc_group_policies | length > 0
+
+    - name: Create the external identity groups
+      ansible.builtin.command:
+        cmd: "bao write identity/group name={{ item.group }} type=external policies={{ item.policies | join(',') }}"
+      loop: "{{ openbao_oidc_group_policies }}"
+      loop_control:
+        label: "{{ item.group }}"
+      changed_when: true
+
+    - name: Read each identity group back (for its id + any existing alias)
+      ansible.builtin.command: "bao read -format=json identity/group/name/{{ item.group }}"
+      register: openbao_oidc_group_read
+      loop: "{{ openbao_oidc_group_policies }}"
+      loop_control:
+        label: "{{ item.group }}"
+      changed_when: false
+
+    # Create the alias linking the IdP group name to the OpenBao group, only when the
+    # group has none yet — writing an alias each run would create duplicates.
+    - name: Alias the IdP group to the OpenBao identity group (once)
+      ansible.builtin.command:
+        cmd: >-
+          bao write identity/group-alias
+          name={{ item.item.group }}
+          mount_accessor={{ (openbao_oidc_auth_list.stdout | from_json)['oidc/'].accessor }}
+          canonical_id={{ (item.stdout | from_json).data.id }}
+      when: not ((item.stdout | from_json).data.alias.id | default(''))
+      loop: "{{ openbao_oidc_group_read.results }}"
+      loop_control:
+        label: "{{ item.item.group }}"
+      changed_when: true
