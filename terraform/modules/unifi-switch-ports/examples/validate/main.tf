@@ -40,9 +40,9 @@ module "switch" {
     "1"  = { profile_key = "access_iot", name = "soundtouch" }
     "2"  = { profile_key = "uplink_all", name = "usg" }
     "3"  = { profile_key = "trunk_ap", name = "ap-ac-pro" }
-    "5"  = { profile_key = "access_servers", name = "pi-dns-1" }
-    "7"  = { profile_key = "access_servers", name = "pi-dns-2" }
-    "9"  = { profile_key = "access_iot", name = "pi-kiosk" }
+    "5"  = { profile_key = "access_servers", name = "node-1" }
+    "7"  = { profile_key = "access_servers", name = "node-2" }
+    "9"  = { profile_key = "access_iot", name = "node-3" }
     "11" = { profile_key = "trunk_node", name = "ryzen" }
     "13" = { profile_key = "trunk_node", name = "thinkcentre-1" }
     "15" = { profile_key = "trunk_node", name = "thinkcentre-2" }

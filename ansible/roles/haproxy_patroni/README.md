@@ -47,11 +47,11 @@ When `haproxy_redis_backends` is non-empty, it also defines a `redis-master` TCP
     - role: haproxy_patroni
       vars:
         patroni_members:
-          - { name: pg-tc1, ip: 10.200.30.33 }
-          - { name: pg-tc2, ip: 10.200.30.34 }
+          - { name: pg-1, ip: 10.0.30.33 }
+          - { name: pg-2, ip: 10.0.30.34 }
         haproxy_redis_backends:
-          - { name: redis-tc1, ip: 10.200.30.35 }
-          - { name: redis-tc2, ip: 10.200.30.36 }
+          - { name: redis-1, ip: 10.0.30.35 }
+          - { name: redis-2, ip: 10.0.30.36 }
         haproxy_redis_password: "{{ vault_redis_password }}"
 ```
 

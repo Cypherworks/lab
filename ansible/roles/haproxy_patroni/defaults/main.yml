@@ -16,5 +16,5 @@ haproxy_redis_password: ""
 
 # Required from inventory (no default): the Patroni members, e.g.
 #   patroni_members:
-#     - { name: pg-tc1, ip: 10.200.30.33 }
-#     - { name: pg-tc2, ip: 10.200.30.34 }
+#     - { name: pg-1, ip: 10.0.30.33 }
+#     - { name: pg-2, ip: 10.0.30.34 }

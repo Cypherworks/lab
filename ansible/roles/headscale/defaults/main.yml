@@ -10,10 +10,10 @@ headscale_deb_url: "{{ headscale_release_base }}/{{ headscale_deb_name }}"
 # literal "sha256:<hash>" to pin, or set to "" to skip verification.
 headscale_checksum: "sha256:{{ headscale_release_base }}/checksums.txt"
 
-headscale_domain: headscale.cypherworks.co.uk
+headscale_domain: headscale.example.com
 # Standalone default is the public 443. Behind the EC2 sni_router, override this to
 # a local port (e.g. 127.0.0.1:8443) so nginx ssl_preread can front 443 and share
-# it with auth.cypherworks.co.uk. TLS-ALPN-01 still works through raw passthrough.
+# it with auth.example.com. TLS-ALPN-01 still works through raw passthrough.
 headscale_listen_addr: "0.0.0.0:443"
 # Prometheus /metrics bind. Defaults to localhost (no exposure). Override from the
 # deploy to the host's TAILNET IP (e.g. 100.x.y.z:9090) so the monitoring host can
@@ -22,8 +22,8 @@ headscale_listen_addr: "0.0.0.0:443"
 headscale_metrics_listen_addr: "127.0.0.1:9090"
 # MagicDNS suffix — deliberately a tailnet-only subdomain so it never clashes with
 # the real Route53 zone.
-headscale_base_domain: ts.cypherworks.co.uk
-headscale_acme_email: lloyd@cypherworks.co.uk
+headscale_base_domain: ts.example.com
+headscale_acme_email: admin@example.com
 
 # OIDC against Authentik — off until Authentik + the EC2 passthrough exist; then
 # flip on and devices enrol with MFA at the IdP. Until then, short-lived pre-auth

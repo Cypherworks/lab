@@ -48,10 +48,10 @@ None (no `meta/main.yml`). At runtime the Sentinel quorum spans the `authentik_r
   roles:
     - role: redis_sentinel
       vars:
-        redis_master_ip: 10.200.30.35
+        redis_master_ip: 10.0.30.35
         redis_password: "{{ vault_redis_password }}"
         # on the multi-homed witness (host_var):
-        # redis_sentinel_announce_ip: 10.200.30.13
+        # redis_sentinel_announce_ip: 10.0.30.13
 ```
 
 ## Notes

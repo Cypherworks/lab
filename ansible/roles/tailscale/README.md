@@ -15,7 +15,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `tailscale_login_server` | `https://headscale.cypherworks.co.uk` | Control-server URL. Site-specific default; adopters override it. |
+| `tailscale_login_server` | `https://headscale.example.com` | Control-server URL. Site-specific default; adopters override it. |
 | `tailscale_authkey` | `""` | Short-lived pre-auth key minted on Headscale. **Secret — from SOPS**; never defaulted to a real value. |
 | `tailscale_accept_routes` | `true` | Whether to accept the lab supernet advertised by the HA subnet routers (`--accept-routes`). |
 | `tailscale_hostname` | `"{{ inventory_hostname }}"` | Hostname registered on the tailnet. |

@@ -1,5 +1,5 @@
 {# etcd member config. Managed by the etcd role. Bind IP is this host's entry in
-   etcd_members (so pi-dns-1 binds its VLAN-30 foot, not its VLAN-20 DNS IP). #}
+   etcd_members (so node-1 binds its VLAN-30 foot, not its VLAN-20 DNS IP). #}
 name: {{ inventory_hostname }}
 data-dir: {{ etcd_data_dir }}
 listen-peer-urls: http://{{ etcd_bind_ip }}:2380

@@ -5,7 +5,7 @@
 #
 # Usage:
 #   provision-poller.sh [--user ansible] [--timeout 600] [--interval 10] \
-#       pi-dns-1=10.200.20.11 pi-dns-2=10.200.20.12
+#       node-1=10.0.20.11 node-2=10.0.20.12
 set -euo pipefail
 
 USER_=ansible TIMEOUT=600 INTERVAL=10

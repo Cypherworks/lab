@@ -50,9 +50,9 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
     - role: etcd
       vars:
         etcd_members:
-          - { name: etcd-tc1, ip: 10.200.30.31 }
-          - { name: etcd-tc2, ip: 10.200.30.32 }
-          - { name: pi-dns-1, ip: 10.200.30.13 }
+          - { name: etcd-1, ip: 10.0.30.31 }
+          - { name: etcd-2, ip: 10.0.30.32 }
+          - { name: node-1, ip: 10.0.30.13 }
 ```
 
 ## Notes
