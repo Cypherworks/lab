@@ -22,6 +22,6 @@ etcd_initial_cluster_state: new
 #   etcd_members:
 #     - { name: etcd-1, ip: 10.0.30.31 }
 #     - { name: etcd-2, ip: 10.0.30.32 }
-#     - { name: node-1, ip: 10.0.30.13 }
+#     - { name: witness, ip: 10.0.20.11 }   # 3rd member may sit on another VLAN
 # This host's bind IP, matched by inventory_hostname:
 etcd_bind_ip: "{{ etcd_members | selectattr('name', 'equalto', inventory_hostname) | map(attribute='ip') | first }}"

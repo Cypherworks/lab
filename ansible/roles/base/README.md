@@ -67,4 +67,4 @@ Re-asserting a host's existing static IP is a no-op, so a re-run does not drop t
 
 Cloud-hosted hosts (e.g. the Headscale EC2) omit `lab_ip` and keep their platform-assigned networking untouched.
 
-The netplan file is written mode `0600` because it is root-only network config. `lab_vlans` adds tagged sub-interfaces with addresses but no gateway, used where a host needs an extra VLAN foot (the Pi witness gaining a VLAN-30 address for quorum) without disturbing its primary interface.
+The netplan file is written mode `0600` because it is root-only network config. `lab_vlans` adds tagged sub-interfaces with addresses but no gateway, used where a host needs an extra VLAN foot without disturbing its primary interface.
