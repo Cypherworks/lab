@@ -28,6 +28,20 @@ relay can't silently sever the break-glass path.
 - The tunnel private key lives only on the client (0600, from SOPS); the relay holds just
   the public half.
 
+## The switch
+
+The tunnel is **off by default** — it is not a standing service. `oob_tunnel_enabled`
+controls it: enable it deliberately before a known extended absence, disable it on return.
+When off, the client tunnel is stopped and disabled and the relay's forwarding-only user +
+sshd drop-in are removed entirely, so nothing OOB-related stands on the internet-facing
+relay between trips. The client config/key stay staged (dormant, root-only) so enabling is
+an instant service start.
+
+Toggle it by flipping `oob_tunnel_enabled` in inventory and converging the play — the state
+lives in git, so every enable/disable is auditable. Because it is off by default, enabling
+it has to be part of your pre-trip checklist: if it is off when you lose the overlay, there
+is no break-glass path.
+
 ## Modes
 
 Set `oob_tunnel_mode`:

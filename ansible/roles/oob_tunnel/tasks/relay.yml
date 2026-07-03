@@ -1,10 +1,11 @@
 ---
-# Relay side: a system user that exists only to terminate the reverse tunnel. Its single
-# authorised key is restricted to port-forwarding — no shell, no pty, no command — so a
-# stolen tunnel key yields a forward and nothing else. With the relay's default
-# GatewayPorts (no), the reverse forward binds the relay's loopback only, so the tunnel is
-# reachable exclusively from an operator already logged in to the relay.
-- name: Create the forwarding-only relay user
+# Relay side. When the switch is on, provision a system user that exists only to terminate
+# the reverse tunnel: its single authorised key is restricted to one scoped port-forward —
+# no shell, no pty, no command — so a stolen tunnel key yields that forward and nothing
+# else, and with the relay's default GatewayPorts (no) it binds the relay's loopback only.
+# When the switch is off, the user, its key and the sshd drop-in are removed entirely, so
+# nothing OOB-related stands on the internet-facing relay between trips.
+- name: Provision the forwarding-only relay user
   become: true
   ansible.builtin.user:
     name: "{{ oob_tunnel_relay_user }}"
@@ -12,6 +13,7 @@
     shell: /usr/sbin/nologin
     create_home: true
     home: "/var/lib/{{ oob_tunnel_relay_user }}"
+  when: oob_tunnel_enabled | bool
 
 - name: Authorise the tunnel key for one scoped reverse forward only
   become: true
@@ -24,6 +26,7 @@
     # create the one intended forward, nothing else.
     key_options: 'restrict,port-forwarding,permitopen="none",permitlisten="127.0.0.1:{{ oob_tunnel_remote_bind_port }}"'
     exclusive: true
+  when: oob_tunnel_enabled | bool
 
 # Keep the tunnel working even if a global `AllowTcpForwarding no` is later applied to
 # this box (e.g. by CIS hardening) — a hardening pass severing the out-of-band path is the
@@ -43,4 +46,22 @@
     group: root
     mode: "0644"
     validate: /usr/sbin/sshd -t -f %s
+  when: oob_tunnel_enabled | bool
   notify: Reload sshd
+
+# Teardown when the switch is off — leave nothing standing on the internet-facing relay.
+- name: Remove the sshd drop-in when OOB is disabled
+  become: true
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/70-oob.conf
+    state: absent
+  when: not (oob_tunnel_enabled | bool)
+  notify: Reload sshd
+
+- name: Remove the relay user when OOB is disabled
+  become: true
+  ansible.builtin.user:
+    name: "{{ oob_tunnel_relay_user }}"
+    state: absent
+    remove: true
+  when: not (oob_tunnel_enabled | bool)

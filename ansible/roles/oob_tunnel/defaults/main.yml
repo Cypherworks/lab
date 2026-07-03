@@ -13,6 +13,12 @@
 # and SOPS.
 oob_tunnel_mode: ""                 # "client" | "relay"
 
+# Master switch. Off by default: the tunnel is not a standing service — it is enabled
+# deliberately for a known extended absence and torn down on return. When false, the
+# client tunnel is stopped/disabled and the relay's forwarding-only user + sshd drop-in
+# are removed entirely, so nothing OOB-related stands on the internet-facing relay.
+oob_tunnel_enabled: false
+
 # --- Relay endpoint (both modes need to agree on these) ----------------------
 oob_tunnel_relay_host: ""           # public host the client dials, e.g. relay.example.com
 oob_tunnel_relay_ssh_port: 22       # the relay's sshd port

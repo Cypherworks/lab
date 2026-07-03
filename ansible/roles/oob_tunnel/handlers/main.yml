@@ -5,6 +5,7 @@
     name: oob-tunnel.service
     state: restarted
     daemon_reload: true
+  when: oob_tunnel_enabled | bool
 
 # Reload, not restart, so an operator's live SSH session to the relay survives.
 - name: Reload sshd

@@ -65,10 +65,12 @@
     mode: "0644"
   notify: Restart oob-tunnel
 
-- name: Enable and start the tunnel
+# Config, key and unit are staged unconditionally (dormant, root-only, in-lab) so
+# enabling is an instant service start. The switch only gates whether the tunnel runs.
+- name: Set the tunnel service state to match the switch
   become: true
   ansible.builtin.systemd_service:
     name: oob-tunnel.service
-    enabled: true
-    state: started
+    enabled: "{{ oob_tunnel_enabled | bool }}"
+    state: "{{ 'started' if oob_tunnel_enabled | bool else 'stopped' }}"
     daemon_reload: true
