@@ -1,0 +1,27 @@
+[Unit]
+Description=Out-of-band reverse SSH tunnel to {{ oob_tunnel_relay_host }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+# GATETIME=0 so autossh keeps retrying even when the very first dial fails fast (relay
+# briefly unreachable at boot); -M 0 disables autossh's monitor port in favour of SSH's
+# own keepalives, and ExitOnForwardFailure makes a stale forward tear down and reconnect.
+Environment=AUTOSSH_GATETIME=0
+ExecStart=/usr/bin/autossh -M 0 -N -q \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  -o ExitOnForwardFailure=yes \
+  -o StrictHostKeyChecking={{ 'yes' if oob_tunnel_relay_host_key | length > 0 else 'accept-new' }} \
+  -o UserKnownHostsFile={{ oob_tunnel_config_dir }}/known_hosts \
+  -o IdentitiesOnly=yes \
+  -i {{ oob_tunnel_config_dir }}/id_tunnel \
+  -p {{ oob_tunnel_relay_ssh_port }} \
+  -R {{ oob_tunnel_remote_bind_port }}:localhost:{{ oob_tunnel_local_ssh_port }} \
+  {{ oob_tunnel_relay_user }}@{{ oob_tunnel_relay_host }}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

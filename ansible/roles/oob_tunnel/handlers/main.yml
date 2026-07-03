@@ -1,0 +1,14 @@
+---
+- name: Restart oob-tunnel
+  become: true
+  ansible.builtin.systemd_service:
+    name: oob-tunnel.service
+    state: restarted
+    daemon_reload: true
+
+# Reload, not restart, so an operator's live SSH session to the relay survives.
+- name: Reload sshd
+  become: true
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded

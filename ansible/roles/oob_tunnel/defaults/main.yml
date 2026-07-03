@@ -1,0 +1,31 @@
+---
+# oob_tunnel — an out-of-band break-glass path that does NOT depend on the primary
+# remote-access overlay. A client host dials a persistent reverse SSH tunnel (autossh)
+# outbound to a relay's sshd; the relay exposes the tunnel on its own loopback only, so
+# an operator who is already authenticated to the relay can hop back through it to the
+# client and, from there, into the rest of the network. Because the path is plain
+# outbound SSH to an existing sshd, it needs no inbound firewall change, and it shares
+# nothing with the overlay it backstops — so an overlay/router failure can't take it down.
+#
+# One role, two modes (oob_tunnel_mode): 'client' installs autossh + the tunnel unit;
+# 'relay' provisions a locked-down, forwarding-only user that the tunnel lands on. No site
+# data lives in the role — supply the relay address, ports and key material from inventory
+# and SOPS.
+oob_tunnel_mode: ""                 # "client" | "relay"
+
+# --- Relay endpoint (both modes need to agree on these) ----------------------
+oob_tunnel_relay_host: ""           # public host the client dials, e.g. relay.example.com
+oob_tunnel_relay_ssh_port: 22       # the relay's sshd port
+oob_tunnel_relay_user: oob          # the forwarding-only account on the relay
+oob_tunnel_remote_bind_port: 2222   # relay-loopback port that maps to the client's SSH
+
+# --- Client mode -------------------------------------------------------------
+oob_tunnel_config_dir: /etc/oob-tunnel
+oob_tunnel_local_ssh_port: 22       # the port on the client the tunnel exposes
+oob_tunnel_private_key: ""          # the tunnel's SSH private key (from SOPS)
+# Optional: pin the relay's SSH host key. Empty = trust-on-first-use (accept-new), which
+# then pins it in the managed known_hosts. Supply to avoid TOFU entirely.
+oob_tunnel_relay_host_key: ""
+
+# --- Relay mode --------------------------------------------------------------
+oob_tunnel_public_key: ""           # the tunnel key's public half, authorised for the relay user
