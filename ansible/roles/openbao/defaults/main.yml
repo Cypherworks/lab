@@ -116,7 +116,8 @@ openbao_oidc_client_id: ""
 openbao_oidc_client_secret: ""
 openbao_oidc_default_role: "default"
 # OIDC login roles. Each: name, token_policies (list), allowed_redirect_uris (list),
-# and optional user_claim / groups_claim / oidc_scopes / ttl.
+# and optional user_claim / groups_claim / oidc_scopes / ttl / bound_claims (a map,
+# e.g. {groups: some-group}, restricting the role to callers whose claims match).
 openbao_oidc_roles: []
 
 # Named ACL policies to manage (idempotent `bao policy write`). Each: name, rules

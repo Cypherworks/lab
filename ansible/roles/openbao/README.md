@@ -85,7 +85,7 @@ The PKI reconcile runs only when a management token is available (see Management
 | `openbao_oidc_client_id` | `""` | OIDC client id. |
 | `openbao_oidc_client_secret` | `""` | OIDC client secret (from SOPS). |
 | `openbao_oidc_default_role` | `default` | Default OIDC login role. |
-| `openbao_oidc_roles` | `[]` | Login roles, each `{name, token_policies, allowed_redirect_uris}` plus optional `user_claim`/`groups_claim`/`oidc_scopes`/`ttl`. |
+| `openbao_oidc_roles` | `[]` | Login roles, each `{name, token_policies, allowed_redirect_uris}` plus optional `user_claim`/`groups_claim`/`oidc_scopes`/`ttl`/`bound_claims` (a map, e.g. `{groups: some-group}`, restricting the role to callers whose claims match). |
 | `openbao_policies` | `[]` | Named ACL policies to manage, each `{name, rules}`. |
 
 ### SSH CA (audited short-lived SSH)

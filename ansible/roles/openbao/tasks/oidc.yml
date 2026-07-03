@@ -39,19 +39,25 @@
       changed_when: true
       no_log: true
 
+    # bound_claims (optional, a map) restricts a role to callers whose OIDC claims
+    # match — e.g. an `admin` role bound to the openbao-admins group, so only its
+    # members can select it. Appended only when the role defines it, so roles without
+    # it are written exactly as before.
     - name: Write the OIDC login roles
       ansible.builtin.command:
-        argv:
-          - bao
-          - write
-          - "auth/oidc/role/{{ item.name }}"
-          - "role_type=oidc"
-          - "user_claim={{ item.user_claim | default('sub') }}"
-          - "groups_claim={{ item.groups_claim | default('groups') }}"
-          - "oidc_scopes={{ item.oidc_scopes | default('profile,email') }}"
-          - "allowed_redirect_uris={{ item.allowed_redirect_uris | join(',') }}"
-          - "token_policies={{ item.token_policies | join(',') }}"
-          - "ttl={{ item.ttl | default('1h') }}"
+        argv: >-
+          {{
+            ['bao', 'write', 'auth/oidc/role/' ~ item.name,
+             'role_type=oidc',
+             'user_claim=' ~ (item.user_claim | default('sub')),
+             'groups_claim=' ~ (item.groups_claim | default('groups')),
+             'oidc_scopes=' ~ (item.oidc_scopes | default('profile,email')),
+             'allowed_redirect_uris=' ~ (item.allowed_redirect_uris | join(',')),
+             'token_policies=' ~ (item.token_policies | join(',')),
+             'ttl=' ~ (item.ttl | default('1h'))]
+            + (['bound_claims=' ~ (item.bound_claims | to_json)]
+               if (item.bound_claims is defined) else [])
+          }}
       loop: "{{ openbao_oidc_roles }}"
       loop_control:
         label: "{{ item.name }}"
