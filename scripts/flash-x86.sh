@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # flash-x86.sh — build ONE generic, fully-automated Ubuntu 24.04 autoinstall
-# image for the headless x86 lab hosts (both ThinkCentres + the Ryzen). Remasters
+# image for the headless x86 Incus cluster nodes (the two ThinkCentres). Remasters
 # the live-server ISO so it boots straight into an unattended install: DHCP, the
 # ansible user + SSH key, fresh per-install host keys. Plug in, power on, wait.
+# (node-ryzen is not flashed with this — it runs Proxmox VE from its own installer.)
 #
 # Per-host identity is NOT baked in — it comes from a DHCP reservation (MAC -> IP,
 # in terraform/unifi) plus the base role (hostname + permanent static netplan).
