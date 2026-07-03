@@ -48,7 +48,8 @@ openbao_aws_secret_access_key: ""
 # --- Management auth (drives the reconcile) ----------------------------------
 # The reconcile below (PKI, OIDC, SSH CA, snapshots) needs an admin-capable token.
 # Preferred: a scoped `provisioner` AppRole — broad enough to provision, but not root
-# (no seal/raw/token-mint, no sudo, no delete, and fully audited). If its role_id +
+# (no seal/raw/token-mint, sudo only on the mount/auth paths OpenBao requires it for,
+# no delete, and fully audited). If its role_id +
 # secret_id are set (from SOPS), the role logs in with them and uses the resulting
 # short-lived token. Otherwise it falls back to openbao_root_token for first-time
 # bootstrap. Once the AppRole exists and its creds are stored, the standing root token
@@ -59,12 +60,15 @@ openbao_provisioner_approle: provisioner
 openbao_provisioner_policy_name: provisioner
 openbao_provisioner_token_ttl: "15m"
 openbao_provisioner_token_max_ttl: "30m"
-# Path-scoped-broad: everything the reconcile writes, nothing it doesn't. No delete
-# (can't unmount an engine or drop the CA), no sudo, no seal/raw/token-root paths.
+# Path-scoped: everything the reconcile writes, nothing it doesn't. Mounting secrets
+# engines (sys/mounts) and enabling auth methods (sys/auth) are sudo-protected in
+# OpenBao, so those two paths carry sudo — nothing else does. No delete anywhere
+# (can't unmount an engine or drop the CA), and no access to the dangerous sys paths
+# (seal, raw, step-down, rotate) or token-root creation.
 openbao_provisioner_policy_rules: |
-  path "sys/mounts/*"                    { capabilities = ["create", "read", "update"] }
+  path "sys/mounts/*"                    { capabilities = ["create", "read", "update", "sudo"] }
   path "sys/auth"                        { capabilities = ["read"] }
-  path "sys/auth/*"                      { capabilities = ["create", "read", "update"] }
+  path "sys/auth/*"                      { capabilities = ["create", "read", "update", "sudo"] }
   path "sys/policies/acl/*"              { capabilities = ["create", "read", "update", "list"] }
   path "{{ openbao_pki_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
   path "{{ openbao_ssh_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
