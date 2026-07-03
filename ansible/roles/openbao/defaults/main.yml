@@ -74,6 +74,7 @@ openbao_provisioner_policy_rules: |
   path "{{ openbao_ssh_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
   path "auth/oidc/*"                     { capabilities = ["create", "read", "update", "list"] }
   path "auth/approle/*"                  { capabilities = ["create", "read", "update", "list"] }
+  path "identity/*"                      { capabilities = ["create", "read", "update", "list"] }
 # Computed at run time (the AppRole login token, else the root token). Don't set this.
 openbao_mgmt_token: ""
 

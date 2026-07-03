@@ -50,7 +50,7 @@ The reconcile (PKI, listener cert, OIDC, SSH CA, snapshots) authenticates with a
 | `openbao_provisioner_policy_name` | `provisioner` | ACL policy name. |
 | `openbao_provisioner_token_ttl` | `15m` | TTL of the short-lived reconcile token. |
 | `openbao_provisioner_token_max_ttl` | `30m` | Max TTL of the reconcile token. |
-| `openbao_provisioner_policy_rules` | *path-scoped-broad HCL* | The provisioner policy: create/read/update on the mount/auth/policy/pki/ssh/oidc/approle paths the reconcile writes. No delete, no sudo, no seal/raw/token-root. |
+| `openbao_provisioner_policy_rules` | *path-scoped HCL* | The provisioner policy: create/read/update on the mount/auth/policy/pki/ssh/oidc/approle/identity paths the reconcile writes. `sudo` only on `sys/mounts`+`sys/auth` (OpenBao requires it there); no delete, no seal/raw/token-root. |
 | `openbao_mgmt_token` | `""` | Computed at run time (the AppRole login token, else the root token); do not set. |
 
 ### PKI
