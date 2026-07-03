@@ -50,8 +50,8 @@ None (no `meta/main.yml`). At runtime the Sentinel quorum spans the `authentik_r
       vars:
         redis_master_ip: 10.0.30.35
         redis_password: "{{ vault_redis_password }}"
-        # on the multi-homed witness (host_var):
-        # redis_sentinel_announce_ip: 10.0.30.13
+        # on the cross-VLAN witness (host_var), so it advertises reachably:
+        # redis_sentinel_announce_ip: 10.0.20.11
 ```
 
 ## Notes

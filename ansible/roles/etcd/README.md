@@ -52,7 +52,7 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
         etcd_members:
           - { name: etcd-1, ip: 10.0.30.31 }
           - { name: etcd-2, ip: 10.0.30.32 }
-          - { name: node-1, ip: 10.0.30.13 }
+          - { name: witness, ip: 10.0.20.11 }   # 3rd member may sit on another VLAN
 ```
 
 ## Notes
