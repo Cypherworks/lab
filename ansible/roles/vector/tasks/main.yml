@@ -14,6 +14,15 @@
   ansible.builtin.apt:
     deb: "/tmp/vector_{{ vector_version }}_{{ vector_arch }}.deb"
 
+# Hold it so unattended-upgrades can never change or autoremove it (the incus outage
+# showed what an unexpected package change does). Manually-installed pinned .deb, not in
+# an apt repo, so low-risk — belt-and-braces.
+- name: Hold the Vector package
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: vector
+    selection: hold
+
 - name: Grant the vector user access to the system journal
   become: true
   ansible.builtin.user:
