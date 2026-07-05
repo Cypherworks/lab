@@ -16,9 +16,11 @@ resource "unifi_port_profile" "this" {
 
   # The controller derives `forward` from the VLAN config (native-only becomes
   # `customize`, the primary LAN becomes `all`), so it never matches the literal
-  # we send on create. Ignore it to keep re-applies clean.
+  # we send on create. `tagged_vlan_mgmt` is the same — native/access profiles come
+  # back as `auto`. filipowm v1.0.0 can't update a port_profile in place anyway (its
+  # update path 404s), so ignore both to keep re-applies clean.
   lifecycle {
-    ignore_changes = [forward]
+    ignore_changes = [forward, tagged_vlan_mgmt]
   }
 }
 
