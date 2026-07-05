@@ -57,12 +57,30 @@
 # With the Zabbly pin above, apt installs the Zabbly 7.0 build directly (no Ubuntu-6.x
 # detour). Upgrade cluster members together to avoid a prolonged version skew. Held below,
 # so a deliberate version bump needs a manual `apt-mark unhold` first.
-- name: Install Incus and the web UI from Zabbly
+- name: Install Incus from Zabbly
   become: true
   ansible.builtin.apt:
     name: "{{ incus_packages }}"
     state: present
     update_cache: true
+
+# The incus-ui-canonical web UI was dropped (we use the CLI). Ensure it's gone and not
+# left holding: the outage recovery marked it held on the cluster nodes without ever
+# installing it, and that held-but-absent state blocked the converge. allow_change_held
+# lets this deliberate removal past the hold; incus doesn't depend on the UI, so nothing
+# else is touched.
+- name: Remove the Incus web UI
+  become: true
+  ansible.builtin.apt:
+    name: incus-ui-canonical
+    state: absent
+    allow_change_held_packages: true
+
+- name: Clear any leftover hold on the Incus web UI
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: incus-ui-canonical
+    selection: deinstall
 
 # Hold the stack so unattended-upgrades can neither change nor autoremove it (the latter
 # is what removed incus-client and killed the cluster). Runs after install so the packages
