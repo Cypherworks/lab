@@ -43,6 +43,19 @@
     mode: "0640"
   notify: Restart openbao
 
+# The declarative `audit "file"` stanza opens this log as OpenBao starts, so the dir
+# must exist and be writable by the openbao user beforehand — otherwise the only audit
+# device fails and OpenBao won't serve.
+- name: Ensure the audit log directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ openbao_audit_log_dir }}"
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: "0750"
+  when: openbao_audit_enabled | bool
+
 # Starts uninitialised + sealed; `bao operator init` is a one-time manual step (it
 # emits the recovery keys + root token to capture into the break-glass kit and SOPS).
 # Once initialised, the awskms seal auto-unseals on every subsequent start.
@@ -86,9 +99,9 @@
   ansible.builtin.include_tasks: provisioner.yml
   when: openbao_mgmt_token | length > 0
 
-# Audit device first, so everything the reconcile writes below is itself logged.
-# On by default; the provisioner can enable it but not disable it.
-- name: Enable the audit device
+# The file audit device is declared in openbao.hcl and enabled at boot, so everything
+# the reconcile writes below is already logged. Verify it's live and set up rotation.
+- name: Verify the audit device and configure log rotation
   ansible.builtin.include_tasks: audit.yml
   when:
     - openbao_mgmt_token | length > 0
