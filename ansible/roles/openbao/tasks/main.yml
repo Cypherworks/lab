@@ -14,6 +14,15 @@
   ansible.builtin.apt:
     deb: "/tmp/openbao_{{ openbao_version }}.deb"
 
+# Hold it so unattended-upgrades can never change or autoremove the root-of-trust package
+# (the incus outage showed what an unexpected package change does). Manually-installed
+# pinned .deb, not in an apt repo, so low-risk — belt-and-braces.
+- name: Hold the OpenBao package
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: openbao
+    selection: hold
+
 - name: Render the OpenBao auto-unseal credentials (systemd EnvironmentFile)
   become: true
   ansible.builtin.template:
