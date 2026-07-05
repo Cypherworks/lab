@@ -1,12 +1,18 @@
 ---
-# Automatic security updates. The free stand-in for Ubuntu Pro Livepatch/ESM:
-# applies the security pocket nightly and reboots in a quiet window if needed.
+# Automatic security updates. The free stand-in for Ubuntu Pro Livepatch/ESM: applies the
+# security pocket nightly. Only the security origins are allowed, so third-party repos are
+# never auto-upgraded.
 
 unattended_upgrades_origins:
   - "${distro_id}:${distro_codename}-security"
   - "${distro_id}ESMApps:${distro_codename}-apps-security"
   - "${distro_id}ESM:${distro_codename}-infra-security"
 
-unattended_upgrades_auto_reboot: true
+# Off by default: an uncoordinated 03:30 reboot on a two-node cluster can restart both
+# members near-simultaneously and deadlock quorum, and cold-boot recovery isn't yet
+# hardened (lab-deploy#188). Re-enable per-host once that lands and reboots are staggered.
+unattended_upgrades_auto_reboot: false
 unattended_upgrades_auto_reboot_time: "03:30"
-unattended_upgrades_remove_unused_deps: true
+# Off by default: autoremove of an "unused" dependency is exactly what removed
+# incus-client and killed the cluster (lab-deploy#194). Removals should be deliberate.
+unattended_upgrades_remove_unused_deps: false
