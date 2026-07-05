@@ -1,0 +1,49 @@
+---
+# OpenBao 2.5 manages audit devices declaratively: the `audit "file"` stanza in
+# openbao.hcl enables the device at boot (the API `bao audit enable` path is blocked).
+# The log dir is created before OpenBao starts (main.yml) so the device can open its
+# file. Here we apply any pending config change, confirm the device is live, and set up
+# rotation. The provisioner token can read audit config but not disable it (see policy).
+
+# The config-change restart handler otherwise fires at end of play — and on a re-converge
+# `state: started` won't restart an already-running node — so flush now to make sure the
+# rendered audit stanza is live before we check. awskms re-unseals on the restart.
+- name: Apply any pending OpenBao restart before verifying audit
+  ansible.builtin.meta: flush_handlers
+
+- name: List the enabled audit devices
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: "bao audit list -format=json"
+  register: openbao_audit_list
+  changed_when: false
+
+# Declarative devices load at boot on OpenBao 2.5.5. Some earlier builds only applied the
+# stanza on SIGHUP (openbao/openbao#2168) — if this fails, that's the cause, and a
+# `systemctl reload openbao` before this check is the fix.
+- name: Assert the file audit device is enabled
+  ansible.builtin.assert:
+    that: (openbao_audit_path ~ '/') in (openbao_audit_list.stdout | from_json)
+    fail_msg: >-
+      The {{ openbao_audit_path }}/ file audit device is not enabled. Check the audit
+      stanza in openbao.hcl and that {{ openbao_audit_log_dir }} is writable by openbao.
+    success_msg: "File audit device {{ openbao_audit_path }}/ is enabled."
+
+# logrotate renames the log and OpenBao reopens it on SIGHUP (see the file audit
+# docs), so rotation loses no records — unlike copytruncate.
+- name: Ensure logrotate is installed
+  become: true
+  ansible.builtin.apt:
+    name: logrotate
+    state: present
+
+- name: Install the audit-log rotation config
+  become: true
+  ansible.builtin.template:
+    src: openbao-audit-logrotate.j2
+    dest: /etc/logrotate.d/openbao-audit
+    owner: root
+    group: root
+    mode: "0644"

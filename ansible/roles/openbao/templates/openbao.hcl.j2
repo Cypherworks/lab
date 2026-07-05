@@ -22,3 +22,14 @@ seal "awskms" {
   region     = "{{ openbao_aws_region }}"
   kms_key_id = "{{ openbao_kms_key_id }}"
 }
+{% if openbao_audit_enabled %}
+
+{# Declarative audit device — OpenBao 2.5 enables this at boot; the API enable path is
+   blocked. It's the only audit device, so if this log can't be written OpenBao stops
+   serving. The log dir is created before OpenBao starts (see the role's main.yml). #}
+audit "file" "{{ openbao_audit_path }}" {
+  options {
+    file_path = "{{ openbao_audit_log_file }}"
+  }
+}
+{% endif %}

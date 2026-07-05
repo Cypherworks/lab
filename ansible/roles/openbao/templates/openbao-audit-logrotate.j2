@@ -1,0 +1,14 @@
+{{ openbao_audit_log_file }} {
+    daily
+    rotate {{ openbao_audit_log_rotate_count }}
+    maxsize {{ openbao_audit_log_maxsize }}
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 openbao openbao
+    sharedscripts
+    postrotate
+        /usr/bin/systemctl kill -s HUP openbao.service 2>/dev/null || true
+    endscript
+}

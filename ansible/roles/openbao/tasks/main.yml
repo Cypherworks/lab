@@ -14,6 +14,15 @@
   ansible.builtin.apt:
     deb: "/tmp/openbao_{{ openbao_version }}.deb"
 
+# Hold it so unattended-upgrades can never change or autoremove the root-of-trust package
+# (the incus outage showed what an unexpected package change does). Manually-installed
+# pinned .deb, not in an apt repo, so low-risk — belt-and-braces.
+- name: Hold the OpenBao package
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: openbao
+    selection: hold
+
 - name: Render the OpenBao auto-unseal credentials (systemd EnvironmentFile)
   become: true
   ansible.builtin.template:
@@ -33,6 +42,19 @@
     group: openbao
     mode: "0640"
   notify: Restart openbao
+
+# The declarative `audit "file"` stanza opens this log as OpenBao starts, so the dir
+# must exist and be writable by the openbao user beforehand — otherwise the only audit
+# device fails and OpenBao won't serve.
+- name: Ensure the audit log directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ openbao_audit_log_dir }}"
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: "0750"
+  when: openbao_audit_enabled | bool
 
 # Starts uninitialised + sealed; `bao operator init` is a one-time manual step (it
 # emits the recovery keys + root token to capture into the break-glass kit and SOPS).
@@ -76,6 +98,14 @@
 - name: Configure the provisioner AppRole + policy
   ansible.builtin.include_tasks: provisioner.yml
   when: openbao_mgmt_token | length > 0
+
+# The file audit device is declared in openbao.hcl and enabled at boot, so everything
+# the reconcile writes below is already logged. Verify it's live and set up rotation.
+- name: Verify the audit device and configure log rotation
+  ansible.builtin.include_tasks: audit.yml
+  when:
+    - openbao_mgmt_token | length > 0
+    - openbao_audit_enabled | bool
 
 # The reconcile runs once OpenBao is initialised and a management token is available
 # (from the step above); the manual `bao operator init` must have happened first.
