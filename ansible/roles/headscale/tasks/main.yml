@@ -12,6 +12,15 @@
   ansible.builtin.apt:
     deb: "/tmp/{{ headscale_deb_name }}"
 
+# Hold it so unattended-upgrades can never change or autoremove it (the incus outage
+# showed what a package change under a running service does). It's a manually-installed
+# pinned .deb, not in an apt repo, so the risk is low — this is belt-and-braces.
+- name: Hold the Headscale package
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: headscale
+    selection: hold
+
 - name: Render the Headscale config
   become: true
   ansible.builtin.template:
