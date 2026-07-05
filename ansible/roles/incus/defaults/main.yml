@@ -1,11 +1,11 @@
 ---
-# Incus from the Zabbly repo (the upstream Incus repository) — the Ubuntu archive
-# ships Incus but omits the web UI. The lts-7.0 channel gives Incus 7.0.x LTS plus
-# incus-ui-canonical (the daemon-served web UI). Storage tooling stays from the OS.
+# Incus from the Zabbly repo (the upstream Incus repository). The lts-7.0 channel gives
+# the Incus 7.0.x LTS line; pinning to Zabbly also keeps apt off the Ubuntu archive's
+# incus (the 6.0.0-vs-7.0 conflict that once got the whole stack autoremoved). We run the
+# CLI only — the incus-ui-canonical web UI was dropped. Storage tooling stays from the OS.
 incus_zabbly_channel: lts-7.0
 incus_packages:
   - incus
-  - incus-ui-canonical
 # Packages pinned to the Zabbly origin and held, so neither apt nor unattended-upgrades
 # can downgrade them to the Ubuntu archive's incus (a 6.0.0-vs-7.0 conflict once got the
 # whole stack autoremoved) or autoremove them. Includes the deps incus pulls in.
@@ -13,7 +13,6 @@ incus_hold_packages:
   - incus
   - incus-base
   - incus-client
-  - incus-ui-canonical
 incus_tooling:
   - lvm2
   - btrfs-progs
