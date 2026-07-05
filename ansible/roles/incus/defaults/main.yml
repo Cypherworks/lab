@@ -6,6 +6,14 @@ incus_zabbly_channel: lts-7.0
 incus_packages:
   - incus
   - incus-ui-canonical
+# Packages pinned to the Zabbly origin and held, so neither apt nor unattended-upgrades
+# can downgrade them to the Ubuntu archive's incus (a 6.0.0-vs-7.0 conflict once got the
+# whole stack autoremoved) or autoremove them. Includes the deps incus pulls in.
+incus_hold_packages:
+  - incus
+  - incus-base
+  - incus-client
+  - incus-ui-canonical
 incus_tooling:
   - lvm2
   - btrfs-progs

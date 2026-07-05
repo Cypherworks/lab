@@ -25,6 +25,27 @@
     architectures: ["{{ 'amd64' if ansible_architecture == 'x86_64' else ansible_architecture }}"]
     signed_by: /etc/apt/keyrings/zabbly.asc
 
+# Pin Incus to the Zabbly origin so neither apt nor unattended-upgrades can ever resolve
+# it to the Ubuntu archive's incus. That cross-origin conflict (Ubuntu 6.0.0 vs Zabbly
+# 7.0) once left the whole incus stack autoremoved and the cluster dead.
+- name: Pin Incus to the Zabbly repository
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/incus-zabbly.pref
+    content: |
+      # Managed by the incus role. Zabbly incus is always preferred; the Ubuntu
+      # archive's incus is never installable.
+      Package: incus*
+      Pin: origin "pkgs.zabbly.com"
+      Pin-Priority: 1001
+
+      Package: incus*
+      Pin: release o=Ubuntu
+      Pin-Priority: -1
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: Install storage tooling
   become: true
   ansible.builtin.apt:
@@ -33,15 +54,25 @@
     update_cache: true
     cache_valid_time: 3600
 
-# incus-ui-canonical from Zabbly depends on the matching Incus version, so adding
-# it pulls Incus from the Ubuntu archive's 6.x up to Zabbly's 7.0 LTS. Upgrade
-# cluster members together to avoid a prolonged version skew.
+# With the Zabbly pin above, apt installs the Zabbly 7.0 build directly (no Ubuntu-6.x
+# detour). Upgrade cluster members together to avoid a prolonged version skew. Held below,
+# so a deliberate version bump needs a manual `apt-mark unhold` first.
 - name: Install Incus and the web UI from Zabbly
   become: true
   ansible.builtin.apt:
     name: "{{ incus_packages }}"
     state: present
     update_cache: true
+
+# Hold the stack so unattended-upgrades can neither change nor autoremove it (the latter
+# is what removed incus-client and killed the cluster). Runs after install so the packages
+# are known to dpkg.
+- name: Hold the incus packages against unattended-upgrades
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: "{{ incus_hold_packages }}"
 
 - name: Allow the ansible user to drive Incus
   become: true
@@ -87,10 +118,22 @@
   changed_when: false
   failed_when: false
 
+# The definitive "already in a cluster?" signal is the on-disk cluster database, NOT
+# `incus cluster list` — the latter needs the daemon and quorum, so on a degraded node
+# (e.g. one member down, or packages just reinstalled) it returns empty and the role would
+# wrongly conclude the node is fresh and re-bootstrap ON TOP of live data, wiping it. The
+# database file needs neither daemon nor quorum, so membership detection folds it in.
+- name: Check for existing Incus cluster data on this node
+  become: true
+  ansible.builtin.stat:
+    path: /var/lib/incus/database/global
+  register: _incus_db
+
 - name: Establish whether this host bootstraps the cluster
   ansible.builtin.set_fact:
     _incus_is_bootstrap: "{{ (not incus_cluster_enabled) or inventory_hostname == incus_cluster_bootstrap_host }}"
-    _incus_is_member: "{{ incus_cluster_member_name in _incus_cluster.stdout }}"
+    _incus_has_cluster_data: "{{ _incus_db.stat.exists }}"
+    _incus_is_member: "{{ incus_cluster_member_name in _incus_cluster.stdout or _incus_db.stat.exists }}"
 
 # --- Bootstrap member (or a standalone host) ---
 - name: Initialise the bootstrap member from preseed
@@ -100,6 +143,7 @@
     stdin: "{{ lookup('template', 'incus-preseed.yml.j2') }}"
   when:
     - _incus_is_bootstrap
+    - not _incus_is_member
     - incus_storage_pool not in _incus_storage.stdout
   changed_when: true
 
