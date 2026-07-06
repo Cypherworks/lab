@@ -1,0 +1,32 @@
+---
+# s3_backup — generic scheduled backup to S3. A oneshot systemd service + timer runs a
+# caller-supplied dump command that writes its artifact to $BACKUP_FILE, then uploads it
+# to a bucket with the AWS CLI. Retention is enforced by the bucket's lifecycle policy on
+# the Terraform side, not here. Parameterise per consumer: give it a name, a bucket, the
+# dump command, any packages the command needs, and scoped S3 credentials. Multiple
+# backups can coexist on one host — every unit, script and path is namespaced by
+# s3_backup_name. No site data lives in the role; supply it all from the inventory + SOPS.
+s3_backup_enabled: false
+s3_backup_name: ""                     # identifier, e.g. "vaultwarden" — namespaces units/paths
+s3_backup_bucket: ""                   # target S3 bucket
+s3_backup_schedule: "*-*-* 03:30:00"   # systemd OnCalendar; staggered off the OpenBao 03:00 snapshot
+s3_backup_dir: "/var/lib/s3-backup/{{ s3_backup_name }}"
+s3_backup_extension: "bak"             # artifact suffix (e.g. sqlite3, dump)
+
+# The dump command. Runs under `bash -euo pipefail` with $BACKUP_FILE pointing at the
+# artifact path to create; producing no file (an empty artifact) skips the upload, so a
+# command can legitimately opt out (e.g. a non-leader database node). Consumer/site data —
+# supply from the deploy inventory.
+s3_backup_command: ""
+
+# Extra apt packages the command needs (e.g. [sqlite3], [postgresql-client]).
+s3_backup_packages: []
+
+# Extra environment for the command (e.g. { PGPASSWORD: "..." }). Written to a 0600 env
+# file and sourced before the command runs — use it for secrets pulled from SOPS.
+s3_backup_env: {}
+
+# Scoped S3 uploader credentials (from SOPS) — PutObject on the one bucket.
+s3_backup_aws_access_key_id: ""
+s3_backup_aws_secret_access_key: ""
+s3_backup_aws_region: ""

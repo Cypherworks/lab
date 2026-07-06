@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Managed by the s3_backup role. Runs the {{ s3_backup_name }} dump and uploads it to S3;
+# the bucket lifecycle policy handles retention. Do not edit by hand.
+set -euo pipefail
+
+set -a
+# shellcheck disable=SC1091
+source "{{ s3_backup_dir }}/aws.env"
+# shellcheck disable=SC1091
+source "{{ s3_backup_dir }}/backup.env"
+set +a
+
+ts="$(date -u +%Y%m%d-%H%M%S)"
+export BACKUP_FILE="{{ s3_backup_dir }}/{{ s3_backup_name }}-${ts}.{{ s3_backup_extension }}"
+trap 'rm -f "${BACKUP_FILE}"' EXIT
+
+{{ s3_backup_command }}
+
+# A dump command may legitimately produce nothing (e.g. a non-leader node opting out).
+if [ -s "${BACKUP_FILE}" ]; then
+    aws s3 cp "${BACKUP_FILE}" "s3://{{ s3_backup_bucket }}/{{ s3_backup_name }}-${ts}.{{ s3_backup_extension }}"
+else
+    echo "No backup artifact produced; nothing to upload."
+fi

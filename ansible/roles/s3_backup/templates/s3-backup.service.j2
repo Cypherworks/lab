@@ -1,0 +1,8 @@
+[Unit]
+Description=S3 backup of {{ s3_backup_name }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/s3-backup-{{ s3_backup_name }}.sh
