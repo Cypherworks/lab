@@ -1,0 +1,15 @@
+---
+# Dispatch on mode. Client and relay are deliberately separate so the same role provisions
+# both ends of the tunnel from one place.
+- name: Assert a valid mode is set
+  ansible.builtin.assert:
+    that: oob_tunnel_mode in ["client", "relay"]
+    fail_msg: "oob_tunnel_mode must be 'client' or 'relay' (got '{{ oob_tunnel_mode }}')"
+
+- name: Configure the tunnel client
+  ansible.builtin.include_tasks: client.yml
+  when: oob_tunnel_mode == "client"
+
+- name: Configure the tunnel relay endpoint
+  ansible.builtin.include_tasks: relay.yml
+  when: oob_tunnel_mode == "relay"
