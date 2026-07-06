@@ -80,6 +80,17 @@ autoinstall:
   locale: en_GB.UTF-8
   keyboard:
     layout: gb
+  # DHCP any ethernet (incl. a USB dongle) so the box comes up networked for the online
+  # build — the XPS has no built-in NIC and WiFi userspace isn't installed until the
+  # playbook runs. `optional` so boot doesn't wait when nothing is plugged in.
+  network:
+    version: 2
+    ethernets:
+      alleth:
+        match:
+          name: "en*"
+        dhcp4: true
+        optional: true
   apt:
     geoip: false
     fallback: offline-install
