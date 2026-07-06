@@ -1,30 +1,32 @@
 #!/usr/bin/env bash
-# flash-x86.sh — build ONE generic, fully-automated Ubuntu 24.04 autoinstall
-# image for the headless x86 Incus cluster nodes (the two ThinkCentres). Remasters
-# the live-server ISO so it boots straight into an unattended install: DHCP, the
-# ansible user + SSH key, fresh per-install host keys. Plug in, power on, wait.
-# (node-ryzen is not flashed with this — it runs Proxmox VE from its own installer.)
+# flash-x86.sh — remaster the Ubuntu 24.04 live-server ISO into an autoinstall USB.
+# Two profiles (--profile, default node):
 #
-# Per-host identity is NOT baked in — it comes from a DHCP reservation (MAC -> IP,
-# in terraform/unifi) plus the base role (hostname + permanent static netplan).
-# So the same USB does every node. The autoinstall mirrors the proven ndhd-packer
-# Proxmox build (clean config, DHCP, no apt/DNS workarounds).
+#   node — the headless x86 Incus cluster nodes (ThinkCentres). Fully unattended: DHCP,
+#     the ansible user + baked SSH key, fresh per-install host keys. Per-host identity
+#     comes from a DHCP reservation (terraform/unifi) + the base role, so one USB does
+#     every node. Needs --pubkey. (node-ryzen runs Proxmox from its own installer.)
+#
+#   sheepdip — the air-gapped scanning station (Dell XPS 15). storage + identity are
+#     INTERACTIVE, so the LUKS-encrypt + passphrase and login user are set by hand on the
+#     box (nothing sensitive baked onto the USB); no SSH server. The rest is automated.
 #
 # macOS only. Needs xorriso (`brew install xorriso`). --device is destructive.
 #
 # Usage:
-#   flash-x86.sh --pubkey ~/.ssh/id_ed25519.pub \
-#                --iso ~/Downloads/ubuntu-24.04.4-live-server-amd64.iso \
-#                --device /dev/disk5           # or: --output nodes.iso
-#                [--user ansible]
+#   flash-x86.sh --iso ~/Downloads/ubuntu-24.04.x-live-server-amd64.iso \
+#                --device /dev/disk5             # or: --output out.iso
+#     node (default): --pubkey ~/.ssh/id_ed25519.pub [--user ansible]
+#     sheepdip:       --profile sheepdip
 set -euo pipefail
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
-PUBKEY='' ISO='' DEVICE='' OUTPUT='' USERNAME=ansible
+PROFILE=node PUBKEY='' ISO='' DEVICE='' OUTPUT='' USERNAME=ansible
 while [ $# -gt 0 ]; do
   case "$1" in
+    --profile) PROFILE=$2; shift 2 ;;
     --pubkey) PUBKEY=$2; shift 2 ;;
     --iso) ISO=$2; shift 2 ;;
     --device) DEVICE=$2; shift 2 ;;
@@ -37,12 +39,17 @@ done
 
 [ "$(uname)" = "Darwin" ] || die "this script targets macOS"
 command -v xorriso >/dev/null || die "xorriso not found — run: brew install xorriso"
-for v in PUBKEY ISO; do [ -n "${!v}" ] || die "missing --${v,,}"; done
+case "$PROFILE" in node|sheepdip) ;; *) die "unknown --profile: $PROFILE (node|sheepdip)" ;; esac
+[ -n "$ISO" ] || die "missing --iso"
 [ -f "$ISO" ] || die "iso not found: $ISO"
-[ -f "$PUBKEY" ] || die "pubkey not found: $PUBKEY"
 [ -n "$DEVICE" ] || [ -n "$OUTPUT" ] || die "need --device or --output"
 [ -z "$DEVICE" ] || [ -z "$OUTPUT" ] || die "use --device OR --output, not both"
-KEY=$(cat "$PUBKEY")
+KEY=''
+if [ "$PROFILE" = node ]; then
+  [ -n "$PUBKEY" ] || die "the node profile needs --pubkey"
+  [ -f "$PUBKEY" ] || die "pubkey not found: $PUBKEY"
+  KEY=$(cat "$PUBKEY")
+fi
 
 WORK=$(mktemp -d) || die "mktemp failed"
 OUT=${OUTPUT:-$(mktemp -u "${TMPDIR:-/tmp}/lab-node.XXXX.iso")}
@@ -53,27 +60,45 @@ echo "Extracting $ISO ..."
 xorriso -osirrox on -indev "$ISO" -extract / "$WORK" 2>/dev/null
 chmod -R u+w "$WORK"
 
-# Generic NoCloud seed (read by the installer at /cdrom/nocloud/). No network
-# section -> DHCP. No hostname/IP here: those come from the DHCP reservation +
-# the base role. Identical shape to the proven Proxmox autoinstall.
+# NoCloud seed (read by the installer at /cdrom/nocloud/). Both profiles share the offline
+# apt fallback (the lab DNS doesn't propagate into curtin's target resolv.conf, so the
+# in-target network mirror can't resolve; /cdrom is made readable by the dir-mode fix
+# below). node is fully unattended (DHCP + baked ssh key); sheepdip leaves storage +
+# identity interactive so the LUKS passphrase + login are set by hand, with no SSH server.
 mkdir -p "$WORK/nocloud"
 : > "$WORK/nocloud/meta-data"
-cat > "$WORK/nocloud/user-data" <<EOF
+if [ "$PROFILE" = sheepdip ]; then
+cat > "$WORK/nocloud/user-data" <<'EOF'
 #cloud-config
 autoinstall:
   version: 1
+  interactive-sections:
+    - storage
+    - identity
   early-commands:
-    # Tear down leftover LVM/RAID/swap from previous install attempts so curtin's
-    # storage stage can wipe the target disk. The install USB isn't LVM, untouched.
     - "bash /cdrom/nocloud/wipe-lvm.sh || true"
   locale: en_GB.UTF-8
   keyboard:
     layout: gb
   apt:
     geoip: false
-    # The lab DNS doesn't propagate into curtin's target resolv.conf, so the
-    # network mirror can't resolve in-target. With /cdrom now readable (dir-mode
-    # fix below), fall back to installing from the disc's offline pool instead.
+    fallback: offline-install
+  ssh:
+    install-server: false
+  shutdown: reboot
+EOF
+else
+cat > "$WORK/nocloud/user-data" <<EOF
+#cloud-config
+autoinstall:
+  version: 1
+  early-commands:
+    - "bash /cdrom/nocloud/wipe-lvm.sh || true"
+  locale: en_GB.UTF-8
+  keyboard:
+    layout: gb
+  apt:
+    geoip: false
     fallback: offline-install
   identity:
     hostname: lab-node
@@ -94,6 +119,7 @@ autoinstall:
     - curtin in-target --target=/target -- passwd -l ${USERNAME}
   shutdown: reboot
 EOF
+fi
 
 # Pre-storage wipe of leftover LVM/RAID so curtin can reinstall over old attempts.
 cat > "$WORK/nocloud/wipe-lvm.sh" <<'WIPE'
@@ -127,12 +153,16 @@ if ! eval xorriso -as mkisofs "$FLAGS" -dir-mode 0755 -o "$OUT" "$WORK" >"$WORK.
 fi
 
 if [ -n "$DEVICE" ]; then
-  printf 'Write the generic node installer to %s (ERASES it)? [y/N] ' "$DEVICE"
+  printf 'Write the %s installer to %s (ERASES it)? [y/N] ' "$PROFILE" "$DEVICE"
   read -r ans; [ "$ans" = y ] || die "aborted"
   diskutil unmountDisk "$DEVICE" >/dev/null || true
   sudo dd if="$OUT" of="$DEVICE" bs=4m
   diskutil eject "$DEVICE" >/dev/null || true
-  echo "Done. Boot any x86 node off it; the DHCP reservation lands it on its IP."
+  if [ "$PROFILE" = sheepdip ]; then
+    echo "Done. Boot the XPS off it; drive the encryption + user screens, then run the sheepdip playbook."
+  else
+    echo "Done. Boot any x86 node off it; the DHCP reservation lands it on its IP."
+  fi
 else
-  echo "Wrote ${OUT} (generic node installer)."
+  echo "Wrote ${OUT} (${PROFILE} installer)."
 fi
