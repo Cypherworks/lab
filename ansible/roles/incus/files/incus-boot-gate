@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Cold-boot recovery gate (#188). No UPS on the compute tier, so a mains cut hard-kills
+# every node at once; on power-return each node boots and races the switch and DNS coming
+# back. This gate holds the Incus daemon until the lab gateway answers, so the daemon
+# doesn't form the cluster or autostart instances into a dead network.
+#
+# Fail-open: after the timeout it releases the daemon anyway and logs why. A hard block
+# would need a human to clear it, and the whole point of #188 is that there isn't one
+# (Lloyd travels). Clustered Incus won't start instances without DB quorum, so a node
+# released onto a still-dead network naturally waits at the next layer rather than
+# thrashing instances into a black hole.
+#
+# The reachability probe is behind INCUS_BOOT_GATE_PROBE so the loop/timeout logic can be
+# exercised without real ICMP (tests, and the cold-boot drill can inject a fake). The
+# probe gets the target as $1 and must exit 0 when reachable.
+set -u
+
+target="${1:?usage: incus-boot-gate <target> [timeout_seconds]}"
+timeout="${2:-300}"
+interval=3
+probe="${INCUS_BOOT_GATE_PROBE:-ping -c1 -W1}"
+
+deadline=$(( $(date +%s) + timeout ))
+while :; do
+  if $probe "$target" >/dev/null 2>&1; then
+    echo "incus-boot-gate: $target reachable — releasing Incus start"
+    exit 0
+  fi
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "incus-boot-gate: $target unreachable after ${timeout}s — releasing Incus anyway; cluster quorum will gate instances" >&2
+    exit 0
+  fi
+  sleep "$interval"
+done

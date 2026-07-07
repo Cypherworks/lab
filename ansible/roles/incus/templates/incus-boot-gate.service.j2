@@ -1,0 +1,18 @@
+{# Cold-boot recovery gate (#188). Runs at boot ahead of the Incus daemon (the daemon
+   Wants/After it via the 10-boot-gate.conf drop-in) and blocks until the lab gateway
+   answers, so Incus doesn't form the cluster / autostart instances into a dead network.
+   network-online.target only means the local iface has an IP, so the gateway ping adds
+   the real "network is up" signal on top. Fail-open by design — see the script. #}
+[Unit]
+Description=Wait for the lab gateway before Incus starts (cold-boot recovery gate, #188)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/incus-boot-gate {{ incus_boot_gate_target }} {{ incus_boot_gate_timeout }}
+TimeoutStartSec={{ incus_boot_gate_timeout + 60 }}
+
+[Install]
+WantedBy=multi-user.target
