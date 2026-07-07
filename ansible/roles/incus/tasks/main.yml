@@ -76,11 +76,24 @@
     state: absent
     allow_change_held_packages: true
 
+# Only clear the selection if dpkg actually knows the package. On a freshly flashed node
+# the UI was never installed and never held, so dpkg has no record of it at all, and
+# dpkg --set-selections errors ("Failed to find package") rather than no-opping. The
+# held-but-absent artifact this clears only exists on nodes that lived through the outage,
+# where dpkg does have a record — so gate on that.
+- name: Check whether dpkg knows the Incus web UI package
+  become: true
+  ansible.builtin.command: dpkg-query -W incus-ui-canonical
+  register: _incus_ui_known
+  changed_when: false
+  failed_when: false
+
 - name: Clear any leftover hold on the Incus web UI
   become: true
   ansible.builtin.dpkg_selections:
     name: incus-ui-canonical
     selection: deinstall
+  when: _incus_ui_known.rc == 0
 
 # Hold the stack so unattended-upgrades can neither change nor autoremove it (the latter
 # is what removed incus-client and killed the cluster). Runs after install so the packages
