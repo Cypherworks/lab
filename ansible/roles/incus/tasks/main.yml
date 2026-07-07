@@ -275,3 +275,57 @@
     state: started
     daemon_reload: true
   when: incus_scrub_enabled
+
+# --- Cold-boot recovery gate (#188) ---
+# No UPS on the compute tier: a mains cut hard-kills every node and power-return must
+# bring the estate back unattended. This gate holds the Incus daemon until the lab
+# gateway answers, so it doesn't form the cluster / autostart instances into a dead
+# network. Enabling it does NOT restart Incus — the ordering only takes effect at the
+# next boot, so a converge never bounces running instances.
+- name: Install the Incus cold-boot gate script
+  become: true
+  ansible.builtin.copy:
+    src: incus-boot-gate
+    dest: /usr/local/sbin/incus-boot-gate
+    owner: root
+    group: root
+    mode: "0755"
+  when: incus_boot_gate_enabled
+
+- name: Install the Incus cold-boot gate service
+  become: true
+  ansible.builtin.template:
+    src: incus-boot-gate.service.j2
+    dest: /etc/systemd/system/incus-boot-gate.service
+    owner: root
+    group: root
+    mode: "0644"
+  when: incus_boot_gate_enabled
+
+- name: Ensure the Incus service drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/system/incus.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: incus_boot_gate_enabled
+
+- name: Order the Incus daemon behind the cold-boot gate
+  become: true
+  ansible.builtin.copy:
+    src: incus-boot-gate.dropin.conf
+    dest: /etc/systemd/system/incus.service.d/10-boot-gate.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: incus_boot_gate_enabled
+
+- name: Enable the Incus cold-boot gate for next boot
+  become: true
+  ansible.builtin.systemd_service:
+    name: incus-boot-gate.service
+    enabled: true
+    daemon_reload: true
+  when: incus_boot_gate_enabled

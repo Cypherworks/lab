@@ -59,3 +59,14 @@ incus_cluster_enabled: true
 incus_cluster_bootstrap_host: ""
 incus_cluster_member_name: "{{ inventory_hostname }}"
 incus_cluster_address: "{{ ansible_default_ipv4.address }}"
+
+# Cold-boot recovery gate (#188). No UPS on the compute tier, so a mains cut hard-kills
+# every node at once and power-return has to bring the estate back with no human present.
+# On boot each node races the switch and DNS coming up; this gate holds the Incus daemon
+# until the lab gateway answers, so it doesn't form the cluster or autostart instances
+# into a dead network. The default target is the discovered default-route gateway; the
+# timeout is the ceiling after which the gate releases the daemon anyway (fail-open —
+# Incus quorum then holds instances back if the network is still down).
+incus_boot_gate_enabled: true
+incus_boot_gate_target: "{{ ansible_default_ipv4.gateway }}"
+incus_boot_gate_timeout: 300
