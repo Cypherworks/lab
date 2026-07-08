@@ -14,8 +14,7 @@ etcd_data_dir: /var/lib/etcd
 etcd_conf_dir: /etc/etcd
 etcd_config_file: "{{ etcd_conf_dir }}/etcd.conf.yml"
 etcd_cluster_token: authentik-etcd
-# Flip to 'existing' (per-host, temporarily) only when re-adding a member to a
-# live cluster — see README.
+# Fallback when no peer answers; role auto-selects 'existing' to join.
 etcd_initial_cluster_state: new
 
 # Required from inventory (no default): the full member list, e.g.

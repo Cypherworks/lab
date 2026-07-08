@@ -39,8 +39,9 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
 2. Downloads the pinned release tarball to `/tmp` and extracts only the `etcd` and `etcdctl` binaries into `/usr/local/bin` (guarded by `creates`).
 3. Sets the binaries executable and root-owned.
 4. Creates the config directory (`root:etcd`, 0750) and data directory (`etcd:etcd`, 0700).
-5. Renders `etcd.conf.yml` from `etcd_members`, building `initial-cluster` from every member and setting `initial-cluster-state` to `etcd_initial_cluster_state`. The host binds its `etcd_members` IP (so a multi-homed witness binds its VLAN-30 foot, not another interface), plus `127.0.0.1` for local clients.
-6. Installs the systemd unit and enables/starts etcd, reloading systemd and restarting on config or unit change.
+5. For a **fresh** node, probes the other members: if a live cluster answers it registers this node with `etcdctl member add` and starts it as an `existing` member; if none answer it bootstraps a `new` cluster. An already-initialised member skips this (its `initial-cluster*` are inert), so adding a node never bounces the running members.
+6. Renders `etcd.conf.yml` from `etcd_members` (fresh/joining nodes only), building `initial-cluster` from every member. The host binds its `etcd_members` IP (so a multi-homed witness binds its VLAN-30 foot, not another interface), plus `127.0.0.1` for local clients.
+7. Installs the systemd unit and enables/starts etcd, reloading systemd and restarting on config or unit change.
 
 ## Example
 
@@ -57,6 +58,7 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
 
 ## Notes
 
-- `etcd_initial_cluster_state` is `new` for the initial cluster formation only. Re-running with `new` against an already-bootstrapped member is wrong; flip it to `existing` for that single host when re-adding a replaced member, then return it to `new`.
+- Adding a member is automatic: put it in `etcd_members` and converge — a fresh node joins a live cluster on its own (`member add` + `existing`), no manual per-host state flip. `etcd_initial_cluster_state` (`new`) is only the fallback for initial formation when no peer answers.
+- **Removing** a member is deliberate and manual: `etcdctl member remove <id>` against a healthy member, then drop it from `etcd_members`. The role never removes members, so a converge can't break quorum.
 - Quorum needs an odd count. The three-member layout (two data nodes plus the Pi witness) gives a third vote so the cluster survives losing one node and Patroni can still elect a Postgres leader.
 - The client URL includes `127.0.0.1:2379` so local `etcdctl` works without hitting the network bind address.

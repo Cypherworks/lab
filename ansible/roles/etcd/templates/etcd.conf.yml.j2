@@ -9,4 +9,4 @@ advertise-client-urls: http://{{ etcd_bind_ip }}:2379
 initial-cluster: {% for m in etcd_members %}{{ m.name }}=http://{{ m.ip }}:2380{% if not loop.last %},{% endif %}{% endfor %}
 
 initial-cluster-token: {{ etcd_cluster_token }}
-initial-cluster-state: {{ etcd_initial_cluster_state }}
+initial-cluster-state: {{ 'existing' if _etcd_join_existing | default(false) else etcd_initial_cluster_state }}
