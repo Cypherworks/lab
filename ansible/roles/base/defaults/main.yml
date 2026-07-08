@@ -15,7 +15,8 @@ base_packages:
 lab_interface: eth0
 lab_prefix: 24
 lab_nameservers:
-  - "{{ dns_vip }}"
+  - 1.1.1.1
+  - 1.0.0.1
 lab_search: "{{ internal_subdomain }}"
 
 # Optional tagged VLAN sub-interfaces (no gateway — extra feet only), for a host
