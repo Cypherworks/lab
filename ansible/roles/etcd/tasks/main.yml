@@ -64,6 +64,63 @@
     group: etcd
     mode: "0700"
 
+# --- Cluster join --------------------------------------------------------------
+# initial-cluster* are read only at first bootstrap, so an already-initialised
+# member never needs its config re-rendered and must not be bounced for an inert
+# change (that would restart the live DCS for nothing). A fresh node instead either
+# bootstraps a new cluster (no peer answers) or, when the others are already up,
+# registers itself with the live cluster and starts as an 'existing' member. Adds
+# never risk quorum; the matching removal of a retired member is done by hand.
+- name: Check whether this etcd node is already initialised
+  become: true
+  ansible.builtin.stat:
+    path: "{{ etcd_data_dir }}/member"
+  register: _etcd_member_dir
+
+- name: Build the peer client-endpoint list (every member but this one)
+  ansible.builtin.set_fact:
+    _etcd_peer_endpoints: >-
+      {{ etcd_members | rejectattr('name', 'equalto', inventory_hostname)
+         | map(attribute='ip') | map('regex_replace', '^', 'http://')
+         | map('regex_replace', '$', ':2379') | join(',') }}
+
+- name: Look up the live cluster's membership from an existing peer
+  become: true
+  ansible.builtin.command:
+    argv:
+      - etcdctl
+      - "--endpoints={{ _etcd_peer_endpoints }}"
+      - member
+      - list
+  environment:
+    ETCDCTL_API: "3"
+  register: _etcd_live_members
+  changed_when: false
+  failed_when: false
+  when: not _etcd_member_dir.stat.exists
+
+- name: Decide whether this fresh node joins a live cluster or bootstraps a new one
+  ansible.builtin.set_fact:
+    _etcd_join_existing: "{{ (not _etcd_member_dir.stat.exists) and (_etcd_live_members.rc | default(1)) == 0 }}"
+
+- name: Register this node with the live cluster before it starts
+  become: true
+  ansible.builtin.command:
+    argv:
+      - etcdctl
+      - "--endpoints={{ _etcd_peer_endpoints }}"
+      - member
+      - add
+      - "{{ inventory_hostname }}"
+      - "--peer-urls=http://{{ etcd_bind_ip }}:2380"
+  environment:
+    ETCDCTL_API: "3"
+  when:
+    - _etcd_join_existing
+    - inventory_hostname not in (_etcd_live_members.stdout | default(''))
+  changed_when: true
+
+# Only fresh/joining nodes render (and thus start from) this file — see above.
 - name: Render the etcd config
   become: true
   ansible.builtin.template:
@@ -72,6 +129,7 @@
     owner: root
     group: etcd
     mode: "0640"
+  when: not _etcd_member_dir.stat.exists
   notify: Restart etcd
 
 - name: Install the etcd systemd unit
