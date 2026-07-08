@@ -20,8 +20,10 @@ monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
 monitoring_blackbox_image: "prom/blackbox-exporter:v0.25.0"
 monitoring_snmp_exporter_image: "prom/snmp-exporter:v0.26.0"
 monitoring_go2rtc_image: "alexxit/go2rtc:1.9.14"
+monitoring_victorialogs_image: "victoriametrics/victoria-logs:v1.51.0"
 
 monitoring_retention: "30d"          # modest, given constrained storage
+monitoring_logs_retention: "30d"     # VictoriaLogs retention, same constrained budget
 monitoring_scrape_interval: "30s"
 
 # Kiosk playlist. The kiosk screen auto-rotates through every dashboard tagged
