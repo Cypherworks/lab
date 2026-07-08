@@ -3,7 +3,6 @@
 sources:
   journald:
     type: journald
-    current_boot_only: false
 {% for f in vector_file_sources %}
   {{ f.id }}:
     type: file
