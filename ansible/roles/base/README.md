@@ -17,7 +17,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `base_packages` | `[curl, ca-certificates, unzip, htop, vim, python3]` | Packages installed on every host. |
 | `lab_interface` | `eth0` | Primary NIC for the static lab address. Pis use `eth0`; x86 NICs are set per host. |
 | `lab_prefix` | `24` | CIDR prefix length for `lab_ip`. |
-| `lab_nameservers` | `["{{ dns_vip }}"]` | Resolver addresses written to the netplan config. Depends on inventory `dns_vip`. |
+| `lab_nameservers` | `[1.1.1.1, 1.0.0.1]` | Resolver addresses written to the netplan config. Override per deployment. |
 | `lab_search` | `"{{ internal_subdomain }}"` | DNS search domain. Depends on inventory `internal_subdomain`. |
 | `lab_vlans` | `[]` | Optional tagged VLAN sub-interfaces. Each entry: `name`, `id`, `addresses`, and optional `link` (defaults to `lab_interface`). No gateway is assigned. |
 | `ops_ssh_authorized_keys` | `[]` | SSH public keys authorised for the ansible user. Config, not secret; supplied by inventory. |
@@ -27,7 +27,7 @@ Required from inventory, no default (network config is only templated when `lab_
 - `lab_ip` — host static address. Its presence is the switch that renders the static-network config; hosts without it keep platform/DHCP networking.
 - `lab_gateway` — default-route gateway.
 - `timezone` — passed to the `timezone` module.
-- `dns_vip`, `internal_subdomain` — consumed by the `lab_nameservers` / `lab_search` defaults.
+- `internal_subdomain` — consumed by the `lab_search` default.
 - `ansible_user` — the account that ops keys are authorised for.
 - `lab_interface_match` (optional) — if defined, adds a netplan `match: name:` block for stable NIC matching.
 
