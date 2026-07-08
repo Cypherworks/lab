@@ -149,11 +149,22 @@
   changed_when: false
   failed_when: false
 
-# The definitive "already in a cluster?" signal is the on-disk cluster database, NOT
-# `incus cluster list` — the latter needs the daemon and quorum, so on a degraded node
-# (e.g. one member down, or packages just reinstalled) it returns empty and the role would
-# wrongly conclude the node is fresh and re-bootstrap ON TOP of live data, wiping it. The
-# database file needs neither daemon nor quorum, so membership detection folds it in.
+# Whether the local daemon considers itself clustered. server_clustered is a local
+# config flag, so it stays true for a member even without quorum (a peer down, packages
+# just reinstalled) and is false for a bare standalone daemon — unlike `incus cluster
+# list`, which needs quorum. This is the membership signal whenever the daemon answers.
+- name: Ask the daemon whether this node is clustered
+  become: true
+  ansible.builtin.command: incus query /1.0
+  register: _incus_server
+  changed_when: false
+  failed_when: false
+
+# On-disk fallback for when the daemon is down and can't be asked: a real member's
+# cluster database exists. A bare standalone daemon ALSO creates database/global on
+# first start, so this file is trusted only as a last resort (daemon unreachable),
+# never as proof of membership on its own — treating it as proof was what stopped
+# freshly-provisioned nodes from ever joining.
 - name: Check for existing Incus cluster data on this node
   become: true
   ansible.builtin.stat:
@@ -164,7 +175,11 @@
   ansible.builtin.set_fact:
     _incus_is_bootstrap: "{{ (not incus_cluster_enabled) or inventory_hostname == incus_cluster_bootstrap_host }}"
     _incus_has_cluster_data: "{{ _incus_db.stat.exists }}"
-    _incus_is_member: "{{ incus_cluster_member_name in _incus_cluster.stdout or _incus_db.stat.exists }}"
+    _incus_is_member: >-
+      {{ (incus_cluster_member_name in _incus_cluster.stdout)
+         or ((_incus_server.stdout | from_json).environment.server_clustered
+             if (_incus_server.rc == 0 and (_incus_server.stdout | trim | length) > 0)
+             else _incus_db.stat.exists) }}
 
 # --- Bootstrap member (or a standalone host) ---
 - name: Initialise the bootstrap member from preseed
