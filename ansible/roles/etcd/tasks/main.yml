@@ -64,13 +64,7 @@
     group: etcd
     mode: "0700"
 
-# --- Cluster join --------------------------------------------------------------
-# initial-cluster* are read only at first bootstrap, so an already-initialised
-# member never needs its config re-rendered and must not be bounced for an inert
-# change (that would restart the live DCS for nothing). A fresh node instead either
-# bootstraps a new cluster (no peer answers) or, when the others are already up,
-# registers itself with the live cluster and starts as an 'existing' member. Adds
-# never risk quorum; the matching removal of a retired member is done by hand.
+# Fresh node joins a live cluster (member add + 'existing') or bootstraps new.
 - name: Check whether this etcd node is already initialised
   become: true
   ansible.builtin.stat:

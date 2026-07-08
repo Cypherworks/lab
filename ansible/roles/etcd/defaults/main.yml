@@ -14,9 +14,7 @@ etcd_data_dir: /var/lib/etcd
 etcd_conf_dir: /etc/etcd
 etcd_config_file: "{{ etcd_conf_dir }}/etcd.conf.yml"
 etcd_cluster_token: authentik-etcd
-# Fallback state for a fresh node when no live cluster answers (initial formation).
-# The role auto-selects 'existing' and runs `member add` when a fresh node finds the
-# others already up, so re-adding a member no longer needs a manual per-host flip.
+# Fallback when no peer answers; role auto-selects 'existing' to join.
 etcd_initial_cluster_state: new
 
 # Required from inventory (no default): the full member list, e.g.
