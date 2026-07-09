@@ -231,6 +231,41 @@
   loop: "{{ incus_networks }}"
   when: _incus_is_bootstrap
 
+# --- Anti-affinity placement scriptlet (#217) ---
+# instances.placement.scriptlet is cluster-global, so it's set once from the bootstrap
+# member. Compared before writing so a converge only reports changed on a real edit.
+- name: Read the current placement scriptlet
+  become: true
+  ansible.builtin.command: incus config get instances.placement.scriptlet
+  register: _incus_placement_current
+  changed_when: false
+  failed_when: false
+  when:
+    - _incus_is_bootstrap
+    - incus_cluster_enabled
+
+- name: Install the anti-affinity placement scriptlet
+  become: true
+  ansible.builtin.command:
+    cmd: incus config set instances.placement.scriptlet=-
+    stdin: "{{ lookup('ansible.builtin.file', 'instance-placement.star') }}"
+  changed_when: true
+  when:
+    - _incus_is_bootstrap
+    - incus_cluster_enabled
+    - incus_placement_scriptlet_enabled
+    - (_incus_placement_current.stdout | default('') | trim) != (lookup('ansible.builtin.file', 'instance-placement.star') | trim)
+
+- name: Remove the placement scriptlet when disabled
+  become: true
+  ansible.builtin.command: incus config unset instances.placement.scriptlet
+  changed_when: true
+  when:
+    - _incus_is_bootstrap
+    - incus_cluster_enabled
+    - not incus_placement_scriptlet_enabled
+    - (_incus_placement_current.stdout | default('') | trim) | length > 0
+
 # --- Joining members ---
 # The token is single-use and minted on the bootstrap, so only mint it when this
 # host still needs to join.

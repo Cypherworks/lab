@@ -60,6 +60,11 @@ incus_cluster_bootstrap_host: ""
 incus_cluster_member_name: "{{ inventory_hostname }}"
 incus_cluster_address: "{{ ansible_default_ipv4.address }}"
 
+# Anti-affinity placement scriptlet (#217). Keeps same-group instances (an HA trio
+# named etcd-1/-2/-3) on separate hosts and prefers the emptiest host, replacing static
+# target pins. Cluster-global config, so it's set once on the bootstrap member.
+incus_placement_scriptlet_enabled: true
+
 # Cold-boot recovery gate (#188). No UPS on the compute tier, so a mains cut hard-kills
 # every node at once and power-return has to bring the estate back with no human present.
 # On boot each node races the switch and DNS coming up; this gate holds the Incus daemon
