@@ -14,7 +14,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | `tailscale` | Join a host to a Headscale/Tailscale overlay. |
 | `blocky` | DNS frontend with blocklists, forwarding to a local recursive resolver. |
 | `unbound` | Recursive validating resolver on loopback. |
-| `keepalived` | VRRP floating IP with a DNS-query health check. |
+| `keepalived` | VRRP floating VIP for an active/passive pair, with an optional service health check. |
 | `caddy` | Caddy reverse-proxy configuration and trusted internal CAs. |
 | `sni_router` | L4 SNI passthrough router (nginx stream). |
 | `headscale` | Headscale control server with optional OIDC. |
