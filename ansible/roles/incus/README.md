@@ -30,6 +30,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `incus_cluster_bootstrap_host` | `""` | `inventory_hostname` of the bootstrap member; required when clustering. |
 | `incus_cluster_member_name` | `{{ inventory_hostname }}` | This member's cluster name. |
 | `incus_cluster_address` | `{{ ansible_default_ipv4.address }}` | Address this member advertises to the cluster (bound before enabling; wildcards are rejected). |
+| `incus_placement_scriptlet_enabled` | `true` | Load the anti-affinity placement scriptlet (cluster-global; set on the bootstrap member). |
 
 ## Dependencies
 
@@ -44,8 +45,13 @@ None (no `meta/main.yml`). Requires the `community.general` and `community.docke
 5. On the bootstrap member (or a standalone host), initialises Incus from preseed; when clustering, binds the API to the member's real IP and runs `incus cluster enable`.
 6. Creates a profile per lab VLAN with a bridged NIC on that VLAN's bridge.
 7. On a joining member, mints a single-use token on the bootstrap host (via `delegate_to`) and joins with `incus admin init --preseed`.
+8. On the bootstrap member, loads the anti-affinity placement scriptlet (`instances.placement.scriptlet`).
 
 The host keeps its own address on the uplink; the per-VLAN bridges carry no host IP. Storage stays local per member — the cluster needs no shared storage.
+
+## Instance placement
+
+`files/instance-placement.star` keeps same-group instances on separate hosts. The group is the instance name without a trailing `-<n>`, so `etcd-1`/`etcd-2`/`etcd-3` are one group and never share a node; among the conflict-free hosts the emptiest (most free memory) wins. It replaces static `target` pinning — instances carry no node pin and the scriptlet places them on create and on evacuation/rebalance. It fails safe: if no conflict-free host exists or resources can't be read, it returns without a target and Incus uses its built-in placement, so a scriptlet fault never blocks instance creation. `cluster.rebalance.*` is left disabled — it only live-migrates VMs, and this is an all-container fleet.
 
 ## Example
 
