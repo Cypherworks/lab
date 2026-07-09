@@ -1,0 +1,29 @@
+---
+# keepalived — a VRRP floating VIP for an active/passive service pair. Generic:
+# supply the VIP, per-host state/priority, and an optional health-check command
+# from the consuming inventory. Runs inside the service containers on the shared
+# VLAN bridge; the VIP floats to whichever member is MASTER.
+
+# Required (no default): the floating address and the VRRP auth password.
+keepalived_vip: ""
+keepalived_auth_pass: ""
+
+# Per-host role. One member is MASTER at a higher priority; the rest are BACKUP
+# lower. The health-check weight must exceed the MASTER/BACKUP gap so a failed
+# MASTER drops below a healthy BACKUP.
+keepalived_state: BACKUP
+keepalived_priority: 100
+
+keepalived_interface: eth0
+keepalived_vrid: 51
+keepalived_instance: VI_1
+
+# Optional health check: a command that exits 0 when the tracked service is
+# healthy. On failure the member sheds keepalived_check_weight priority so a
+# healthy BACKUP outranks it and the VIP moves.
+keepalived_check_command: ""
+keepalived_check_name: chk_service
+keepalived_check_interval: 2
+keepalived_check_fall: 2
+keepalived_check_rise: 2
+keepalived_check_weight: -60
