@@ -65,7 +65,7 @@ None (no `meta/main.yml`). At runtime this role requires a running etcd cluster 
         patroni_etcd_hosts:
           - 10.0.30.31:2379
           - 10.0.30.32:2379
-          - 10.0.20.11:2379   # witness, may sit on another VLAN
+          - 10.0.30.33:2379
         patroni_lab_cidr: 10.0.30.0/24
         # from SOPS:
         patroni_superuser_password: "{{ vault_patroni_superuser_password }}"

@@ -4,7 +4,7 @@
 # this role derives each host's bind address by matching inventory_hostname.
 
 etcd_version: "3.5.16"
-# Mixed estate: amd64 on the ThinkCentre containers, arm64 on the Pi witness.
+# Per-arch download so the role works on both x86 and ARM hosts.
 etcd_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
 etcd_release_base: "https://github.com/etcd-io/etcd/releases/download"
 etcd_archive: "etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz"
@@ -21,6 +21,6 @@ etcd_initial_cluster_state: new
 #   etcd_members:
 #     - { name: etcd-1, ip: 10.0.30.31 }
 #     - { name: etcd-2, ip: 10.0.30.32 }
-#     - { name: witness, ip: 10.0.20.11 }   # 3rd member may sit on another VLAN
+#     - { name: etcd-3, ip: 10.0.30.33 }
 # This host's bind IP, matched by inventory_hostname:
 etcd_bind_ip: "{{ etcd_members | selectattr('name', 'equalto', inventory_hostname) | map(attribute='ip') | first }}"
