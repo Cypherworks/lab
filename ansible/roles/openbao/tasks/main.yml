@@ -56,9 +56,8 @@
     mode: "0750"
   when: openbao_audit_enabled | bool
 
-# Starts uninitialised + sealed; `bao operator init` is a one-time manual step (it
-# emits the recovery keys + root token to capture into the break-glass kit and SOPS).
-# Once initialised, the awskms seal auto-unseals on every subsequent start.
+# Starts uninitialised + sealed on a fresh node; the awskms seal auto-unseals on every
+# subsequent start once initialised.
 - name: Enable and start OpenBao
   become: true
   ansible.builtin.systemd_service:
@@ -66,9 +65,12 @@
     enabled: true
     state: started
 
-# Resolve the management token that drives the reconcile: the provisioner AppRole if
-# its creds are set (from SOPS), otherwise the bootstrap root token. This is what lets
-# the standing root token be revoked once the AppRole is established.
+# Zero-touch init (auto_init); else a human bao operator init + SOPS creds.
+- name: Initialise OpenBao and resolve its bootstrap state
+  ansible.builtin.include_tasks: init.yml
+  when: openbao_auto_init | bool
+
+# Mgmt token: provisioner AppRole if its creds are set, else bootstrap root.
 - name: Log in with the provisioner AppRole
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
@@ -90,7 +92,10 @@
 
 - name: Select the management token (provisioner AppRole, else the bootstrap root token)
   ansible.builtin.set_fact:
-    openbao_mgmt_token: "{{ openbao_provisioner_login.stdout if (openbao_provisioner_login is not skipped) else openbao_root_token }}"
+    openbao_mgmt_token: >-
+      {{ openbao_provisioner_login.stdout
+         if (openbao_provisioner_login is not skipped)
+         else (openbao_bootstrap_root_token | default(openbao_root_token)) }}
   no_log: true
 
 # Provisioner AppRole + policy — the non-root identity everything below authenticates
@@ -98,6 +103,13 @@
 - name: Configure the provisioner AppRole + policy
   ansible.builtin.include_tasks: provisioner.yml
   when: openbao_mgmt_token | length > 0
+
+# First auto-init only: persist the new AppRole creds to SSM for later runs.
+- name: Persist the provisioner creds after first init
+  ansible.builtin.include_tasks: finalize_init.yml
+  when:
+    - openbao_auto_init | bool
+    - openbao_bootstrap_root_token is defined
 
 # The file audit device is declared in openbao.hcl and enabled at boot, so everything
 # the reconcile writes below is already logged. Verify it's live and set up rotation.
@@ -141,3 +153,16 @@
   when:
     - openbao_mgmt_token | length > 0
     - openbao_ssh_enabled | bool
+
+# First-init only: revoke root; break-glass regenerates it from recovery.
+- name: Revoke the bootstrap root token
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_bootstrap_root_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: bao token revoke -self
+  when:
+    - openbao_auto_init | bool
+    - openbao_bootstrap_root_token is defined
+  changed_when: true
+  no_log: true
