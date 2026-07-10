@@ -29,11 +29,63 @@
     owner: root
     group: headscale
     mode: "0640"
-  notify: Restart headscale
+  register: headscale_config
 
-- name: Enable and start Headscale
+- name: Allow binding the metrics address before the overlay exists
+  become: true
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_set: true
+    sysctl_file: /etc/sysctl.d/60-headscale-nonlocal-bind.conf
+    reload: true
+  register: headscale_nonlocal_bind
+  when: headscale_metrics_nonlocal_bind
+
+- name: Check whether Headscale is already serving its listen port
+  ansible.builtin.command: "ss -H -ltn sport = :{{ headscale_listen_addr.split(':')[-1] }}"
+  register: headscale_listener
+  changed_when: false
+
+- name: Ensure Headscale is enabled and serving the current config
   become: true
   ansible.builtin.systemd_service:
     name: headscale
     enabled: true
-    state: started
+    state: >-
+      {{ 'restarted'
+         if (headscale_config is changed or headscale_nonlocal_bind is changed
+             or headscale_listener.stdout == '')
+         else 'started' }}
+
+- name: Wait for Headscale to accept connections
+  ansible.builtin.wait_for:
+    host: "{{ headscale_listen_addr.split(':')[0] }}"
+    port: "{{ headscale_listen_addr.split(':')[-1] }}"
+    timeout: 30
+
+- name: Ensure the self-join user exists
+  become: true
+  ansible.builtin.command: "headscale users create {{ headscale_selfjoin_user }}"
+  register: headscale_user_create
+  changed_when: headscale_user_create.rc == 0
+  failed_when:
+    - headscale_user_create.rc != 0
+    - "'UNIQUE constraint failed' not in headscale_user_create.stderr"
+    - "'UNIQUE constraint failed' not in headscale_user_create.stdout"
+  when: headscale_selfjoin_user | length > 0
+
+- name: List Headscale users
+  become: true
+  ansible.builtin.command: headscale users list -o json
+  register: headscale_users
+  changed_when: false
+  when: headscale_selfjoin_user | length > 0
+
+- name: Record the self-join user ID
+  ansible.builtin.set_fact:
+    headscale_selfjoin_user_id: >-
+      {{ headscale_users.stdout | from_json
+         | selectattr('name', 'equalto', headscale_selfjoin_user)
+         | map(attribute='id') | first }}
+  when: headscale_selfjoin_user | length > 0

@@ -31,17 +31,41 @@
   failed_when: false
 
 # Bring up only if not already Running, so re-runs don't churn the connection.
+- name: Decide whether a join is needed
+  ansible.builtin.set_fact:
+    tailscale_needs_join: >-
+      {{ tailscale_state.rc != 0 or
+         ((tailscale_state.stdout | from_json).BackendState | default('')) != 'Running' }}
+
+- name: Mint a pre-auth key from the control server
+  become: true
+  ansible.builtin.command: "{{ tailscale_authkey_command }}"
+  register: tailscale_minted_key
+  changed_when: false
+  no_log: true
+  when:
+    - tailscale_needs_join | bool
+    - tailscale_authkey_command | length > 0
+
+- name: Select the pre-auth key for this join
+  ansible.builtin.set_fact:
+    tailscale_effective_authkey: >-
+      {{ tailscale_minted_key.stdout_lines | last | trim
+         if tailscale_authkey_command | length > 0
+         else tailscale_authkey }}
+  no_log: true
+  when: tailscale_needs_join | bool
+
 - name: Join the overlay
   become: true
   ansible.builtin.command: >-
     tailscale up
+    --timeout {{ tailscale_up_timeout }}
     --login-server {{ tailscale_login_server }}
-    --authkey {{ tailscale_authkey }}
+    --authkey {{ tailscale_effective_authkey }}
     {{ '--accept-routes' if tailscale_accept_routes else '' }}
     --hostname {{ tailscale_hostname }}
   register: tailscale_up
   changed_when: true
   no_log: true
-  when: >-
-    tailscale_state.rc != 0 or
-    ((tailscale_state.stdout | from_json).BackendState | default('')) != 'Running'
+  when: tailscale_needs_join | bool

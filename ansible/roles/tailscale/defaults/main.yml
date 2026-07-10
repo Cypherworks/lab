@@ -6,6 +6,10 @@
 tailscale_login_server: "https://headscale.example.com"
 # Short-lived pre-auth key minted on Headscale. From SOPS — never defaulted real.
 tailscale_authkey: ""
+# Optional command run at join time to mint a key instead of using the static one
+# above — for a host that is itself the control server and can issue its own keys.
+tailscale_authkey_command: ""
 # Accept the lab supernet advertised by the HA subnet routers.
 tailscale_accept_routes: true
 tailscale_hostname: "{{ inventory_hostname }}"
+tailscale_up_timeout: "30s"
