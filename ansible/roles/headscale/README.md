@@ -24,6 +24,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_domain` | `headscale.example.com` | Public control-plane hostname (`server_url` and the TLS-ALPN cert). |
 | `headscale_listen_addr` | `0.0.0.0:443` | Listen address. Behind the EC2 `sni_router`, override to a local port (e.g. `127.0.0.1:8443`). |
 | `headscale_metrics_listen_addr` | `127.0.0.1:9090` | Prometheus `/metrics` bind. Override to the host's tailnet IP to scrape over the overlay. Never public. |
+| `headscale_metrics_nonlocal_bind` | `false` | Set `true` when `headscale_metrics_listen_addr` is this host's own tailnet IP: that address only exists after the host joins the overlay Headscale serves, so it must be allowed to bind before the address is up. See notes. |
 | `headscale_base_domain` | `ts.example.com` | MagicDNS suffix; a tailnet-only subdomain so it never clashes with the real Route53 zone. |
 | `headscale_acme_email` | `admin@example.com` | ACME contact email. |
 | `headscale_oidc_enabled` | `false` | Whether to render the OIDC block. |
@@ -33,6 +34,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_oidc_client_secret` | `""` | Required when OIDC enabled, from SOPS. OIDC client secret. |
 | `headscale_oidc_allowed_groups` | `["lab-admins"]` | Authentik groups permitted to obtain the lab routes. |
 | `headscale_oidc_scopes` | `["openid", "profile", "email"]` | Requested scopes. Deliberately excludes `groups`. See notes. |
+| `headscale_selfjoin_user` | `""` | When set, the role ensures this Headscale user exists and resolves its numeric id into `headscale_selfjoin_user_id`, so the host can mint its own pre-auth key and self-join. Empty on standalone control planes. |
 
 ## Dependencies
 
@@ -42,10 +44,12 @@ None.
 
 1. Downloads the pinned `.deb` to `/tmp/{{ headscale_deb_name }}` (`0644`), verified against `headscale_checksum`.
 2. Installs it with apt, which creates the `headscale` systemd service and the `headscale` group.
-3. Renders `/etc/headscale/config.yaml` (`0640`, group `headscale`) from `config.yaml.j2`: `server_url`, listen/metrics/gRPC addresses, IPv4/IPv6 tailnet prefixes, a self-hosted embedded DERP relay (region 999, STUN on `0.0.0.0:3478`, no public Tailscale DERP), a sqlite database, a TLS-ALPN-01 Let's Encrypt cert on 443, MagicDNS, and (only when `headscale_oidc_enabled`) the OIDC block. Notifies a restart.
-4. Enables and starts the service.
+3. Renders `/etc/headscale/config.yaml` (`0640`, group `headscale`) from `config.yaml.j2`: `server_url`, listen/metrics/gRPC addresses, IPv4/IPv6 tailnet prefixes, a self-hosted embedded DERP relay (region 999, STUN on `0.0.0.0:3478`, no public Tailscale DERP), a sqlite database, a TLS-ALPN-01 Let's Encrypt cert on 443, MagicDNS, and (only when `headscale_oidc_enabled`) the OIDC block.
+4. When `headscale_metrics_nonlocal_bind`, sets `net.ipv4.ip_nonlocal_bind=1` so the metrics address can be bound before it exists on an interface.
+5. Probes the listen port and enables the service, restarting it when the config changed, the sysctl changed, or nothing is listening, otherwise just ensuring it is started; then `wait_for`s the port.
+6. When `headscale_selfjoin_user` is set, ensures that user exists (tolerating "already exists") and resolves its numeric id into `headscale_selfjoin_user_id`.
 
-Handler: `Restart headscale`.
+Handlers: none — the running service is reconciled to the on-disk config directly in tasks (see Notes).
 
 ## Example
 
@@ -70,3 +74,6 @@ Handler: `Restart headscale`.
 - `headscale_metrics_listen_addr` must never bind `0.0.0.0` or the public interface. Keep it on loopback or the tailnet IP; the EC2 security group stays closed and the tailnet is the only path in.
 - The `.deb` is verified against Headscale's published checksums file by default (`headscale_checksum`). This catches transport corruption and tampering of the artifact; for a stronger guarantee against a compromised release, override `headscale_checksum` with a literal `sha256:<hash>` pinned to a reviewed version.
 - With OIDC off, bootstrap routers and the laptop with short-lived pre-auth keys issued by hand.
+- `headscale_metrics_nonlocal_bind` breaks a boot cycle specific to a host that joins its own overlay: `metrics_listen_addr` is that host's tailnet IP, which only appears once it joins, but Headscale binds the address at startup and would crash-loop on `cannot assign requested address`. Allowing non-local bind lets it claim the address early; nothing can reach it until the overlay is up anyway.
+- The service is reconciled directly rather than via a notify handler. A handler is deferred to the end of the play, so an interrupted run (or a later role that dials Headscale) would see a service still on its install-time config. Restarting on "config/sysctl changed or port not listening" converges from any state.
+- `headscale_selfjoin_user` supports a host that is its own control server: the role ensures the user and exposes its id, and the `tailscale` role's `tailscale_authkey_command` mints a fresh key against the live database at join time — no perishable key in SOPS.
