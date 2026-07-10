@@ -8,7 +8,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 - A Debian-family host (installs from the upstream `.deb`); an unprivileged LXC container is the intended target.
 - AWS KMS key for auto-unseal, plus AWS credentials for the seal and (optionally) the snapshot uploader, supplied from SOPS.
-- `bao operator init` run once by hand after first start (see What it does); the resulting root token supplied back as `openbao_root_token` to bootstrap the reconcile. Once the `provisioner` AppRole is established, the reconcile authenticates with it instead and the root token can be revoked.
+- Initialisation, either way:
+  - **Auto (`openbao_auto_init: true`)** — the role runs `operator init` itself on first bring-up, writes the recovery keys to SSM under a dedicated host-write-only CMK, mints + stores the `provisioner` AppRole creds in SSM, and revokes the standing root token. Zero-touch; break-glass is `bao operator generate-root` from the SSM recovery keys (an account-admin action). Needs the SSM/KMS site values (`openbao_ssm_recovery_param`, `openbao_ssm_provisioner_param`, `openbao_recovery_kms_key_id`) supplied from the infra state.
+  - **Manual (default)** — `bao operator init` run once by hand after first start; the root token supplied back as `openbao_root_token` and the AppRole creds seeded via SOPS.
 - Caddy (or equivalent) terminating TLS in front of the listener and serving the PKI issuing/CRL URLs.
 - For snapshots: an S3 bucket and a scoped `openbao-snapshot` IAM user.
 
@@ -45,7 +47,12 @@ The reconcile (PKI, listener cert, OIDC, SSH CA, snapshots) authenticates with a
 | --- | --- | --- |
 | `openbao_root_token` | `""` | Bootstrap/break-glass management token from SOPS. Used only when no provisioner AppRole creds are set. Revoke and clear once the AppRole is in place. |
 | `openbao_provisioner_role_id` | `""` | Provisioner AppRole role_id (from SOPS). Setting this + the secret_id switches the reconcile off the root token. |
-| `openbao_provisioner_secret_id` | `""` | Provisioner AppRole secret_id (from SOPS). |
+| `openbao_provisioner_secret_id` | `""` | Provisioner AppRole secret_id (from SOPS, or read from SSM under auto-init). |
+| `openbao_auto_init` | `false` | Initialise OpenBao without a human: recovery keys → SSM, AppRole creds → SSM, root revoked. |
+| `openbao_recovery_shares` / `openbao_recovery_threshold` | `5` / `3` | Shamir recovery-key split used at auto-init. |
+| `openbao_ssm_recovery_param` | `""` | SSM path the recovery keys are written to (recovery CMK; host write-only). |
+| `openbao_ssm_provisioner_param` | `""` | SSM path the AppRole creds are written to/read from (unseal CMK; host-readable). |
+| `openbao_recovery_kms_key_id` | `""` | Dedicated recovery CMK id (distinct from the unseal key). |
 | `openbao_provisioner_approle` | `provisioner` | AppRole role name. |
 | `openbao_provisioner_policy_name` | `provisioner` | ACL policy name. |
 | `openbao_provisioner_token_ttl` | `15m` | TTL of the short-lived reconcile token. |
@@ -117,13 +124,13 @@ The CA is generated exactly once (guarded); regenerating it would invalidate eve
 
 ## Dependencies
 
-None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the package. Snapshots install `awscli` from apt.
+None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the package. Auto-init and snapshots install `awscli` from apt for their SSM/S3 I/O.
 
 ## What it does
 
 1. Installs the pinned OpenBao `.deb`; the package creates the `openbao` user, the systemd unit, `/etc/openbao/`, and a self-signed bootstrap TLS cert.
 2. Renders the auto-unseal credentials as the systemd `EnvironmentFile` (`/etc/openbao/openbao.env`) and the config (`/etc/openbao/openbao.hcl`) — AWS creds never touch the config file.
-3. Enables and starts the service. It comes up **sealed and uninitialised**: run `bao operator init` once by hand to emit the recovery keys and root token, capture them into the break-glass kit and SOPS. After that, the KMS seal auto-unseals on every restart.
+3. Enables and starts the service. It comes up **sealed and uninitialised**. With `openbao_auto_init: true` the role then initialises it (recovery-key mode), stores the recovery keys in SSM under the recovery CMK, stashes the `provisioner` AppRole creds in SSM, and revokes root — no human step. Otherwise, run `bao operator init` once by hand and capture the recovery keys + root token into the break-glass kit and SOPS. Either way, the KMS seal auto-unseals on every restart afterwards.
 4. Resolves the management token — logs in with the `provisioner` AppRole if its creds are set, else falls back to `openbao_root_token` — then asserts the provisioner AppRole + policy (idempotent; written with root on first bootstrap, self-maintaining thereafter).
 5. With a management token available, reconciles the PKI (mount, tune, root CA once, URLs, issuing roles).
 6. Optionally swaps the bootstrap listener cert for one issued by the internal CA (guarded on a `.ca-issued` marker), so Caddy can verify the upstream against the CA.

@@ -1,0 +1,99 @@
+---
+# Zero-touch first-init, replacing the manual `bao operator init`. Fresh node:
+# init in recovery-key mode (KMS auto-unseals) and write the recovery keys to
+# SSM under the host-write-only recovery CMK. Existing node: read the AppRole
+# creds back from SSM. Branch chosen from live seal status, not a marker file.
+- name: Ensure the AWS CLI is present (SSM bootstrap-state I/O)
+  become: true
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+
+- name: Wait for OpenBao to answer and read its seal status
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: bao status -format=json
+  register: openbao_status
+  until: openbao_status.rc in [0, 2]   # 0 = unsealed, 2 = sealed; both are valid JSON
+  retries: 10
+  delay: 3
+  changed_when: false
+  failed_when: openbao_status.rc not in [0, 2]
+
+- name: Record whether OpenBao is already initialised
+  ansible.builtin.set_fact:
+    openbao_initialized: "{{ (openbao_status.stdout | from_json).initialized }}"
+
+# --- First-init path -------------------------------------------------------
+- name: Initialise OpenBao (recovery-key mode; KMS auto-unseals)
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: >-
+    bao operator init
+    -recovery-shares={{ openbao_recovery_shares }}
+    -recovery-threshold={{ openbao_recovery_threshold }}
+    -format=json
+  register: openbao_init
+  when: not openbao_initialized
+  changed_when: true
+  no_log: true
+
+- name: Capture the bootstrap root token (this run only, in memory)
+  ansible.builtin.set_fact:
+    openbao_bootstrap_root_token: "{{ (openbao_init.stdout | from_json).root_token }}"
+  when: not openbao_initialized
+  no_log: true
+
+# Recovery keys under the recovery CMK: host can encrypt, never decrypt.
+- name: Store the recovery keys in SSM
+  environment: "{{ openbao_aws_cli_env }}"
+  ansible.builtin.command:
+    argv:
+      - aws
+      - ssm
+      - put-parameter
+      - --name
+      - "{{ openbao_ssm_recovery_param }}"
+      - --type
+      - SecureString
+      - --key-id
+      - "{{ openbao_recovery_kms_key_id }}"
+      - --overwrite
+      - --value
+      - "{{ (openbao_init.stdout | from_json).recovery_keys_b64 | to_json }}"
+  when: not openbao_initialized
+  changed_when: true
+  no_log: true
+
+# Re-converge path: read the AppRole creds the first-init run stored.
+- name: Read the provisioner AppRole creds from SSM
+  environment: "{{ openbao_aws_cli_env }}"
+  ansible.builtin.command:
+    argv:
+      - aws
+      - ssm
+      - get-parameter
+      - --name
+      - "{{ openbao_ssm_provisioner_param }}"
+      - --with-decryption
+      - --query
+      - Parameter.Value
+      - --output
+      - text
+  register: openbao_ssm_provisioner
+  when: openbao_initialized
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Adopt the stored provisioner creds for this run
+  ansible.builtin.set_fact:
+    openbao_provisioner_role_id: "{{ (openbao_ssm_provisioner.stdout | from_json).role_id }}"
+    openbao_provisioner_secret_id: "{{ (openbao_ssm_provisioner.stdout | from_json).secret_id }}"
+  when:
+    - openbao_initialized
+    - (openbao_ssm_provisioner.rc | default(1)) == 0
+    - (openbao_ssm_provisioner.stdout | default('') | trim | length) > 0
+  no_log: true

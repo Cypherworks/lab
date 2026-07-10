@@ -1,0 +1,43 @@
+---
+# First-init only. The provisioner AppRole now exists (written with the root
+# token); mint a secret_id and store role_id + secret_id in SSM so later
+# converges authenticate as the AppRole. Root is revoked at the play's end.
+- name: Mint a provisioner secret_id
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: "bao write -force -field=secret_id auth/approle/role/{{ openbao_provisioner_approle }}/secret-id"
+  register: openbao_new_secret_id
+  changed_when: true
+  no_log: true
+
+- name: Read the provisioner role_id
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ openbao_mgmt_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: "bao read -field=role_id auth/approle/role/{{ openbao_provisioner_approle }}/role-id"
+  register: openbao_new_role_id
+  changed_when: false
+  no_log: true
+
+# Under the unseal CMK so the host can read these back each converge.
+- name: Store the provisioner creds in SSM
+  environment: "{{ openbao_aws_cli_env }}"
+  ansible.builtin.command:
+    argv:
+      - aws
+      - ssm
+      - put-parameter
+      - --name
+      - "{{ openbao_ssm_provisioner_param }}"
+      - --type
+      - SecureString
+      - --key-id
+      - "{{ openbao_kms_key_id }}"
+      - --overwrite
+      - --value
+      - "{{ {'role_id': openbao_new_role_id.stdout, 'secret_id': openbao_new_secret_id.stdout} | to_json }}"
+  changed_when: true
+  no_log: true

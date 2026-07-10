@@ -81,6 +81,19 @@ openbao_provisioner_policy_rules: |
 # Computed at run time (the AppRole login token, else the root token). Don't set this.
 openbao_mgmt_token: ""
 
+# Auto-init: self-init, recovery/AppRole creds to SSM, revoke root (README).
+openbao_auto_init: false
+openbao_recovery_shares: 5
+openbao_recovery_threshold: 3
+openbao_ssm_recovery_param: ""    # recovery-keys SSM path (recovery CMK)
+openbao_ssm_provisioner_param: ""  # AppRole-creds SSM path (unseal CMK)
+openbao_recovery_kms_key_id: ""   # dedicated recovery CMK id
+# aws CLI env for SSM I/O — the host's unseal identity from state.
+openbao_aws_cli_env:
+  AWS_ACCESS_KEY_ID: "{{ openbao_aws_access_key_id }}"
+  AWS_SECRET_ACCESS_KEY: "{{ openbao_aws_secret_access_key }}"
+  AWS_DEFAULT_REGION: "{{ openbao_aws_region }}"
+
 # --- Audit device (log every request/response) -------------------------------
 # A file audit device so every secret read, PKI issue and SSH-cert sign on the
 # root-of-trust is logged (as a hashed record). Enabled by the reconcile before the
