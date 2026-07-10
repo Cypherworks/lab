@@ -17,18 +17,32 @@
     group: root
     mode: "0644"
     validate: "nginx -t -c %s"
-  notify: Reload nginx
+  register: sni_config
 
 - name: Remove the default http site (this box is stream-only)
   become: true
   ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
-  notify: Reload nginx
+  register: sni_default_site
 
-- name: Enable and start nginx
+- name: Check whether nginx is already serving the SNI port
+  ansible.builtin.command: "ss -H -ltn sport = :{{ sni_listen_port }}"
+  register: sni_listener
+  changed_when: false
+
+- name: Ensure nginx is enabled and serving the current config
   become: true
   ansible.builtin.systemd_service:
     name: nginx
     enabled: true
-    state: started
+    state: >-
+      {{ 'restarted'
+         if (sni_config is changed or sni_default_site is changed or sni_listener.stdout == '')
+         else 'started' }}
+
+- name: Wait for the SNI router to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ sni_listen_port }}"
+    timeout: 15

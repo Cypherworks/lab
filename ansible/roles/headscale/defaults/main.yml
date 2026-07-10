@@ -20,6 +20,13 @@ headscale_listen_addr: "0.0.0.0:443"
 # scrape it over the overlay — never 0.0.0.0 and never the public interface (the
 # EC2 security group stays closed; the tailnet is the only path in).
 headscale_metrics_listen_addr: "127.0.0.1:9090"
+# Set true when metrics_listen_addr is this host's own tailnet IP: that address
+# only exists after the host joins the overlay headscale serves, so headscale
+# crash-loops binding it at boot. Non-local bind lets it claim the address early.
+headscale_metrics_nonlocal_bind: false
+# When set, the role ensures this Headscale user exists so the host can mint its
+# own pre-auth key and self-join. Empty on standalone control planes.
+headscale_selfjoin_user: ""
 # MagicDNS suffix — deliberately a tailnet-only subdomain so it never clashes with
 # the real Route53 zone.
 headscale_base_domain: ts.example.com
