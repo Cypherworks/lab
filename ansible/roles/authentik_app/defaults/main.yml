@@ -63,6 +63,12 @@ grafana_oidc_redirect_uri: ""
 # personal address for a human account. Site data — set in the deploy.
 authentik_admin_email: ""
 
+# Operator admin account, provisioned by the user blueprint (email + password
+# from SOPS via env). Off by default; the deploy turns it on and lists the
+# groups the user joins (superadmin + per-app + host login). See user.yaml.j2.
+authentik_admin_user_enabled: false
+authentik_admin_user_groups: []
+
 # LDAP outpost (SSSD host auth). All site data — set in the deploy. base_dn is what
 # the outpost serves; outpost_host is the public Authentik URL the container dials
 # back on. ldap_outpost_token (the SA token key / outpost AUTHENTIK_TOKEN) is a secret
@@ -73,10 +79,21 @@ authentik_ldap_outpost_host: ""
 ldap_outpost_token: ""
 # App-password key for the ldap-search bind account — SSSD's bind credential. SOPS.
 ldap_search_password: ""
-# LDAPS server cert/key (PEM) for the outpost's 6636 listener, from SOPS. Empty =
-# the outpost serves a self-signed cert and the provider certificate is left unset.
+# LDAPS cert/key (PEM); normally issued live at deploy. Empty = self-signed.
 ldaps_cert: ""
 ldaps_key: ""
+# LDAPS cert from OpenBao PKI (see ldaps_cert.yml). Empty role = skip issuance.
+authentik_ldaps_pki_role: ""
+authentik_ldaps_pki_mount: "pki"
+authentik_ldaps_common_name: ""
+# ip_sans MUST be the app-node IPs SSSD dials (from ip-plan), else TLS fails.
+authentik_ldaps_ip_sans: ""
+authentik_ldaps_ttl: "8760h"
+authentik_ldaps_bao_addr: ""
+# SSM param holding the provisioner AppRole creds used to issue.
+authentik_ldaps_ssm_provisioner_param: ""
+# AWS creds/region for the SSM read (from tf). Empty = ambient profile.
+authentik_ldaps_aws_env: {}
 
 # Secrets — from SOPS, never defaulted in real use:
 #   authentik_secret_key, authentik_pg_password, authentik_redis_password,

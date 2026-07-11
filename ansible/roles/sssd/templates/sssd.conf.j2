@@ -40,9 +40,8 @@ ldap_group_search_base = {{ sssd_ldap_group_search_base }}
 ldap_default_bind_dn = {{ sssd_ldap_bind_dn }}
 ldap_default_authtok = {{ ldap_search_password }}
 
-# LDAPS, validated against the OpenBao CA.
+# CA is in the system trust (sssd_be can't read a private cacert); reqcert on.
 ldap_tls_reqcert = demand
-ldap_tls_cacert = {{ sssd_ldap_ca_cert_path }}
 
 # Authentik LDAP schema (hybrid AD/rfc2307bis). Login name = cn (uid is a hash).
 ldap_schema = rfc2307bis
