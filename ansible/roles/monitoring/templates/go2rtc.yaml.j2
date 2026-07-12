@@ -11,6 +11,16 @@ api:
 
 # Restreams. The browser plays these via MSE (pure HTTP/WS — proxies cleanly through
 # Caddy on one TLS port). WebRTC needs direct UDP/TCP 8555 and is left for on-LAN use.
+{# H.265 cameras: browser MSE only plays H.264, so add an ffmpeg transcode source
+   (go2rtc's bundled ffmpeg) alongside the raw stream. Audio passes through. #}
 streams:
-  front: ${GO2RTC_FRONT_URL}
-  garage_carport: ${GO2RTC_GARAGE_CARPORT_URL}
+  front:
+    - ${GO2RTC_FRONT_URL}
+{% if monitoring_go2rtc_video_transcode %}
+    - ffmpeg:front#video=h264
+{% endif %}
+  garage_carport:
+    - ${GO2RTC_GARAGE_CARPORT_URL}
+{% if monitoring_go2rtc_video_transcode %}
+    - ffmpeg:garage_carport#video=h264
+{% endif %}

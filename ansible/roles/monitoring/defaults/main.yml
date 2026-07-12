@@ -121,6 +121,9 @@ monitoring_snmp_v3_priv_protocol: "AES"
 # the embed plays MSE (pure HTTP/WS, proxies cleanly). WebRTC would need direct
 # UDP/TCP 8555 so it's left for on-LAN use only — not published here.
 monitoring_go2rtc_api_port: 1984
+# Transcode camera video to H.264 (for H.265 cameras — browser MSE needs H.264).
+# Software transcode via go2rtc's ffmpeg, so it costs CPU on the monitoring host.
+monitoring_go2rtc_video_transcode: false
 monitoring_go2rtc_front_url: ""              # rtsp://...  (SOPS — has an access token)
 monitoring_go2rtc_garage_carport_url: ""    # rtsp://...  (SOPS — has an access token)
 # Optional go2rtc Basic auth. Left empty by default: the auth boundary is Caddy TLS +
