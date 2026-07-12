@@ -1,6 +1,23 @@
 {# Managed by the caddy role. One wildcard site; routes by Host header. #}
 {
 	email {{ caddy_acme_email }}
+{% if caddy_l4_proxies %}
+	{# Raw TCP (layer4) passthrough — no TLS termination, so mutual-TLS and the
+	   client's server-cert pin survive end to end. Health-checked LB fails a dead
+	   backend out. Used to front the Incus API across the cluster members. #}
+	layer4 {
+{% for p in caddy_l4_proxies %}
+		:{{ p.port }} {
+			route {
+				proxy {{ p.upstreams | join(' ') }} {
+					lb_policy {{ p.lb_policy | default('round_robin') }}
+					health_interval {{ p.health_interval | default('5s') }}
+				}
+			}
+		}
+{% endfor %}
+	}
+{% endif %}
 }
 
 *.{{ caddy_domain }} {

@@ -17,6 +17,12 @@ caddy_binary: /usr/local/bin/caddy
 # sent upstream (e.g. UniFi rejects a proxied Origin/Host).
 caddy_routes: []
 
+# Raw TCP (layer4) passthrough proxies — needs the caddy-l4 plugin in the binary.
+# No TLS termination, so mutual-TLS backends and cert-pinning clients work through
+# it. Each entry: port, upstreams (list of host:port), lb_policy (default
+# round_robin), health_interval (default 5s). Empty omits the layer4 block.
+caddy_l4_proxies: []
+
 # Extra CA certificates to trust for verifying internal HTTPS upstreams (e.g. the
 # OpenBao internal CA), so those routes can verify the backend instead of using
 # tls_skip_verify. A map of name -> PEM content; installed into the system trust
