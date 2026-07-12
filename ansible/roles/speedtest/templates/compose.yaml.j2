@@ -12,6 +12,7 @@ services:
       APP_URL: "{{ speedtest_app_url }}"
       DB_CONNECTION: "sqlite"
       SPEEDTEST_SCHEDULE: "{{ speedtest_schedule }}"
+      DEFAULT_CHART_RANGE: "{{ speedtest_default_chart_range }}"
     volumes:
       - speedtestdata:/config
     ports:

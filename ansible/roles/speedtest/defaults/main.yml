@@ -21,6 +21,16 @@ speedtest_app_url: ""
 speedtest_schedule: "0 */6 * * *"
 
 speedtest_timezone: "Etc/UTC"
+
+# Default dashboard time range: 24h, week, or month.
+speedtest_default_chart_range: "24h"
+
+# Prometheus export. Speedtest Tracker only exposes this as a UI setting (no env
+# var — upstream #2500), so the role sets it idempotently via artisan. Off by
+# default; the deploy enables it and allow-lists the scraper's IP.
+speedtest_prometheus_enabled: false
+speedtest_prometheus_allowed_ips: []
+
 speedtest_puid: 1000
 speedtest_pgid: 1000
 
