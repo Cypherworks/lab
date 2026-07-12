@@ -55,6 +55,7 @@ services:
     command: ["serve"]
     volumes:
       - {{ monitoring_config_dir }}/ntfy.yml:/etc/ntfy/server.yml:ro
+      - {{ monitoring_config_dir }}/ntfy-alert.yml:/etc/ntfy/templates/lab.yml:ro
       - ntfycache:/var/cache/ntfy
       - ntfydata:/var/lib/ntfy
     ports:
