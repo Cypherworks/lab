@@ -32,8 +32,13 @@ monitoring_scrape_interval: "30s"
 # pinned at the top. The Grafana file provisioner can't create playlists, so the
 # role creates it via the Grafana API (idempotent).
 monitoring_kiosk_playlist_name: "Lab Kiosk"
+monitoring_kiosk_playlist_uid: "lab-kiosk"   # fixed, so the kiosk URL is stable
 monitoring_kiosk_tag: "kiosk"
 monitoring_kiosk_rotate_interval: "30s"
+
+# Anonymous view-only access, for the wall kiosk. Off by default; the deploy
+# enables it. Admin/edit stays behind Authentik OIDC.
+monitoring_grafana_anonymous_enabled: false
 
 # Scrape targets supplied by the deploy from inventory (no IPs in the role). Each
 # entry is a {target: "ip:port", instance: "hostname"} mapping so the scraped series
