@@ -20,3 +20,7 @@ kiosk_resolution: "1920x1080"
 
 # Extra Chromium flags appended to the kiosk launch.
 kiosk_chromium_extra_flags: []
+
+# Daily browser restart to clear memory creep. "HH:MM" schedules a systemd timer;
+# "" disables it.
+kiosk_daily_restart: ""

@@ -134,3 +134,25 @@
     masked: false
     daemon_reload: true
   notify: Restart kiosk getty
+
+- name: Schedule the daily kiosk restart
+  when: kiosk_daily_restart | length > 0
+  become: true
+  block:
+    - name: Render the kiosk restart service + timer
+      ansible.builtin.template:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/{{ item | regex_replace('\\.j2$', '') }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - kiosk-restart.service.j2
+        - kiosk-restart.timer.j2
+
+    - name: Enable the daily kiosk restart timer
+      ansible.builtin.systemd:
+        name: kiosk-restart.timer
+        enabled: true
+        state: started
+        daemon_reload: true
