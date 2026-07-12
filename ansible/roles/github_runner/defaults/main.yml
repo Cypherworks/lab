@@ -1,0 +1,27 @@
+---
+# Self-hosted GitHub Actions runner in a container. Generic mechanism; the deploy
+# supplies the repo, token, labels, and pinned image. Registers ephemeral (one job
+# per registration, clean state) against a single repo via a fine-grained PAT.
+
+# myoung34/github-runner image. GitHub rejects deprecated runner versions, so a
+# hard pin rots within months — float this and re-pull to stay current. Ubuntu
+# base carries git, node, python3, curl.
+github_runner_image: ""
+
+# Re-pull each run so a newly-deprecated runner version self-heals to current.
+github_runner_pull: always
+
+github_runner_name: "{{ inventory_hostname }}-ci"
+github_runner_data_dir: /opt/github-runner
+github_runner_labels: "self-hosted,nas"
+
+# Fine-grained PAT scoped to the one repo with administration read/write, from SOPS.
+github_runner_access_token: ""
+# Full repo URL the runner registers against, e.g. https://github.com/org/repo.
+github_runner_repo_url: ""
+
+# Ephemeral: de-register after each job so no state leaks between runs.
+github_runner_ephemeral: true
+
+# Optional: set github_runner_docker_cli to the Synology docker path only if it
+# is not on the ansible user's PATH. Left unset so `default(omit)` finds `docker`.
