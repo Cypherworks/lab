@@ -1,7 +1,9 @@
 # Anti-affinity instance placement for the Incus cluster. Instances whose names
 # share a base (the name without a trailing "-<n>") are kept on separate hosts,
 # so an HA trio like etcd-1/etcd-2/etcd-3 never lands two members on one node.
-# Among the conflict-free hosts the emptiest (most free memory) wins.
+# Among the conflict-free hosts the emptiest (most free memory) wins, and the
+# member's ordinal offsets that choice so siblings created concurrently still
+# pick different hosts (see _pick below) — no serial `apply -parallelism=1`.
 #
 # Fail-safe by construction: any uncertainty (no conflict-free host, unreadable
 # resources) returns without set_target(), so Incus falls back to its built-in
@@ -18,6 +20,17 @@ def _group_of(name):
     if suffix and suffix.isdigit():
         return name[:idx]
     return name
+
+def _ordinal(name):
+    # Trailing "-<n>" as an int (etcd-2 -> 2); 1 for an unindexed name. Drives
+    # the sibling offset so etcd-1/-2/-3 map to distinct ranked hosts.
+    idx = name.rfind("-")
+    if idx <= 0:
+        return 1
+    suffix = name[idx + 1:]
+    if suffix and suffix.isdigit():
+        return int(suffix)
+    return 1
 
 def _free_memory(member_name):
     # Bytes free on a member, or -1 if it can't be read (treated as least
@@ -55,15 +68,15 @@ def instance_placement(request, candidate_members):
                  " (group " + group + "); using default placement")
         return
 
-    # Emptiest conflict-free host wins.
-    best = free[0]
-    best_free = _free_memory(best.server_name)
-    for member in free[1:]:
-        avail = _free_memory(member.server_name)
-        if avail > best_free:
-            best = member
-            best_free = avail
+    # Rank conflict-free hosts emptiest-first, with the name as a deterministic
+    # tie-break so concurrent evaluations produce the same ordering. Negate free
+    # memory so the emptiest sorts first.
+    ranked = sorted([(-_free_memory(m.server_name), m.server_name) for m in free])
 
-    log_info("placement: " + name + " (group " + group + ") -> " +
-             best.server_name)
-    set_target(best.server_name)
+    # Offset by the member's ordinal: sibling -1 takes the emptiest, -2 the next,
+    # and so on. Two siblings placed concurrently see the same ranking but pick
+    # different entries, so they never collide without needing serial creation.
+    target = ranked[(_ordinal(name) - 1) % len(ranked)][1]
+
+    log_info("placement: " + name + " (group " + group + ") -> " + target)
+    set_target(target)
