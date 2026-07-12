@@ -1,0 +1,22 @@
+{# Managed by the kiosk role. #}
+[Unit]
+Description=Grafana wall kiosk (cage + Chromium)
+After=systemd-user-sessions.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ kiosk_user }}
+# A logind (PAM) session gives cage a seat plus the DRM/input devices, so no
+# separate seatd is needed. tty1 so the kiosk owns the primary console.
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/cage -- /usr/local/bin/kiosk-session
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

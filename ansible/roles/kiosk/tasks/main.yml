@@ -1,0 +1,58 @@
+---
+- name: Require the kiosk URL
+  ansible.builtin.assert:
+    that: kiosk_url | length > 0
+    fail_msg: "kiosk_url is not set — supply the fullscreen URL from the deploy."
+
+- name: Install the kiosk display stack (cage compositor + output control + fonts)
+  become: true
+  ansible.builtin.apt:
+    name:
+      - cage
+      - wlr-randr
+      - fonts-noto-core
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Install Chromium (snap on Ubuntu 24.04)
+  become: true
+  community.general.snap:
+    name: chromium
+
+- name: Create the kiosk user (local, no shell login)
+  become: true
+  ansible.builtin.user:
+    name: "{{ kiosk_user }}"
+    groups: [video, render, input]
+    append: true
+    shell: /usr/sbin/nologin
+    create_home: true
+
+- name: Render the kiosk session launcher
+  become: true
+  ansible.builtin.template:
+    src: kiosk-session.sh.j2
+    dest: /usr/local/bin/kiosk-session
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart kiosk
+
+- name: Render the kiosk systemd service
+  become: true
+  ansible.builtin.template:
+    src: kiosk.service.j2
+    dest: /etc/systemd/system/kiosk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk
+
+- name: Enable the kiosk service
+  become: true
+  ansible.builtin.systemd:
+    name: kiosk.service
+    enabled: true
+    daemon_reload: true
+    state: started

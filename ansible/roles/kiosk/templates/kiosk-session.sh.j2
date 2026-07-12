@@ -1,0 +1,18 @@
+#!/bin/sh
+# Managed by the kiosk role. Runs inside the cage Wayland session: pins the output
+# mode, then hands the whole screen to Chromium in kiosk mode.
+{% if kiosk_resolution %}
+wlr-randr --output {{ kiosk_output }} --mode {{ kiosk_resolution }}{% if kiosk_rotate %} --transform {{ kiosk_rotate }}{% endif %} || true
+{% endif %}
+exec /snap/bin/chromium \
+  --kiosk \
+  --ozone-platform=wayland \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-session-crashed-bubble \
+  --disable-features=Translate \
+  --check-for-update-interval=31536000 \
+{% for f in kiosk_chromium_extra_flags %}
+  {{ f }} \
+{% endfor %}
+  "{{ kiosk_url }}"
