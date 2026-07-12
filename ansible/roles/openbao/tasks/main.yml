@@ -71,6 +71,8 @@
   when: openbao_auto_init | bool
 
 # Mgmt token: provisioner AppRole if its creds are set, else bootstrap root.
+# Skipped on a first-init run (bootstrap root defined) — the AppRole auth method
+# isn't enabled until provisioner.yml below, so an AppRole login can't work yet.
 - name: Log in with the provisioner AppRole
   environment:
     BAO_ADDR: "{{ openbao_api_addr }}"
@@ -87,6 +89,7 @@
   changed_when: false
   no_log: true
   when:
+    - openbao_bootstrap_root_token is not defined
     - openbao_provisioner_role_id | length > 0
     - openbao_provisioner_secret_id | length > 0
 
