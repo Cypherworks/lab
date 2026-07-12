@@ -1,0 +1,8 @@
+{# Managed by the kiosk role. greetd autostarts cage on VT1 as the kiosk user,
+   handling the seat/VT/logind session so cage gets the DRM master. #}
+[terminal]
+vt = 1
+
+[default_session]
+command = "/usr/local/bin/kiosk-launch"
+user = "{{ kiosk_user }}"

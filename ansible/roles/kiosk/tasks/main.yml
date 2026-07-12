@@ -25,10 +25,13 @@
     that: kiosk_url | length > 0
     fail_msg: "Set kiosk_url, or kiosk_grafana_url + kiosk_grafana_playlist_name."
 
-- name: Install the kiosk display stack (cage compositor + output control + fonts)
+# greetd manages the seat/VT/logind session and launches cage — the reliable way
+# to autostart a Wayland kiosk without a full display manager.
+- name: Install the kiosk stack (greetd + cage + output control + fonts)
   become: true
   ansible.builtin.apt:
     name:
+      - greetd
       - cage
       - wlr-randr
       - fonts-noto-core
@@ -45,12 +48,22 @@
   become: true
   ansible.builtin.user:
     name: "{{ kiosk_user }}"
-    groups: [video, render, input]
+    groups: [video, render, input, seat]
     append: true
     shell: /usr/sbin/nologin
     create_home: true
 
-- name: Render the kiosk session launcher
+- name: Render the cage launcher (sets the renderer, then runs cage)
+  become: true
+  ansible.builtin.template:
+    src: kiosk-launch.sh.j2
+    dest: /usr/local/bin/kiosk-launch
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart greetd
+
+- name: Render the cage session (output mode, then Chromium)
   become: true
   ansible.builtin.template:
     src: kiosk-session.sh.j2
@@ -58,22 +71,49 @@
     owner: root
     group: root
     mode: "0755"
-  notify: Restart kiosk
+  notify: Restart greetd
 
-- name: Render the kiosk systemd service
+- name: Configure greetd to autostart the kiosk on VT1
   become: true
   ansible.builtin.template:
-    src: kiosk.service.j2
-    dest: /etc/systemd/system/kiosk.service
+    src: greetd.toml.j2
+    dest: /etc/greetd/config.toml
     owner: root
     group: root
     mode: "0644"
-  notify: Restart kiosk
+  notify: Restart greetd
 
-- name: Enable the kiosk service
+# The role used to ship a hand-rolled kiosk.service; greetd replaces it. Stop and
+# remove it (and any drop-ins) so the two don't fight for VT1.
+- name: Stop the old hand-rolled kiosk service
   become: true
   ansible.builtin.systemd:
     name: kiosk.service
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove the old kiosk unit and drop-ins
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/kiosk.service
+    - /etc/systemd/system/kiosk.service.d
+
+# greetd owns VT1, so the console getty must not fight it for the tty.
+- name: Disable the console getty on VT1 (greetd owns it)
+  become: true
+  ansible.builtin.systemd:
+    name: getty@tty1.service
+    enabled: false
+    masked: true
+
+- name: Enable greetd
+  become: true
+  ansible.builtin.systemd:
+    name: greetd.service
     enabled: true
     daemon_reload: true
     state: started

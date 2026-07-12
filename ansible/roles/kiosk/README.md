@@ -1,19 +1,18 @@
 # kiosk
 
 Turns a headless Ubuntu host (a Raspberry Pi here) into a wall-mounted
-fullscreen kiosk. `cage` — a minimal Wayland kiosk compositor — runs Chromium
-in `--kiosk` at a single URL, auto-started on boot as a dedicated local user via
-a systemd service. No desktop environment.
+fullscreen kiosk. `greetd` autostarts `cage` — a minimal Wayland kiosk
+compositor — which runs Chromium in `--kiosk` at a single URL, as a dedicated
+local user. No desktop environment.
 
 ## What it does
 
-1. Installs `cage`, `wlr-randr`, fonts, and Chromium (snap).
-2. Creates the `kiosk` user (in `video`/`render`/`input`).
-3. Renders a session launcher (`/usr/local/bin/kiosk-session`) that pins the
-   output mode with `wlr-randr` then `exec`s Chromium.
-4. Renders + enables `kiosk.service` — a PAM/logind session on tty1, so cage
-   gets a seat and the DRM/input devices without a separate seatd. Restarts on
-   crash.
+1. Installs `greetd`, `cage`, `wlr-randr`, fonts, and Chromium (snap).
+2. Creates the `kiosk` user (in `video`/`render`/`input`/`seat`).
+3. Renders two launchers: `kiosk-launch` (sets the renderer, execs cage) and
+   `kiosk-session` (pins the output mode with `wlr-randr`, execs Chromium).
+4. Configures `greetd` to run the launcher on VT1 and masks the console getty —
+   greetd owns the seat/VT/logind session, so cage reliably gets the DRM master.
 
 ## Required variables
 
