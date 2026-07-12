@@ -65,6 +65,21 @@
     mode: "0644"
   notify: Restart kiosk getty
 
+- name: Unmask the tty1 getty (an earlier greetd attempt may have masked it)
+  become: true
+  ansible.builtin.systemd:
+    name: getty@tty1.service
+    masked: false
+
+- name: Ensure the tty1 getty drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/system/getty@tty1.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Autologin the kiosk user on tty1
   become: true
   ansible.builtin.template:
