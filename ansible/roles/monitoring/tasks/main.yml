@@ -37,6 +37,16 @@
     - { src: dashboards/lab-overview.json.j2, dest: grafana/dashboards/lab-overview.json }
   notify: Restart monitoring
 
+- name: Remove dropped provisioned dashboards
+  become: true
+  ansible.builtin.file:
+    path: "{{ monitoring_config_dir }}/grafana/dashboards/{{ item }}"
+    state: absent
+  loop:
+    - cctv.json
+    - lab-services-nas.json
+  notify: Restart monitoring
+
 - name: Render the HASS scrape token (0600 — docker-secret source for vmsingle)
   become: true
   ansible.builtin.template:
