@@ -25,3 +25,7 @@ github_runner_ephemeral: true
 
 # Optional: set github_runner_docker_cli to the Synology docker path only if it
 # is not on the ansible user's PATH. Left unset so `default(omit)` finds `docker`.
+
+# Extra container security_opt entries. Empty by default (keep the default
+# seccomp profile). Only relax it where an old host kernel/seccomp needs it.
+github_runner_security_opt: []

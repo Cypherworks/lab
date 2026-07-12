@@ -4,6 +4,12 @@ services:
     image: {{ github_runner_image }}
     container_name: {{ github_runner_name }}
     restart: unless-stopped
+{% if github_runner_security_opt %}
+    security_opt:
+{% for opt in github_runner_security_opt %}
+      - {{ opt }}
+{% endfor %}
+{% endif %}
     environment:
       REPO_URL: "{{ github_runner_repo_url }}"
       ACCESS_TOKEN: "{{ github_runner_access_token }}"
