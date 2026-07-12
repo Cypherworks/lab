@@ -115,3 +115,7 @@ grafana_oidc_client_secret: ""
 openbao_oidc_client_id: ""
 openbao_oidc_client_secret: ""
 openbao_oidc_redirect_uris: []
+# Proxmox VE OIDC: id/secret via !Env (SOPS); redirect_uris = PVE UI base URL.
+proxmox_oidc_client_id: ""
+proxmox_oidc_client_secret: ""
+proxmox_oidc_redirect_uris: []

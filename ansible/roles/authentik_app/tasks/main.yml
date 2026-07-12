@@ -70,6 +70,7 @@
     - nas
     - grafana
     - openbao
+    - proxmox
     - ldap
     - user
   notify: Restart authentik

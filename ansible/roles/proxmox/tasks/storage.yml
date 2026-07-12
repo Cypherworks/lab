@@ -1,0 +1,76 @@
+---
+# NVMe: VG + thin pool filling the disk (PVE lvmthin), idempotent; pvesm add
+# is guarded on the storage list.
+- name: Provision the NVMe VG + thin pool
+  when: proxmox_nvme_device | length > 0
+  block:
+    - name: Create the NVMe volume group
+      become: true
+      community.general.lvg:
+        vg: "{{ proxmox_nvme_vg }}"
+        pvs: "{{ proxmox_nvme_device }}"
+
+    - name: List the volume group's logical volumes
+      become: true
+      ansible.builtin.command: "lvs --noheadings -o lv_name {{ proxmox_nvme_vg }}"
+      register: proxmox_nvme_lvs
+      changed_when: false
+
+    # Create only if absent (100%FREE re-reads 0 free, would shrink).
+    - name: Create the thin pool filling the VG
+      become: true
+      community.general.lvol:
+        vg: "{{ proxmox_nvme_vg }}"
+        thinpool: "{{ proxmox_nvme_thinpool }}"
+        size: 100%FREE
+      when: proxmox_nvme_thinpool not in proxmox_nvme_lvs.stdout
+
+    - name: List the current PVE storage
+      become: true
+      ansible.builtin.command: pvesm status
+      register: proxmox_pvesm
+      changed_when: false
+
+    - name: Register the NVMe thin pool as PVE storage
+      become: true
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - add
+          - lvmthin
+          - "{{ proxmox_nvme_storage_id }}"
+          - --vgname
+          - "{{ proxmox_nvme_vg }}"
+          - --thinpool
+          - "{{ proxmox_nvme_thinpool }}"
+          - --content
+          - "{{ proxmox_nvme_content }}"
+      when: proxmox_nvme_storage_id not in proxmox_pvesm.stdout
+      changed_when: true
+
+# NAS: mount a Synology NFS export as PVE storage (guarded on the list).
+- name: Add the NAS NFS storage
+  when: proxmox_nas_server | length > 0
+  block:
+    - name: List the current PVE storage
+      become: true
+      ansible.builtin.command: pvesm status
+      register: proxmox_pvesm_nas
+      changed_when: false
+
+    - name: Register the NAS NFS export as PVE storage
+      become: true
+      ansible.builtin.command:
+        argv:
+          - pvesm
+          - add
+          - nfs
+          - "{{ proxmox_nas_storage_id }}"
+          - --server
+          - "{{ proxmox_nas_server }}"
+          - --export
+          - "{{ proxmox_nas_export }}"
+          - --content
+          - "{{ proxmox_nas_content }}"
+      when: proxmox_nas_storage_id not in proxmox_pvesm_nas.stdout
+      changed_when: true

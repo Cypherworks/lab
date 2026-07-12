@@ -1,0 +1,29 @@
+---
+# Swap PVE's enterprise repo (401s without a subscription, breaks apt) for the
+# no-subscription one. PVE 9 = Debian 13 (trixie), deb822 .sources format.
+- name: Disable the enterprise apt sources
+  become: true
+  ansible.builtin.lineinfile:
+    path: "/etc/apt/sources.list.d/{{ item }}"
+    regexp: "^Enabled:"
+    line: "Enabled: false"
+    insertafter: EOF
+    create: false
+  loop: "{{ proxmox_enterprise_sources }}"
+  failed_when: false
+  notify: Refresh apt cache
+
+- name: Add the PVE no-subscription repo
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/pve-no-subscription.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: http://download.proxmox.com/debian/pve
+      Suites: {{ proxmox_repo_suite }}
+      Components: pve-no-subscription
+      Signed-By: {{ proxmox_repo_keyring }}
+  notify: Refresh apt cache
