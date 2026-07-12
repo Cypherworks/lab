@@ -8,7 +8,7 @@ local user. No desktop environment.
 ## What it does
 
 1. Installs `greetd`, `cage`, `wlr-randr`, fonts, and Chromium (snap).
-2. Creates the `kiosk` user (in `video`/`render`/`input`/`seat`).
+2. Creates the `kiosk` user (in `video`/`render`/`input`).
 3. Renders two launchers: `kiosk-launch` (sets the renderer, execs cage) and
    `kiosk-session` (pins the output mode with `wlr-randr`, execs Chromium).
 4. Configures `greetd` to run the launcher on VT1 and masks the console getty —

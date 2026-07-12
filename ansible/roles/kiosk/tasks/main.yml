@@ -48,7 +48,7 @@
   become: true
   ansible.builtin.user:
     name: "{{ kiosk_user }}"
-    groups: [video, render, input, seat]
+    groups: [video, render, input]
     append: true
     shell: /usr/sbin/nologin
     create_home: true
