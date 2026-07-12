@@ -33,6 +33,7 @@
       no_log: true
 
     - name: Log in with the provisioner AppRole
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao bootstrap; cert issued by this PKI
       ansible.builtin.uri:
         url: "{{ authentik_ldaps_bao_addr }}/v1/auth/approle/login"
         method: POST
@@ -45,6 +46,7 @@
       no_log: true
 
     - name: Issue the LDAPS cert (CN + IP SANs = the app nodes SSSD dials)
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao bootstrap; cert issued by this PKI
       ansible.builtin.uri:
         url: "{{ authentik_ldaps_bao_addr }}/v1/{{ authentik_ldaps_pki_mount }}/issue/{{ authentik_ldaps_pki_role }}"
         method: POST
