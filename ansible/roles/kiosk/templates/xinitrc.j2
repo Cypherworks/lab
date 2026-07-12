@@ -8,6 +8,11 @@ xrandr --output {{ kiosk_x_output }} --mode {{ kiosk_resolution }} 2>/dev/null |
 {% endif %}
 exec /snap/bin/chromium \
   --kiosk \
+{% if kiosk_resolution %}
+  --window-size={{ kiosk_resolution | replace('x', ',') }} \
+  --window-position=0,0 \
+{% endif %}
+  --force-device-scale-factor=1 \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \
