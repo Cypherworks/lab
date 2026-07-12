@@ -35,3 +35,41 @@
     project_src: "{{ speedtest_compose_dir }}"
     state: present
     pull: missing
+
+# Prometheus export is a UI-only setting (spatie laravel-settings, group
+# `dataintegration`), so set it through artisan for a zero-touch build. Idempotent:
+# only saves (and reports changed) when the value differs. Retries while the app
+# migrates on first boot. Runs as the app user (abc) so cache/DB ownership stays
+# correct.
+- name: Enable the Prometheus data integration (allow-listed to the scraper)
+  become: true
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ speedtest_compose_dir }}/compose.yaml"
+      - exec
+      - -T
+      - -u
+      - abc
+      - speedtest-tracker
+      - php
+      - /app/www/artisan
+      - tinker
+      - --execute
+      - |
+        $s = app(\App\Settings\DataIntegrationSettings::class);
+        $ips = json_decode('{{ speedtest_prometheus_allowed_ips | to_json }}', true);
+        if ($s->prometheus_enabled !== true || $s->prometheus_allowed_ips !== $ips) {
+            $s->prometheus_enabled = true;
+            $s->prometheus_allowed_ips = $ips;
+            $s->save();
+            echo 'CHANGED';
+        }
+  register: _speedtest_prometheus
+  changed_when: "'CHANGED' in _speedtest_prometheus.stdout"
+  until: _speedtest_prometheus.rc == 0
+  retries: 10
+  delay: 6
+  when: speedtest_prometheus_enabled
