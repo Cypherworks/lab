@@ -1,0 +1,33 @@
+# Managed by the authentik_app role. The operator's admin account + its group
+# memberships, so a rebuild restores access with no manual clicks. Email and
+# password come from SOPS via !Env; the username is the email local-part. Off
+# unless the deploy sets authentik_admin_user_enabled.
+version: 1
+metadata:
+  name: lab - human admin user
+{% if authentik_admin_user_enabled %}
+entries:
+  - model: authentik_core.user
+    id: admin-user
+    identifiers:
+      username: "{{ authentik_user_email.split('@')[0] }}"
+    attrs:
+      name: "{{ authentik_user_email.split('@')[0] }}"
+      email: !Env AUTHENTIK_USER_EMAIL
+      password: !Env AUTHENTIK_USER_PASSWORD
+      is_active: true
+
+  # Membership is set here in code, not by hand. `users` sets the group to
+  # exactly this list, right for a single-operator lab. ldap-search (a service
+  # bind account) is deliberately excluded from authentik_admin_user_groups.
+{% for grp in authentik_admin_user_groups %}
+  - model: authentik_core.group
+    identifiers:
+      name: {{ grp }}
+    attrs:
+      users:
+        - !KeyOf admin-user
+{% endfor %}
+{% else %}
+entries: []
+{% endif %}

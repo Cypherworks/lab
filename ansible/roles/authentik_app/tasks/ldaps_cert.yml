@@ -1,0 +1,70 @@
+---
+# Issue the LDAP outpost's LDAPS server cert live from OpenBao PKI at deploy,
+# so it always chains to the current internal CA and its IP SANs track the app
+# nodes SSSD dials (from ip-plan). Replaces a frozen SOPS cert that goes stale
+# on a rebuild: both the CA and the app-node IPs move, so reqcert=demand fails
+# the handshake and SSSD can't resolve LDAP users. SSSD validates the outpost
+# against the same CA.
+#
+# Runs on the controller (delegate_to localhost): it reaches OpenBao and holds
+# the AWS access for the tf-state lookups, so neither the AppRole secret nor
+# AWS creds land on the app tier; the nodes only receive the finished cert.
+- name: Issue the LDAPS outpost cert from OpenBao PKI
+  delegate_to: localhost
+  run_once: true
+  become: false
+  block:
+    - name: Read the provisioner AppRole creds from SSM
+      environment: "{{ authentik_ldaps_aws_env }}"
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - get-parameter
+          - --name
+          - "{{ authentik_ldaps_ssm_provisioner_param }}"
+          - --with-decryption
+          - --query
+          - Parameter.Value
+          - --output
+          - text
+      register: authentik_ldaps_ssm
+      changed_when: false
+      no_log: true
+
+    - name: Log in with the provisioner AppRole
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao bootstrap; cert issued by this PKI
+      ansible.builtin.uri:
+        url: "{{ authentik_ldaps_bao_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ (authentik_ldaps_ssm.stdout | from_json).role_id }}"
+          secret_id: "{{ (authentik_ldaps_ssm.stdout | from_json).secret_id }}"
+        validate_certs: false
+      register: authentik_ldaps_login
+      no_log: true
+
+    - name: Issue the LDAPS cert (CN + IP SANs = the app nodes SSSD dials)
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao bootstrap; cert issued by this PKI
+      ansible.builtin.uri:
+        url: "{{ authentik_ldaps_bao_addr }}/v1/{{ authentik_ldaps_pki_mount }}/issue/{{ authentik_ldaps_pki_role }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ authentik_ldaps_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          common_name: "{{ authentik_ldaps_common_name }}"
+          alt_names: "{{ authentik_ldaps_common_name }}"
+          ip_sans: "{{ authentik_ldaps_ip_sans }}"
+          ttl: "{{ authentik_ldaps_ttl }}"
+        validate_certs: false
+      register: authentik_ldaps_issue
+      no_log: true
+
+# run_once copies the result to every host, so both app nodes get one cert.
+- name: Adopt the issued LDAPS cert/key for the blueprint + compose
+  ansible.builtin.set_fact:
+    ldaps_cert: "{{ authentik_ldaps_issue.json.data.certificate }}"
+    ldaps_key: "{{ authentik_ldaps_issue.json.data.private_key }}"
+  no_log: true

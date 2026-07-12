@@ -1,0 +1,59 @@
+# Managed by the authentik_app role. Proxmox VE OIDC SSO, mirrors the openbao
+# pattern, admin-only. proxmox-admins gates the app (default-deny) and, via PVE
+# groups-claim sync, maps to the Administrator ACL. Client id/secret via !Env
+# (SOPS). The app slug (proxmox) sets the issuer the PVE realm points at.
+version: 1
+metadata:
+  name: lab - proxmox oidc
+entries:
+  # Admin group: PVE syncs it from the groups claim; the role ACLs it to admin.
+  - model: authentik_core.group
+    id: group-proxmox-admins
+    identifiers:
+      name: proxmox-admins
+    attrs:
+      name: proxmox-admins
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-proxmox
+    identifiers:
+      name: Proxmox
+    attrs:
+      name: Proxmox
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env PROXMOX_OIDC_CLIENT_ID
+      client_secret: !Env PROXMOX_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+{% for uri in proxmox_oidc_redirect_uris %}
+        - url: "{{ uri }}"
+          matching_mode: strict
+{% endfor %}
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    id: app-proxmox
+    identifiers:
+      slug: proxmox
+    attrs:
+      name: Proxmox
+      slug: proxmox
+      provider: !KeyOf provider-proxmox
+      policy_engine_mode: any
+
+  # Default-deny: only proxmox-admins may authenticate to the app.
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-proxmox
+      group: !KeyOf group-proxmox-admins
+      order: 0
+    attrs:
+      enabled: true

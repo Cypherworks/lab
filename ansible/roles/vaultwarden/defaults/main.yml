@@ -27,6 +27,11 @@ vaultwarden_domain: ""
 # single registration and back.
 vaultwarden_signups_allowed: false
 
+# Restrict signups to these email domains (comma-separated). With signups on it
+# limits registration to the listed domain(s): a private instance where the
+# operator self-registers but outsiders can't. Empty = no restriction.
+vaultwarden_signups_domains_whitelist: ""
+
 # Admin panel token — an argon2 PHC string, a secret supplied by the deploy from
 # all.sops.yml. Generate with:
 #   docker run --rm -it vaultwarden/server /vaultwarden hash

@@ -24,8 +24,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `sssd_ldap_group_search_base` | `"ou=groups,{{ sssd_ldap_base_dn }}"` | Group search base. |
 | `sssd_ldap_bind_dn` | `""` | Search/bind service-account DN (the `ldap-search` account). **Required from inventory.** |
 | `ldap_search_password` | `""` | Bind account app password. **Secret — from SOPS** (`ldap_search_password`, shared with the Authentik blueprint). |
-| `sssd_ldap_ca_cert` | `""` | PEM of the CA the outpost LDAPS cert chains to (public, not secret). **Required from inventory.** |
-| `sssd_ldap_ca_cert_path` | `/etc/sssd/openbao-ca.pem` | Path the CA PEM is written to. |
+| `sssd_ldap_ca_cert` | `""` | PEM of the CA the outpost cert chains to (public, not secret); added to the system trust store. **Required from inventory.** |
 | `sssd_default_shell` | `/bin/bash` | Default shell; required because the Authentik schema serves no `loginShell`. |
 | `sssd_fallback_homedir` | `/home/%u` | Fallback home directory template. |
 | `sssd_nsswitch` | `[{db: passwd, value: "files systemd sss"}, {db: group, value: "files systemd sss"}]` | NSS databases pointed at SSSD (whole-line, idempotent). |
@@ -48,7 +47,7 @@ None.
 Identity path (always):
 
 1. Installs `sssd_packages` via apt.
-2. Writes `sssd_ldap_ca_cert` to `sssd_ldap_ca_cert_path` (root:root, mode `0644`).
+2. Installs `sssd_ldap_ca_cert` into the system trust store (`update-ca-certificates`) — the AppArmor-confined `sssd_be` can't read a private CA file, only the system store.
 3. Templates `sssd.conf.j2` to `/etc/sssd/sssd.conf` at mode `0600` (mandatory — SSSD refuses a looser config, and the file holds the bind password). Uses `ldap_schema = rfc2307bis` with `ldap_user_name = cn`, `auto_private_groups = hybrid`, `ldap_tls_reqcert = demand` against the CA.
 4. Points `passwd`/`group` in `/etc/nsswitch.conf` at `sss` via whole-line `lineinfile`. `shadow` is deliberately left alone (auth territory).
 5. Enables and starts the `sssd` service.

@@ -8,15 +8,23 @@
     state: present
     update_cache: true
 
-- name: Install the OpenBao CA the outpost's LDAPS cert chains to
+# AppArmor-confined sssd_be can't read a private cacert; use the system trust.
+- name: Trust the OpenBao CA system-wide
   become: true
   ansible.builtin.copy:
     content: "{{ sssd_ldap_ca_cert }}"
-    dest: "{{ sssd_ldap_ca_cert_path }}"
+    dest: /usr/local/share/ca-certificates/openbao-ca.crt
     owner: root
     group: root
     mode: "0644"
+  register: sssd_system_ca
   notify: Restart sssd
+
+- name: Rebuild the system CA trust
+  become: true
+  ansible.builtin.command: update-ca-certificates
+  when: sssd_system_ca.changed
+  changed_when: true
 
 - name: Render the SSSD config
   become: true

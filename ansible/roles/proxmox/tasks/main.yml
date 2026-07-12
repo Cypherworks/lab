@@ -1,0 +1,25 @@
+---
+# Standalone Proxmox VE host. Assumes a stock PVE install is on the box; this
+# layers repos, storage, OIDC, and root SSH keys on top. See the role header.
+- name: Install root ops SSH keys
+  become: true
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ item }}"
+    state: present
+  loop: "{{ proxmox_ops_ssh_authorized_keys }}"
+
+- name: Configure the apt repositories
+  ansible.builtin.include_tasks: repos.yml
+  when: proxmox_manage_repos | bool
+
+# Refresh the cache now: enterprise repo 401s until disabled, breaks later apt.
+- name: Flush the apt-cache refresh
+  ansible.builtin.meta: flush_handlers
+
+- name: Provision storage (NVMe thin pool + NAS NFS)
+  ansible.builtin.include_tasks: storage.yml
+
+- name: Configure the Authentik OIDC realm
+  ansible.builtin.include_tasks: oidc.yml
+  when: proxmox_oidc_issuer_url | length > 0

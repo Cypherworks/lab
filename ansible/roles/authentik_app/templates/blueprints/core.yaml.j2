@@ -31,6 +31,9 @@ entries:
     identifiers:
       domain: authentik-default
     attrs:
+      # The fallback brand: without default: true its branding (logo, favicon,
+      # css) is never applied, so the custom logos don't render.
+      default: true
       branding_title: "Cypher Works"
 {% if authentik_branding_logo_path %}
       branding_logo: "{{ authentik_branding_logo_path }}"

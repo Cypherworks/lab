@@ -18,7 +18,7 @@ sssd_packages:
 # SSSD domain label (an arbitrary local name). Override in the deploy if desired.
 sssd_domain_name: lab
 
-# LDAP outpost endpoints — per-node LDAPS, SSSD fails over between them. Site data.
+# Per-node LDAPS outpost endpoints; SSSD fails over between them. Site data.
 sssd_ldap_uris: []            # e.g. [ldaps://ldap-a:636, ldaps://ldap-b:636]
 sssd_ldap_base_dn: ""          # e.g. dc=ldap,dc=example,dc=com
 sssd_ldap_user_search_base: "ou=users,{{ sssd_ldap_base_dn }}"
@@ -29,10 +29,8 @@ sssd_ldap_group_search_base: "ou=groups,{{ sssd_ldap_base_dn }}"
 sssd_ldap_bind_dn: ""          # e.g. cn=ldap-search,ou=users,dc=ldap,dc=example,dc=com
 ldap_search_password: ""
 
-# OpenBao CA the outpost's LDAPS cert chains to. reqcert=demand validates against it.
-# sssd_ldap_ca_cert is the PEM (public, not secret); written to sssd_ldap_ca_cert_path.
+# OpenBao CA (PEM, public); added to the system trust for the confined sssd_be.
 sssd_ldap_ca_cert: ""
-sssd_ldap_ca_cert_path: /etc/sssd/openbao-ca.pem
 
 # Authentik LDAP schema is a hybrid (AD-ish objectClass=user/group + posixAccount +
 # rfc2307bis member DNs). The login name is `cn` — `uid` is a hash, so the rfc2307
