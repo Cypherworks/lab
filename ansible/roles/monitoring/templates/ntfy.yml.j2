@@ -9,6 +9,9 @@ base-url: "{{ monitoring_ntfy_base_url }}"
 upstream-base-url: "{{ monitoring_ntfy_upstream_base_url }}"
 {% endif %}
 listen-http: ":80"
+# Custom message templates (lab.yml) render Alertmanager webhooks; see the
+# monitoring role's ntfy-alert.yml template.
+template-dir: "/etc/ntfy/templates"
 behind-proxy: true
 cache-file: "/var/cache/ntfy/cache.db"
 auth-file: "/var/lib/ntfy/user.db"

@@ -1,0 +1,9 @@
+{% raw %}# Managed by the monitoring role. Renders an Alertmanager webhook into a
+# glanceable ntfy notification (ntfy stamps the received time itself), invoked
+# with ?template=lab from alertmanager.yml. Fields are Alertmanager's grouped
+# payload; group_by [alertname, instance] makes both common labels present.
+title: |-
+  {{ if eq .status "firing" }}🔴{{ else }}✅{{ end }} {{ .commonLabels.instance }} — {{ .commonLabels.alertname }}
+message: |-
+  {{ with .commonAnnotations.summary }}{{ . }}{{ else }}{{ .commonLabels.alertname }} on {{ .commonLabels.instance }}{{ end }}
+{% endraw %}
