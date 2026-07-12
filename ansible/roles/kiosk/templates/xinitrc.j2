@@ -16,7 +16,8 @@ exec /snap/bin/chromium \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \
-  --disable-features=Translate \
+  --disable-breakpad \
+  --disable-features=Translate,Vulkan \
   --check-for-update-interval=31536000 \
 {% for f in kiosk_chromium_extra_flags %}
   {{ f }} \

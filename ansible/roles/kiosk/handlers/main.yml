@@ -1,7 +1,7 @@
 ---
-- name: Restart kiosk getty
+- name: Restart kiosk
   become: true
   ansible.builtin.systemd:
-    name: getty@tty1.service
+    name: kiosk.service
     state: restarted
     daemon_reload: true

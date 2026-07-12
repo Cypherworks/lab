@@ -25,8 +25,8 @@
     that: kiosk_url | length > 0
     fail_msg: "Set kiosk_url, or kiosk_grafana_url + kiosk_grafana_playlist_name."
 
-# X11 + Chromium: the long-proven Pi kiosk stack. A getty autologin on tty1 starts
-# X from the kiosk user's shell profile, which launches Chromium fullscreen.
+# X11 + Chromium: the long-proven Pi kiosk stack, run as a systemd service (startx)
+# so it's manageable with systemctl start/stop/restart/status kiosk.
 - name: Install the X11 kiosk stack
   become: true
   ansible.builtin.apt:
@@ -44,7 +44,7 @@
   community.general.snap:
     name: chromium
 
-- name: Create the kiosk user (console autologin, so a real shell)
+- name: Create the kiosk user
   become: true
   ansible.builtin.user:
     name: "{{ kiosk_user }}"
@@ -63,42 +63,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: Restart kiosk getty
-
-- name: Unmask the tty1 getty (an earlier greetd attempt may have masked it)
-  become: true
-  ansible.builtin.systemd:
-    name: getty@tty1.service
-    masked: false
-
-- name: Ensure the tty1 getty drop-in directory exists
-  become: true
-  ansible.builtin.file:
-    path: /etc/systemd/system/getty@tty1.service.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Autologin the kiosk user on tty1
-  become: true
-  ansible.builtin.template:
-    src: getty-autologin.conf.j2
-    dest: /etc/systemd/system/getty@tty1.service.d/autologin.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Restart kiosk getty
-
-- name: Start X on the kiosk user's tty1 login (shell profile)
-  become: true
-  ansible.builtin.template:
-    src: bash_profile.j2
-    dest: "/home/{{ kiosk_user }}/.bash_profile"
-    owner: "{{ kiosk_user }}"
-    group: "{{ kiosk_user }}"
-    mode: "0644"
-  notify: Restart kiosk getty
+  notify: Restart kiosk
 
 - name: Render the X session (.xinitrc)
   become: true
@@ -108,17 +73,26 @@
     owner: "{{ kiosk_user }}"
     group: "{{ kiosk_user }}"
     mode: "0755"
-  notify: Restart kiosk getty
+  notify: Restart kiosk
 
-# Undo an earlier greetd/cage attempt if present, and make sure the tty1 getty
-# (now carrying the autologin) is enabled.
+- name: Render the kiosk systemd service
+  become: true
+  ansible.builtin.template:
+    src: kiosk.service.j2
+    dest: /etc/systemd/system/kiosk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk
+
+# Undo an earlier greetd/cage attempt if present.
 - name: Remove any greetd config from the earlier attempt
   become: true
   ansible.builtin.file:
     path: /etc/greetd/config.toml
     state: absent
 
-- name: Disable greetd (X11 uses the tty1 getty instead)
+- name: Disable greetd (the kiosk service owns the VT instead)
   become: true
   ansible.builtin.systemd:
     name: greetd.service
@@ -126,14 +100,20 @@
     state: stopped
   failed_when: false
 
-- name: Ensure the tty1 getty is enabled and unmasked
+- name: Mask the tty1 getty (kiosk.service owns VT1)
   become: true
   ansible.builtin.systemd:
     name: getty@tty1.service
+    enabled: false
+    masked: true
+
+- name: Enable the kiosk service
+  become: true
+  ansible.builtin.systemd:
+    name: kiosk.service
     enabled: true
-    masked: false
+    state: started
     daemon_reload: true
-  notify: Restart kiosk getty
 
 - name: Schedule the daily kiosk restart
   when: kiosk_daily_restart | length > 0

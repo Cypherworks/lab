@@ -1,11 +1,7 @@
 {# Managed by the kiosk role. #}
 [Unit]
-Description=Restart the kiosk browser to clear memory
+Description=Restart the kiosk to clear memory
 
 [Service]
 Type=oneshot
-# Killing Chromium ends .xinitrc -> startx -> the autologin session, which then
-# respawns fresh — the same path as a crash recovery, so it's reliable.
-ExecStart=/usr/bin/pkill -u {{ kiosk_user }} chrome
-# pkill returns 1 when nothing matched (Chromium already gone) — treat as success.
-SuccessExitStatus=0 1
+ExecStart=/usr/bin/systemctl restart kiosk.service
