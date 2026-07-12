@@ -154,7 +154,6 @@
     force_basic_auth: true
     body_format: json
     body:
-      uid: "{{ monitoring_kiosk_playlist_uid }}"
       name: "{{ monitoring_kiosk_playlist_name }}"
       interval: "{{ monitoring_kiosk_rotate_interval }}"
       items:

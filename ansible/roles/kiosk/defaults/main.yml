@@ -3,7 +3,14 @@
 # Chromium fullscreen at a single URL, auto-started on boot as a dedicated local
 # user. Generic; the deploy sets the URL (a Grafana kiosk playlist here).
 
-kiosk_url: ""                    # fullscreen URL — required, set by the deploy
+# The fullscreen URL. Either set kiosk_url directly, or set kiosk_grafana_url +
+# kiosk_grafana_playlist_name and the role resolves the playlist's UID from Grafana
+# and builds the kiosk-mode play URL (UIDs are generated, so resolving by name
+# survives rebuilds).
+kiosk_url: ""
+kiosk_grafana_url: ""                 # e.g. https://grafana.example.com
+kiosk_grafana_playlist_name: ""       # e.g. "Lab Kiosk"
+
 kiosk_user: kiosk
 
 # Wayland output + forced mode. The Pi 4's first HDMI port is HDMI-A-1. Set the

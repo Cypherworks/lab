@@ -1,8 +1,10 @@
 {# Managed by the kiosk role. #}
 [Unit]
 Description=Grafana wall kiosk (cage + Chromium)
-After=systemd-user-sessions.service network-online.target
+After=systemd-user-sessions.service network-online.target getty@tty1.service
 Wants=network-online.target
+# Take tty1 from the console getty (StandardInput=tty-fail below needs it free).
+Conflicts=getty@tty1.service
 
 [Service]
 Type=simple

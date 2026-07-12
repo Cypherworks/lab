@@ -1,8 +1,29 @@
 ---
+# Resolve a Grafana playlist to its play URL by name — the UID is generated, so
+# looking it up survives rebuilds. Runs on the Pi, which reaches Grafana via Caddy
+# (anonymous view). Retries while Grafana/the playlist come up.
+- name: Resolve the Grafana playlist into a kiosk URL
+  when: kiosk_grafana_playlist_name | length > 0
+  block:
+    - name: Look up the playlist by name
+      ansible.builtin.uri:
+        url: "{{ kiosk_grafana_url }}/api/playlists?query={{ kiosk_grafana_playlist_name | urlencode }}"
+        return_content: true
+      register: _kiosk_playlists
+      until:
+        - _kiosk_playlists.status == 200
+        - (_kiosk_playlists.json | selectattr('name', 'equalto', kiosk_grafana_playlist_name) | list | length) > 0
+      retries: 10
+      delay: 6
+
+    - name: Build the kiosk URL from the playlist UID
+      ansible.builtin.set_fact:
+        kiosk_url: "{{ kiosk_grafana_url }}/playlists/play/{{ (_kiosk_playlists.json | selectattr('name', 'equalto', kiosk_grafana_playlist_name) | first).uid }}?kiosk"
+
 - name: Require the kiosk URL
   ansible.builtin.assert:
     that: kiosk_url | length > 0
-    fail_msg: "kiosk_url is not set — supply the fullscreen URL from the deploy."
+    fail_msg: "Set kiosk_url, or kiosk_grafana_url + kiosk_grafana_playlist_name."
 
 - name: Install the kiosk display stack (cage compositor + output control + fonts)
   become: true
