@@ -37,10 +37,11 @@
     pull: missing
 
 # Prometheus export is a UI-only setting (spatie laravel-settings, group
-# `dataintegration`), so set it through artisan for a zero-touch build. Idempotent:
-# only saves (and reports changed) when the value differs. Retries while the app
-# migrates on first boot. Runs as the app user (abc) so cache/DB ownership stays
-# correct.
+# `dataintegration`), no env var (upstream #2500). tinker is stripped from the
+# production image, so bootstrap Laravel from a piped script and set it via the
+# settings class (which handles the settings cache on save). Idempotent: only saves
+# (and reports changed) when the value differs. Retries while the app migrates on
+# first boot. Runs as the app user (abc) so cache/DB ownership stays correct.
 - name: Enable the Prometheus data integration (allow-listed to the scraper)
   become: true
   ansible.builtin.command:
@@ -55,18 +56,19 @@
       - abc
       - speedtest-tracker
       - php
-      - /app/www/artisan
-      - tinker
-      - --execute
-      - |
-        $s = app(\App\Settings\DataIntegrationSettings::class);
-        $ips = json_decode('{{ speedtest_prometheus_allowed_ips | to_json }}', true);
-        if ($s->prometheus_enabled !== true || $s->prometheus_allowed_ips !== $ips) {
-            $s->prometheus_enabled = true;
-            $s->prometheus_allowed_ips = $ips;
-            $s->save();
-            echo 'CHANGED';
-        }
+    stdin: |
+      <?php
+      require '/app/www/vendor/autoload.php';
+      $app = require '/app/www/bootstrap/app.php';
+      $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+      $s = $app->make(App\Settings\DataIntegrationSettings::class);
+      $ips = json_decode('{{ speedtest_prometheus_allowed_ips | to_json }}', true);
+      if ($s->prometheus_enabled !== true || $s->prometheus_allowed_ips !== $ips) {
+          $s->prometheus_enabled = true;
+          $s->prometheus_allowed_ips = $ips;
+          $s->save();
+          echo 'CHANGED';
+      }
   register: _speedtest_prometheus
   changed_when: "'CHANGED' in _speedtest_prometheus.stdout"
   until: _speedtest_prometheus.rc == 0
