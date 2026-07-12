@@ -1,0 +1,40 @@
+---
+- name: Require the runner image pin
+  ansible.builtin.assert:
+    that: github_runner_image | length > 0
+    fail_msg: "github_runner_image is not set — pin a verified runner tag."
+
+- name: Require the registration token (supplied from SOPS)
+  ansible.builtin.assert:
+    that: github_runner_access_token | default("") | length > 0
+    fail_msg: "github_runner_access_token is not set — supply it from SOPS."
+
+- name: Require the target repository URL
+  ansible.builtin.assert:
+    that: github_runner_repo_url | length > 0
+    fail_msg: "github_runner_repo_url is not set — set the repo to register to."
+
+- name: Ensure the runner data + work directories exist
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ github_runner_data_dir }}"
+    - "{{ github_runner_data_dir }}/work"
+
+- name: Render the runner compose file
+  become: true
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ github_runner_data_dir }}/compose.yaml"
+    mode: "0600"
+
+- name: Deploy the runner stack
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ github_runner_data_dir }}"
+    docker_cli: "{{ github_runner_docker_cli | default(omit) }}"
+    state: present
+    pull: "{{ github_runner_pull }}"

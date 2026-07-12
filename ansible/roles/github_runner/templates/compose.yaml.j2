@@ -1,0 +1,23 @@
+{# Managed by Ansible (github_runner role). #}
+services:
+  runner:
+    image: {{ github_runner_image }}
+    container_name: {{ github_runner_name }}
+    restart: unless-stopped
+{% if github_runner_security_opt %}
+    security_opt:
+{% for opt in github_runner_security_opt %}
+      - {{ opt }}
+{% endfor %}
+{% endif %}
+    environment:
+      REPO_URL: "{{ github_runner_repo_url }}"
+      ACCESS_TOKEN: "{{ github_runner_access_token }}"
+      RUNNER_NAME: "{{ github_runner_name }}"
+      RUNNER_SCOPE: repo
+      LABELS: "{{ github_runner_labels }}"
+      EPHEMERAL: "{{ 'true' if github_runner_ephemeral else 'false' }}"
+      DISABLE_AUTO_UPDATE: "true"
+      RUNNER_WORKDIR: /tmp/runner/work
+    volumes:
+      - {{ github_runner_data_dir }}/work:/tmp/runner/work
