@@ -1,7 +1,0 @@
-#!/bin/sh
-# Managed by the kiosk role. greetd runs this as the kiosk user on VT1. Sets the
-# wlroots renderer (if pinned) in cage's environment, then hands over the seat.
-{% if kiosk_wlr_renderer %}
-export WLR_RENDERER={{ kiosk_wlr_renderer }}
-{% endif %}
-exec cage -s -- /usr/local/bin/kiosk-session

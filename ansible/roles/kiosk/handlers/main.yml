@@ -1,7 +1,7 @@
 ---
-- name: Restart greetd
+- name: Restart kiosk getty
   become: true
   ansible.builtin.systemd:
-    name: greetd.service
+    name: getty@tty1.service
     state: restarted
     daemon_reload: true

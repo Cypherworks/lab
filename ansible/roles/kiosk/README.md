@@ -1,37 +1,34 @@
 # kiosk
 
 Turns a headless Ubuntu host (a Raspberry Pi here) into a wall-mounted
-fullscreen kiosk. `greetd` autostarts `cage` — a minimal Wayland kiosk
-compositor — which runs Chromium in `--kiosk` at a single URL, as a dedicated
-local user. No desktop environment.
+fullscreen kiosk on the long-proven **X11 + Chromium** stack: a tty1 autologin
+starts X from the kiosk user's shell profile, and X launches Chromium in
+`--kiosk` at a single URL. No desktop environment, no window manager.
 
 ## What it does
 
-1. Installs `greetd`, `cage`, `wlr-randr`, fonts, and Chromium (snap).
-2. Creates the `kiosk` user (in `video`/`render`/`input`).
-3. Renders two launchers: `kiosk-launch` (sets the renderer, execs cage) and
-   `kiosk-session` (pins the output mode with `wlr-randr`, execs Chromium).
-4. Configures `greetd` to run the launcher on VT1 and masks the console getty —
-   greetd owns the seat/VT/logind session, so cage reliably gets the DRM master.
+1. Installs `xserver-xorg`, `xinit`, `x11-xserver-utils`, fonts, and Chromium (snap).
+2. Creates the `kiosk` user (in `video`/`render`/`input`/`tty`, real shell).
+3. Autologins the kiosk user on tty1 (a `getty@tty1` drop-in).
+4. Renders `.bash_profile` (starts X on the tty1 login) and `.xinitrc` (kills
+   screen blanking, pins the mode with `xrandr`, execs Chromium fullscreen).
 
 ## Required variables
 
-| Variable | Purpose |
-|----------|---------|
-| `kiosk_url` | The fullscreen URL to display. |
+Set either `kiosk_url`, or `kiosk_grafana_url` + `kiosk_grafana_playlist_name`
+(the role resolves the Grafana playlist's UID by name and builds the URL).
 
 ## Key defaults
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `kiosk_user` | `kiosk` | Local user the session runs as. |
-| `kiosk_output` | `HDMI-A-1` | Wayland output name (Pi 4 HDMI0). |
-| `kiosk_resolution` | `1920x1080` | Forced output mode; `""` uses the EDID default. |
-| `kiosk_rotate` | `""` | `90`/`180`/`270` for a rotated screen. |
+| `kiosk_user` | `kiosk` | Local autologin user. |
+| `kiosk_x_output` | `HDMI-1` | X11 output name (Pi 4 HDMI0). |
+| `kiosk_resolution` | `1920x1080` | Forced mode; `""` uses the monitor default. |
 | `kiosk_chromium_extra_flags` | `[]` | Extra Chromium flags. |
 
 ## Notes
 
-The output name (`kiosk_output`) and mode may need tuning to the actual monitor
-— check `wlr-randr` output on the box if the screen is blank or wrong-sized.
-Runs as a local user, independent of any SSSD/LDAP login on the host.
+The output name (`kiosk_x_output`) may need tuning to the monitor — check
+`xrandr` on the box if the screen is blank or wrong-sized. Runs as a local
+autologin user, independent of any SSSD/LDAP login on the host.

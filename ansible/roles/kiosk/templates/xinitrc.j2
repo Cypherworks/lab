@@ -1,12 +1,13 @@
 #!/bin/sh
-# Managed by the kiosk role. Runs inside the cage Wayland session: pins the output
-# mode, then hands the whole screen to Chromium in kiosk mode.
+# Managed by the kiosk role. X session: kill blanking, pin the mode, then Chromium
+# fullscreen. Chromium's --kiosk handles fullscreen, so no window manager is run.
+xset s off -dpms
+xset s noblank
 {% if kiosk_resolution %}
-wlr-randr --output {{ kiosk_output }} --mode {{ kiosk_resolution }}{% if kiosk_rotate %} --transform {{ kiosk_rotate }}{% endif %} || true
+xrandr --output {{ kiosk_x_output }} --mode {{ kiosk_resolution }} 2>/dev/null || true
 {% endif %}
 exec /snap/bin/chromium \
   --kiosk \
-  --ozone-platform=wayland \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \

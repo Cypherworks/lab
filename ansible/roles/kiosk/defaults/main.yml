@@ -1,7 +1,7 @@
 ---
-# Wall-mounted fullscreen kiosk: cage (a minimal Wayland kiosk compositor) runs
-# Chromium fullscreen at a single URL, auto-started on boot as a dedicated local
-# user. Generic; the deploy sets the URL (a Grafana kiosk playlist here).
+# Wall-mounted fullscreen kiosk: a tty1 autologin starts X, which launches Chromium
+# in --kiosk at a single URL. The long-proven Pi kiosk stack. Generic; the deploy
+# sets the URL (a Grafana kiosk playlist here).
 
 # The fullscreen URL. Either set kiosk_url directly, or set kiosk_grafana_url +
 # kiosk_grafana_playlist_name and the role resolves the playlist's UID from Grafana
@@ -13,16 +13,10 @@ kiosk_grafana_playlist_name: ""       # e.g. "Lab Kiosk"
 
 kiosk_user: kiosk
 
-# Wayland output + forced mode. The Pi 4's first HDMI port is HDMI-A-1. Set the
-# resolution to pin the screen; "" leaves the monitor's EDID-preferred mode.
-kiosk_output: "HDMI-A-1"
+# X11 output name + forced mode. On the Pi 4's first HDMI the output is HDMI-1.
+# "" leaves the monitor's default mode.
+kiosk_x_output: "HDMI-1"
 kiosk_resolution: "1920x1080"
-kiosk_rotate: ""                 # "", 90, 180, 270 (wlr-randr transform)
 
-# wlroots renderer. "" uses hardware GL; set to "pixman" (software) on hosts whose
-# GL path crashes wlroots — the Pi 4's vc4 driver does.
-kiosk_wlr_renderer: ""
-
-# Chromium is the renderer (best-tested for Grafana), installed as a snap on
-# Ubuntu 24.04. Extra flags appended to the kiosk launch.
+# Extra Chromium flags appended to the kiosk launch.
 kiosk_chromium_extra_flags: []

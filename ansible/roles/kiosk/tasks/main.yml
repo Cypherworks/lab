@@ -25,15 +25,15 @@
     that: kiosk_url | length > 0
     fail_msg: "Set kiosk_url, or kiosk_grafana_url + kiosk_grafana_playlist_name."
 
-# greetd manages the seat/VT/logind session and launches cage — the reliable way
-# to autostart a Wayland kiosk without a full display manager.
-- name: Install the kiosk stack (greetd + cage + output control + fonts)
+# X11 + Chromium: the long-proven Pi kiosk stack. A getty autologin on tty1 starts
+# X from the kiosk user's shell profile, which launches Chromium fullscreen.
+- name: Install the X11 kiosk stack
   become: true
   ansible.builtin.apt:
     name:
-      - greetd
-      - cage
-      - wlr-randr
+      - xserver-xorg
+      - xinit
+      - x11-xserver-utils     # xset (blanking), xrandr (mode)
       - fonts-noto-core
       - ca-certificates
     state: present
@@ -44,76 +44,78 @@
   community.general.snap:
     name: chromium
 
-- name: Create the kiosk user (local, no shell login)
+- name: Create the kiosk user (console autologin, so a real shell)
   become: true
   ansible.builtin.user:
     name: "{{ kiosk_user }}"
-    groups: [video, render, input]
+    groups: [video, render, input, tty]
     append: true
-    shell: /usr/sbin/nologin
+    shell: /bin/bash
     create_home: true
 
-- name: Render the cage launcher (sets the renderer, then runs cage)
+- name: Allow the console user to start X (Xorg wrapper)
   become: true
-  ansible.builtin.template:
-    src: kiosk-launch.sh.j2
-    dest: /usr/local/bin/kiosk-launch
-    owner: root
-    group: root
-    mode: "0755"
-  notify: Restart greetd
-
-- name: Render the cage session (output mode, then Chromium)
-  become: true
-  ansible.builtin.template:
-    src: kiosk-session.sh.j2
-    dest: /usr/local/bin/kiosk-session
-    owner: root
-    group: root
-    mode: "0755"
-  notify: Restart greetd
-
-- name: Configure greetd to autostart the kiosk on VT1
-  become: true
-  ansible.builtin.template:
-    src: greetd.toml.j2
-    dest: /etc/greetd/config.toml
+  ansible.builtin.copy:
+    dest: /etc/X11/Xwrapper.config
+    content: |
+      allowed_users=anybody
+      needs_root_rights=yes
     owner: root
     group: root
     mode: "0644"
-  notify: Restart greetd
+  notify: Restart kiosk getty
 
-# The role used to ship a hand-rolled kiosk.service; greetd replaces it. Stop and
-# remove it (and any drop-ins) so the two don't fight for VT1.
-- name: Stop the old hand-rolled kiosk service
+- name: Autologin the kiosk user on tty1
   become: true
-  ansible.builtin.systemd:
-    name: kiosk.service
-    state: stopped
-    enabled: false
-  failed_when: false
+  ansible.builtin.template:
+    src: getty-autologin.conf.j2
+    dest: /etc/systemd/system/getty@tty1.service.d/autologin.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk getty
 
-- name: Remove the old kiosk unit and drop-ins
+- name: Start X on the kiosk user's tty1 login (shell profile)
+  become: true
+  ansible.builtin.template:
+    src: bash_profile.j2
+    dest: "/home/{{ kiosk_user }}/.bash_profile"
+    owner: "{{ kiosk_user }}"
+    group: "{{ kiosk_user }}"
+    mode: "0644"
+  notify: Restart kiosk getty
+
+- name: Render the X session (.xinitrc)
+  become: true
+  ansible.builtin.template:
+    src: xinitrc.j2
+    dest: "/home/{{ kiosk_user }}/.xinitrc"
+    owner: "{{ kiosk_user }}"
+    group: "{{ kiosk_user }}"
+    mode: "0755"
+  notify: Restart kiosk getty
+
+# Undo an earlier greetd/cage attempt if present, and make sure the tty1 getty
+# (now carrying the autologin) is enabled.
+- name: Remove any greetd config from the earlier attempt
   become: true
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: /etc/greetd/config.toml
     state: absent
-  loop:
-    - /etc/systemd/system/kiosk.service
-    - /etc/systemd/system/kiosk.service.d
 
-# greetd owns VT1, so the console getty must not fight it for the tty.
-- name: Disable the console getty on VT1 (greetd owns it)
-  become: true
-  ansible.builtin.systemd:
-    name: getty@tty1.service
-    enabled: false
-    masked: true
-
-- name: Enable greetd
+- name: Disable greetd (X11 uses the tty1 getty instead)
   become: true
   ansible.builtin.systemd:
     name: greetd.service
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Ensure the tty1 getty is enabled and unmasked
+  become: true
+  ansible.builtin.systemd:
+    name: getty@tty1.service
     enabled: true
+    masked: false
     daemon_reload: true
-    state: started
+  notify: Restart kiosk getty

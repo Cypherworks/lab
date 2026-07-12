@@ -1,0 +1,5 @@
+{# Managed by the kiosk role. Autologin the kiosk user on tty1 so its shell
+   profile starts X. #}
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin {{ kiosk_user }} --noclear %I $TERM
