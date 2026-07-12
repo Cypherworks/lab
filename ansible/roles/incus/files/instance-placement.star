@@ -3,7 +3,8 @@
 # so an HA trio like etcd-1/etcd-2/etcd-3 never lands two members on one node.
 # Among the conflict-free hosts the emptiest (most free memory) wins, and the
 # member's ordinal offsets that choice so siblings created concurrently still
-# pick different hosts (see _pick below) — no serial `apply -parallelism=1`.
+# pick different hosts (see the ranked/ordinal step below) — no serial
+# `apply -parallelism=1`.
 #
 # Fail-safe by construction: any uncertainty (no conflict-free host, unreadable
 # resources) returns without set_target(), so Incus falls back to its built-in
