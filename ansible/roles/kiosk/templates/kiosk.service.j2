@@ -9,6 +9,11 @@ Conflicts=getty@tty1.service
 [Service]
 Type=simple
 User={{ kiosk_user }}
+{% if kiosk_wlr_renderer %}
+# Renderer override: the Pi 4's vc4 GL path aborts wlroots, so force software
+# (pixman). Sidesteps the crash; drop this once GL hardware accel is sorted.
+Environment=WLR_RENDERER={{ kiosk_wlr_renderer }}
+{% endif %}
 # A logind (PAM) session gives cage a seat plus the DRM/input devices, so no
 # separate seatd is needed. tty1 so the kiosk owns the primary console.
 PAMName=login
