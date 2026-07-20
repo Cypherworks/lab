@@ -1,0 +1,10 @@
+{# Managed by the kiosk role. #}
+[Unit]
+Description=Daily kiosk restart to clear browser memory
+
+[Timer]
+OnCalendar=*-*-* {{ kiosk_daily_restart }}:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

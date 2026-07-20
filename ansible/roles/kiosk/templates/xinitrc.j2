@@ -1,0 +1,25 @@
+#!/bin/sh
+# Managed by the kiosk role. X session: kill blanking, pin the mode, then Chromium
+# fullscreen. Chromium's --kiosk handles fullscreen, so no window manager is run.
+xset s off -dpms
+xset s noblank
+{% if kiosk_resolution %}
+xrandr --output {{ kiosk_x_output }} --mode {{ kiosk_resolution }} 2>/dev/null || true
+{% endif %}
+exec /snap/bin/chromium \
+  --kiosk \
+{% if kiosk_resolution %}
+  --window-size={{ kiosk_resolution | replace('x', ',') }} \
+  --window-position=0,0 \
+{% endif %}
+  --force-device-scale-factor=1 \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-session-crashed-bubble \
+  --disable-breakpad \
+  --disable-features=Translate,Vulkan \
+  --check-for-update-interval=31536000 \
+{% for f in kiosk_chromium_extra_flags %}
+  {{ f }} \
+{% endfor %}
+  "{{ kiosk_url }}"

@@ -26,14 +26,9 @@ monitoring_retention: "30d"          # modest, given constrained storage
 monitoring_logs_retention: "30d"     # VictoriaLogs retention, same constrained budget
 monitoring_scrape_interval: "30s"
 
-# Kiosk playlist. The kiosk screen auto-rotates through every dashboard tagged
-# `monitoring_kiosk_tag` (so new rotated dashboards join just by carrying the tag).
-# Each is a single-screen 1920x1080 no-scroll layout with the Front CCTV strip
-# pinned at the top. The Grafana file provisioner can't create playlists, so the
-# role creates it via the Grafana API (idempotent).
-monitoring_kiosk_playlist_name: "Lab Kiosk"
-monitoring_kiosk_tag: "kiosk"
-monitoring_kiosk_rotate_interval: "30s"
+# Anonymous view-only access, for the wall kiosk. Off by default; the deploy
+# enables it. Admin/edit stays behind Authentik OIDC.
+monitoring_grafana_anonymous_enabled: false
 
 # Scrape targets supplied by the deploy from inventory (no IPs in the role). Each
 # entry is a {target: "ip:port", instance: "hostname"} mapping so the scraped series
@@ -117,6 +112,9 @@ monitoring_snmp_v3_priv_protocol: "AES"
 # the embed plays MSE (pure HTTP/WS, proxies cleanly). WebRTC would need direct
 # UDP/TCP 8555 so it's left for on-LAN use only — not published here.
 monitoring_go2rtc_api_port: 1984
+# Transcode camera video to H.264 (for H.265 cameras — browser MSE needs H.264).
+# Software transcode via go2rtc's ffmpeg, so it costs CPU on the monitoring host.
+monitoring_go2rtc_video_transcode: false
 monitoring_go2rtc_front_url: ""              # rtsp://...  (SOPS — has an access token)
 monitoring_go2rtc_garage_carport_url: ""    # rtsp://...  (SOPS — has an access token)
 # Optional go2rtc Basic auth. Left empty by default: the auth boundary is Caddy TLS +

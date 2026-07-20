@@ -120,6 +120,12 @@ services:
     environment:
       GF_INSTALL_PLUGINS: "victoriametrics-logs-datasource"
       GF_SERVER_ROOT_URL: "{{ monitoring_grafana_root_url }}"
+{% if monitoring_grafana_anonymous_enabled %}
+      # Anonymous view-only for the wall kiosk. Grafana is lab-only (no external /
+      # overlay ingress), and admin/edit stays behind Authentik OIDC (Viewer role).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+{% endif %}
       GF_SECURITY_ADMIN_USER: "{{ monitoring_grafana_admin_user }}"
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
       GF_AUTH_GENERIC_OAUTH_ENABLED: "true"

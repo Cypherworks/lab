@@ -1,0 +1,7 @@
+{# Managed by the kiosk role. #}
+[Unit]
+Description=Restart the kiosk to clear memory
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart kiosk.service

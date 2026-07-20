@@ -1,0 +1,26 @@
+---
+# Wall-mounted fullscreen kiosk: a tty1 autologin starts X, which launches Chromium
+# in --kiosk at a single URL. The long-proven Pi kiosk stack. Generic; the deploy
+# sets the URL (a Grafana kiosk playlist here).
+
+# The fullscreen URL. Either set kiosk_url directly, or set kiosk_grafana_url +
+# kiosk_grafana_playlist_name and the role resolves the playlist's UID from Grafana
+# and builds the kiosk-mode play URL (UIDs are generated, so resolving by name
+# survives rebuilds).
+kiosk_url: ""
+kiosk_grafana_url: ""                 # e.g. https://grafana.example.com
+kiosk_grafana_playlist_name: ""       # e.g. "Lab Kiosk"
+
+kiosk_user: kiosk
+
+# X11 output name + forced mode. On the Pi 4's first HDMI the output is HDMI-1.
+# "" leaves the monitor's default mode.
+kiosk_x_output: "HDMI-1"
+kiosk_resolution: "1920x1080"
+
+# Extra Chromium flags appended to the kiosk launch.
+kiosk_chromium_extra_flags: []
+
+# Daily browser restart to clear memory creep. "HH:MM" schedules a systemd timer;
+# "" disables it.
+kiosk_daily_restart: ""

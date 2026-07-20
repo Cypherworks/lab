@@ -1,0 +1,138 @@
+---
+# Resolve a Grafana playlist to its play URL by name — the UID is generated, so
+# looking it up survives rebuilds. Runs on the Pi, which reaches Grafana via Caddy
+# (anonymous view). Retries while Grafana/the playlist come up.
+- name: Resolve the Grafana playlist into a kiosk URL
+  when: kiosk_grafana_playlist_name | length > 0
+  block:
+    - name: Look up the playlist by name
+      ansible.builtin.uri:
+        url: "{{ kiosk_grafana_url }}/api/playlists?query={{ kiosk_grafana_playlist_name | urlencode }}"
+        return_content: true
+      register: _kiosk_playlists
+      until:
+        - _kiosk_playlists.status == 200
+        - (_kiosk_playlists.json | selectattr('name', 'equalto', kiosk_grafana_playlist_name) | list | length) > 0
+      retries: 10
+      delay: 6
+
+    - name: Build the kiosk URL from the playlist UID
+      ansible.builtin.set_fact:
+        kiosk_url: "{{ kiosk_grafana_url }}/playlists/play/{{ (_kiosk_playlists.json | selectattr('name', 'equalto', kiosk_grafana_playlist_name) | first).uid }}?kiosk"
+
+- name: Require the kiosk URL
+  ansible.builtin.assert:
+    that: kiosk_url | length > 0
+    fail_msg: "Set kiosk_url, or kiosk_grafana_url + kiosk_grafana_playlist_name."
+
+# X11 + Chromium: the long-proven Pi kiosk stack, run as a systemd service (startx)
+# so it's manageable with systemctl start/stop/restart/status kiosk.
+- name: Install the X11 kiosk stack
+  become: true
+  ansible.builtin.apt:
+    name:
+      - xserver-xorg
+      - xinit
+      - x11-xserver-utils     # xset (blanking), xrandr (mode)
+      - fonts-noto-core
+      - ca-certificates
+    state: present
+    update_cache: true
+
+- name: Install Chromium (snap on Ubuntu 24.04)
+  become: true
+  community.general.snap:
+    name: chromium
+
+- name: Create the kiosk user
+  become: true
+  ansible.builtin.user:
+    name: "{{ kiosk_user }}"
+    groups: [video, render, input, tty]
+    append: true
+    shell: /bin/bash
+    create_home: true
+
+- name: Allow the console user to start X (Xorg wrapper)
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/X11/Xwrapper.config
+    content: |
+      allowed_users=anybody
+      needs_root_rights=yes
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk
+
+- name: Render the X session (.xinitrc)
+  become: true
+  ansible.builtin.template:
+    src: xinitrc.j2
+    dest: "/home/{{ kiosk_user }}/.xinitrc"
+    owner: "{{ kiosk_user }}"
+    group: "{{ kiosk_user }}"
+    mode: "0755"
+  notify: Restart kiosk
+
+- name: Render the kiosk systemd service
+  become: true
+  ansible.builtin.template:
+    src: kiosk.service.j2
+    dest: /etc/systemd/system/kiosk.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart kiosk
+
+# Undo an earlier greetd/cage attempt if present.
+- name: Remove any greetd config from the earlier attempt
+  become: true
+  ansible.builtin.file:
+    path: /etc/greetd/config.toml
+    state: absent
+
+- name: Disable greetd (the kiosk service owns the VT instead)
+  become: true
+  ansible.builtin.systemd:
+    name: greetd.service
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Mask the tty1 getty (kiosk.service owns VT1)
+  become: true
+  ansible.builtin.systemd:
+    name: getty@tty1.service
+    enabled: false
+    masked: true
+
+- name: Enable the kiosk service
+  become: true
+  ansible.builtin.systemd:
+    name: kiosk.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Schedule the daily kiosk restart
+  when: kiosk_daily_restart | length > 0
+  become: true
+  block:
+    - name: Render the kiosk restart service + timer
+      ansible.builtin.template:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/{{ item | regex_replace('\\.j2$', '') }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - kiosk-restart.service.j2
+        - kiosk-restart.timer.j2
+
+    - name: Enable the daily kiosk restart timer
+      ansible.builtin.systemd:
+        name: kiosk-restart.timer
+        enabled: true
+        state: started
+        daemon_reload: true

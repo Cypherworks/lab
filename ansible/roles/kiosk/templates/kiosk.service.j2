@@ -1,0 +1,25 @@
+{# Managed by the kiosk role. #}
+[Unit]
+Description=Grafana wall kiosk (X11 + Chromium)
+After=systemd-user-sessions.service network-online.target getty@tty1.service
+Wants=network-online.target
+# Take VT1 from the console getty.
+Conflicts=getty@tty1.service
+
+[Service]
+User={{ kiosk_user }}
+# A PAM/logind session gives the user XDG_RUNTIME_DIR + the seat; Xorg (setuid via
+# the wrapper) opens the VT. startx runs the kiosk user's ~/.xinitrc.
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+ExecStart=/usr/bin/startx -- vt1 -nocursor
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
