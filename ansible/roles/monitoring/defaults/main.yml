@@ -48,6 +48,13 @@ monitoring_blackbox_targets: []      # e.g. ["https://grafana.example.com"]
 # snmp_exporter targets — the Synology NAS over SNMPv3. {target: "ip:161", instance}.
 monitoring_snmp_targets: []
 
+# Incus cluster metrics (/1.0/metrics) over mTLS — per-instance CPU/mem/disk/net/
+# state. {target: "member-ip:8444", instance: member}. Empty omits the job. The
+# cert+key are the TF-generated metrics scraper keypair (mounted as docker secrets).
+monitoring_incus_metrics_targets: []
+monitoring_incus_metrics_cert: ""
+monitoring_incus_metrics_key: ""
+
 # Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
 monitoring_headscale_target: ""
 
@@ -127,3 +134,17 @@ monitoring_go2rtc_password: ""
 # iframe points at. The user's browser loads this, so it must be the Caddy route, not
 # the internal compose port. Set from the deploy (e.g. https://cctv.example.com).
 monitoring_go2rtc_public_url: ""
+
+# Home Assistant power/energy sensor entity IDs for the lab-overview power matrix
+# (now W + today/week/month kWh, per location). Site-specific — set from the deploy;
+# empty leaves those blocks with no data. Kept out of this public repo on purpose.
+monitoring_power_sensors:
+  rack_now: ""
+  rack_day: ""
+  rack_month: ""
+  desk_now: ""
+  desk_day: ""
+  desk_month: ""
+  office_now: ""
+  office_day: ""
+  office_month: ""

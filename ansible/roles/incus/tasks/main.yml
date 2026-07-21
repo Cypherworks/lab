@@ -379,3 +379,44 @@
     enabled: true
     daemon_reload: true
   when: incus_boot_gate_enabled
+
+# --- Prometheus metrics endpoint (/1.0/metrics) ---
+# Per-instance CPU/memory/disk/network/state for vmsingle. mTLS: only the trusted
+# metrics-type cert can read it, so binding is safe. Gated on the deploy supplying
+# the scraper cert (empty in the public defaults). metrics_address is member-local,
+# so set on every member; the trust is cluster-global, so applied once.
+- name: Bind the Incus metrics listener on this member
+  become: true
+  ansible.builtin.command: "incus config set core.metrics_address {{ incus_cluster_address }}:{{ incus_metrics_port }}"
+  when: incus_metrics_cert_pem | length > 0
+  changed_when: true
+
+- name: List trusted Incus certificates
+  become: true
+  ansible.builtin.command: "incus config trust list --format csv"
+  register: _incus_trust
+  changed_when: false
+  run_once: true
+  when: incus_metrics_cert_pem | length > 0
+
+- name: Trust the metrics scraper cert (metrics-only, cluster-wide)
+  become: true
+  run_once: true
+  when:
+    - incus_metrics_cert_pem | length > 0
+    - "'metrics-scraper' not in _incus_trust.stdout"
+  block:
+    - name: Stage the metrics scraper cert
+      ansible.builtin.copy:
+        content: "{{ incus_metrics_cert_pem }}"
+        dest: /var/lib/incus/metrics-scraper.crt
+        owner: root
+        group: root
+        mode: "0644"
+    # NOTE: verify this CLI form against the deployed Incus version before apply
+    # (Incus 6.x: `incus config trust add-certificate <file> --type metrics`).
+    - name: Add the cert to the Incus trust store
+      ansible.builtin.command: >-
+        incus config trust add-certificate /var/lib/incus/metrics-scraper.crt
+        --name metrics-scraper --type metrics
+      changed_when: true

@@ -112,3 +112,23 @@ scrape_configs:
         labels:
           instance: "hass"
 {% endif %}
+{% if monitoring_incus_metrics_targets %}
+  # Incus cluster metrics (/1.0/metrics) — per-instance CPU/memory/disk/network/
+  # state. mTLS client cert+key are docker secrets; Incus trusts the cert as
+  # metrics-only. One target per cluster member (each returns its local instances).
+  # insecure_skip_verify: the Incus server cert is the cluster's own self-signed
+  # cert; client-cert auth is the access control, transport is still encrypted.
+  - job_name: incus
+    scheme: https
+    metrics_path: /1.0/metrics
+    tls_config:
+      cert_file: /run/secrets/incus_metrics_cert
+      key_file: /run/secrets/incus_metrics_key
+      insecure_skip_verify: true
+    static_configs:
+{% for t in monitoring_incus_metrics_targets %}
+      - targets: ["{{ t.target }}"]
+        labels:
+          instance: "{{ t.instance }}"
+{% endfor %}
+{% endif %}

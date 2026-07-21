@@ -58,6 +58,23 @@
   when: monitoring_hass_token | length > 0
   notify: Restart monitoring
 
+- name: Render the Incus metrics client cert + key (0600 — docker-secret sources)
+  become: true
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "{{ monitoring_config_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - { content: "{{ monitoring_incus_metrics_cert }}", dest: incus_metrics.crt }
+    - { content: "{{ monitoring_incus_metrics_key }}", dest: incus_metrics.key }
+  loop_control:
+    label: "{{ item.dest }}"
+  when: monitoring_incus_metrics_targets | length > 0
+  no_log: true
+  notify: Restart monitoring
+
 - name: Render the monitoring env (secrets)
   become: true
   ansible.builtin.template:
