@@ -20,6 +20,9 @@ StandardError=journal
 ExecStart=/usr/bin/startx -- vt1 -nocursor
 Restart=always
 RestartSec=5
+# Nothing to flush on a kiosk — don't wait the 90s default for X/Chromium to
+# honour SIGTERM; SIGKILL the cgroup quickly so stop/restart is near-instant.
+TimeoutStopSec=5s
 
 [Install]
 WantedBy=multi-user.target

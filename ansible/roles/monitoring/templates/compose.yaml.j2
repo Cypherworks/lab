@@ -5,11 +5,18 @@ services:
   vmsingle:
     image: {{ monitoring_vmsingle_image }}
     restart: unless-stopped
-{% if monitoring_hass_token %}
-    # HASS scrape bearer token, mounted read-only at /run/secrets/hass_token and read
-    # by scrape.yml's credentials_file. Docker makes it readable to vmsingle's user.
+{% if monitoring_hass_token or monitoring_incus_metrics_targets %}
+    # Docker secrets under /run/secrets, read by scrape.yml (HASS bearer token;
+    # Incus metrics mTLS client cert + key). Readable to vmsingle's user, never
+    # written into the on-disk config.
     secrets:
+{% if monitoring_hass_token %}
       - hass_token
+{% endif %}
+{% if monitoring_incus_metrics_targets %}
+      - incus_metrics_cert
+      - incus_metrics_key
+{% endif %}
 {% endif %}
     command:
       - "--storageDataPath=/victoria-metrics-data"
@@ -174,11 +181,18 @@ volumes:
   ntfydata:
   grafanadata:
   victorialogsdata:
-{% if monitoring_hass_token %}
+{% if monitoring_hass_token or monitoring_incus_metrics_targets %}
 
-# HASS scrape token as a file-based docker secret — 0600 on the host, mounted
-# read-only into vmsingle at /run/secrets/hass_token.
+# File-based docker secrets — 0600 on the host, mounted read-only into vmsingle.
 secrets:
+{% if monitoring_hass_token %}
   hass_token:
     file: {{ monitoring_config_dir }}/hass_token
+{% endif %}
+{% if monitoring_incus_metrics_targets %}
+  incus_metrics_cert:
+    file: {{ monitoring_config_dir }}/incus_metrics.crt
+  incus_metrics_key:
+    file: {{ monitoring_config_dir }}/incus_metrics.key
+{% endif %}
 {% endif %}

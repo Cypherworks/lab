@@ -60,6 +60,11 @@ incus_cluster_bootstrap_host: ""
 incus_cluster_member_name: "{{ inventory_hostname }}"
 incus_cluster_address: "{{ ansible_default_ipv4.address }}"
 
+# Prometheus metrics endpoint. Empty cert => the metrics listener + trust are
+# skipped (public default). The deploy supplies the TF-generated scraper cert.
+incus_metrics_port: 8444
+incus_metrics_cert_pem: ""
+
 # Anti-affinity placement scriptlet (#217). Keeps same-group instances (an HA trio
 # named etcd-1/-2/-3) on separate hosts and prefers the emptiest host, replacing static
 # target pins. Cluster-global config, so it's set once on the bootstrap member.
