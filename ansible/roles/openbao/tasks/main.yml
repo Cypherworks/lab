@@ -56,14 +56,53 @@
     mode: "0750"
   when: openbao_audit_enabled | bool
 
+# Self-heal a transient unseal failure at boot (see the override template): without
+# this the packaged unit's StartLimitBurst gives up and OpenBao stays sealed.
+- name: Ensure the OpenBao service drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/system/openbao.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the OpenBao service self-heal override
+  become: true
+  ansible.builtin.template:
+    src: openbao-service-override.conf.j2
+    dest: /etc/systemd/system/openbao.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Starts uninitialised + sealed on a fresh node; the awskms seal auto-unseals on every
-# subsequent start once initialised.
+# subsequent start once initialised. daemon_reload picks up the override above.
 - name: Enable and start OpenBao
   become: true
   ansible.builtin.systemd_service:
     name: openbao
     enabled: true
     state: started
+    daemon_reload: true
+
+# Guard: if a package upgrade or a stray edit ever drops the override, the start
+# rate-limit comes back and a boot-time blip can brick auto-unseal again. Fail the
+# converge loudly rather than silently regressing to that.
+- name: Read the OpenBao unit state
+  become: true
+  ansible.builtin.systemd_service:
+    name: openbao
+  register: openbao_unit
+  changed_when: false
+
+- name: Confirm the self-heal restart policy is in effect
+  ansible.builtin.assert:
+    that: openbao_unit.status.StartLimitIntervalUSec == "0"
+    fail_msg: >-
+      OpenBao's start rate-limit is not disabled
+      (StartLimitIntervalUSec={{ openbao_unit.status.StartLimitIntervalUSec }}) —
+      the self-heal override is missing.
 
 # Zero-touch init (auto_init); else a human bao operator init + SOPS creds.
 - name: Initialise OpenBao and resolve its bootstrap state

@@ -1,0 +1,9 @@
+# Managed by the openbao role.
+#
+# A transient DNS/KMS unavailability at boot must not brick auto-unseal. The
+# packaged unit gives up after StartLimitBurst starts within StartLimitIntervalSec,
+# so a resolver that isn't answering yet leaves OpenBao sealed until a human looks.
+# Disable the start rate-limit: Restart=on-failure then keeps retrying until KMS
+# is reachable and the awskms seal unseals the node on its own.
+[Unit]
+StartLimitIntervalSec=0
