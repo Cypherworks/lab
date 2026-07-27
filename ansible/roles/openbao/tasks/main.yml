@@ -89,12 +89,20 @@
 # Guard: if a package upgrade or a stray edit ever drops the override, the start
 # rate-limit comes back and a boot-time blip can brick auto-unseal again. Fail the
 # converge loudly rather than silently regressing to that.
-- name: Confirm the self-heal restart policy is in effect
+- name: Read the OpenBao unit state
   become: true
-  ansible.builtin.command: systemctl show openbao --property=StartLimitIntervalUSec --value
-  register: openbao_start_limit
+  ansible.builtin.systemd_service:
+    name: openbao
+  register: openbao_unit
   changed_when: false
-  failed_when: (openbao_start_limit.stdout | trim) != "0"
+
+- name: Confirm the self-heal restart policy is in effect
+  ansible.builtin.assert:
+    that: openbao_unit.status.StartLimitIntervalUSec == "0"
+    fail_msg: >-
+      OpenBao's start rate-limit is not disabled
+      (StartLimitIntervalUSec={{ openbao_unit.status.StartLimitIntervalUSec }}) —
+      the self-heal override is missing.
 
 # Zero-touch init (auto_init); else a human bao operator init + SOPS creds.
 - name: Initialise OpenBao and resolve its bootstrap state
