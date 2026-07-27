@@ -1,0 +1,11 @@
+{# Managed by the headscale role. Persistent so a missed run fires on next boot. #}
+[Unit]
+Description=Periodic check that headscale is using its OIDC provider
+
+[Timer]
+OnBootSec={{ headscale_oidc_watchdog_on_boot }}
+OnUnitActiveSec={{ headscale_oidc_watchdog_interval }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

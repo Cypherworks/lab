@@ -1,0 +1,11 @@
+{# Managed by the headscale role. #}
+[Unit]
+Description=Restart headscale if its OIDC provider recovered after a degraded start
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HEADSCALE_OIDC_DISCOVERY_URL={{ headscale_oidc_issuer }}.well-known/openid-configuration
+Environment="HEADSCALE_OIDC_FAILURE_MARKER=failed to set up OIDC provider"
+ExecStart=/usr/local/bin/headscale-oidc-watchdog.sh
