@@ -1,0 +1,15 @@
+---
+# UpSnap Wake-on-LAN web front end, one container via docker compose. Devices are
+# managed in the UI and stored in PocketBase (/app/pb_data) — the stateful bit, so
+# the volume is what backups cover. Access is gated at Caddy by Authentik forward-auth.
+
+upsnap_compose_dir: /opt/upsnap
+
+# Pin a confirmed-current tag before apply (registry tag must exist).
+upsnap_image: "ghcr.io/seriousm4x/upsnap:5"
+
+# Web UI port UpSnap listens on; Caddy reverse-proxies to this.
+upsnap_http_port: 8090
+
+upsnap_timezone: "Etc/UTC"
+upsnap_website_title: "Lab WoL"

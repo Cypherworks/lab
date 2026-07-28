@@ -1,0 +1,22 @@
+{# Managed by the upsnap role. UpSnap WoL front end; PocketBase data in the named
+   volume. Host networking so the magic packet broadcasts on the container's own
+   segment (the servers VLAN, reaching node-ryzen); NET_RAW for privileged ping and
+   the nmap device scan, with all other capabilities dropped. #}
+services:
+  upsnap:
+    image: {{ upsnap_image }}
+    restart: unless-stopped
+    network_mode: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    environment:
+      TZ: "{{ upsnap_timezone }}"
+      UPSNAP_HTTP_LISTEN: "0.0.0.0:{{ upsnap_http_port }}"
+      UPSNAP_WEBSITE_TITLE: "{{ upsnap_website_title }}"
+    volumes:
+      - upsnapdata:/app/pb_data
+
+volumes:
+  upsnapdata:
