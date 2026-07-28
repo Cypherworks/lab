@@ -6,6 +6,7 @@ network:
 {% if lab_interface_match is defined %}
       match:
         name: "{{ lab_interface_match }}"
+      set-name: "{{ lab_interface }}"
 {% endif %}
       dhcp4: false
       dhcp6: false
