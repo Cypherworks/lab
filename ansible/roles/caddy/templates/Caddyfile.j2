@@ -30,6 +30,17 @@
 {% for route in caddy_routes %}
 	@{{ route.name }} host {{ route.host }}
 	handle @{{ route.name }} {
+{% if route.authentik_gated | default(false) %}
+		{# Gate behind an Authentik login via the embedded outpost: pass the outpost
+		   endpoints through, run forward_auth, then reach the app. #}
+		route {
+			reverse_proxy /outpost.goauthentik.io/* {{ caddy_authentik_upstreams | join(' ') }}
+			forward_auth {{ caddy_authentik_upstreams | join(' ') }} {
+				uri /outpost.goauthentik.io/auth/caddy
+				copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Entitlements X-Authentik-Email X-Authentik-Name X-Authentik-Uid X-Authentik-Jwt X-Authentik-Meta-Jwks X-Authentik-Meta-Outpost X-Authentik-Meta-Provider X-Authentik-Meta-App X-Authentik-Meta-Version
+				trusted_proxies private_ranges
+			}
+{% endif %}
 		reverse_proxy {{ route.upstreams | default([route.upstream]) | join(' ') }} {
 {% if (route.upstreams | default([]) | length > 1) or route.lb_policy is defined %}
 			lb_policy {{ route.lb_policy | default('round_robin') }}
@@ -50,6 +61,9 @@
 			header_up -{{ header }}
 {% endfor %}
 		}
+{% if route.authentik_gated | default(false) %}
+		}
+{% endif %}
 	}
 {% endfor %}
 	handle {

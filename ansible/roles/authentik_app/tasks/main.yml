@@ -73,6 +73,7 @@
     - proxmox
     - ldap
     - user
+    - forward_auth
   notify: Restart authentik
 
 - name: Render the Authentik env
