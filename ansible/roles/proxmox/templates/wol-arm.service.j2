@@ -1,0 +1,12 @@
+{# Managed by the proxmox role. #}
+[Unit]
+Description=Arm Wake-on-LAN (magic packet) on {{ proxmox_wol_iface }}
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ethtool -s {{ proxmox_wol_iface }} wol g
+
+[Install]
+WantedBy=multi-user.target

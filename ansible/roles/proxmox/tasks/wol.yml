@@ -1,0 +1,49 @@
+---
+# Wake this host from S5 with a magic packet. The NIC has BIOS standby power, but
+# its driver comes up with magic-packet wake disabled, so the OS must set `wol g`
+# and re-set it on every boot. A systemd oneshot arms it at boot; starting it here
+# arms it immediately. The NIC is matched by the host's ip-plan MAC (build_hosts).
+- name: Resolve the WoL interface from its MAC
+  ansible.builtin.set_fact:
+    proxmox_wol_iface: >-
+      {{ (ansible_facts.interfaces
+          | map('extract', ansible_facts)
+          | selectattr('macaddress', 'defined')
+          | selectattr('macaddress', 'equalto', proxmox_wol_mac | lower)
+          | selectattr('type', 'equalto', 'ether')
+          | map(attribute='device') | list | first) | default('') }}
+
+- name: Fail when no ethernet interface carries the WoL MAC
+  ansible.builtin.fail:
+    msg: "No ethernet interface with MAC {{ proxmox_wol_mac }} on {{ inventory_hostname }}"
+  when: proxmox_wol_iface | length == 0
+
+- name: Ensure ethtool is present
+  become: true
+  ansible.builtin.apt:
+    name: ethtool
+    state: present
+
+- name: Install the WoL arming service
+  become: true
+  ansible.builtin.template:
+    src: wol-arm.service.j2
+    dest: /etc/systemd/system/wol-arm.service
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable the WoL arming service and arm the NIC now
+  become: true
+  ansible.builtin.systemd_service:
+    name: wol-arm.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Confirm the NIC is armed for magic-packet wake
+  become: true
+  ansible.builtin.command: "ethtool {{ proxmox_wol_iface }}"
+  register: proxmox_wol_status
+  changed_when: false
+  failed_when: "'Wake-on: g' not in proxmox_wol_status.stdout"

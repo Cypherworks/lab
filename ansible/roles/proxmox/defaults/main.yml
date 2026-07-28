@@ -43,3 +43,10 @@ proxmox_admin_role: Administrator
 
 # Ops SSH keys installed for root (admin + Ansible access). Site data.
 proxmox_ops_ssh_authorized_keys: []
+
+# Wake-on-LAN: this host is powered off between builds and woken by a magic packet.
+# The NIC keeps BIOS standby power, but its driver comes up with magic-packet wake
+# disabled, so the OS arms it (ethtool wol g) at every boot. Matched by the host MAC
+# set in the deploy (build_hosts). Empty MAC = skip.
+proxmox_wol_enabled: true
+proxmox_wol_mac: ""
