@@ -51,3 +51,10 @@ headscale_oidc_allowed_groups: ["lab-admins"]
 # "empty OIDC callback params" failure (headscale#2887), and Authentik's "profile"
 # scope already carries the groups claim that allowed_groups matches against.
 headscale_oidc_scopes: ["openid", "profile", "email"]
+
+# OIDC self-heal watchdog (files/headscale-oidc-watchdog.sh). Headscale configures
+# its OIDC provider only at startup, so an issuer unreachable then leaves it serving
+# CLI-only enrolment. This timer restarts headscale once the issuer is reachable, so
+# it loads OIDC without a human.
+headscale_oidc_watchdog_on_boot: "2min"
+headscale_oidc_watchdog_interval: "5min"

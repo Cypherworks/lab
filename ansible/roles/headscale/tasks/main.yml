@@ -89,3 +89,51 @@
          | selectattr('name', 'equalto', headscale_selfjoin_user)
          | map(attribute='id') | first }}
   when: headscale_selfjoin_user | length > 0
+
+# OIDC self-heal watchdog: headscale loads OIDC discovery only at startup, so an
+# issuer unreachable then leaves it in CLI-only enrolment until a restart. Install a
+# timer that restarts headscale once the issuer is back. See the script's header.
+- name: Install the headscale OIDC watchdog script
+  become: true
+  ansible.builtin.copy:
+    src: headscale-oidc-watchdog.sh
+    dest: /usr/local/bin/headscale-oidc-watchdog.sh
+    owner: root
+    group: root
+    mode: "0755"
+  register: headscale_watchdog_script
+  when: headscale_oidc_enabled | bool
+
+- name: Install the headscale OIDC watchdog systemd units
+  become: true
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - headscale-oidc-watchdog.service
+    - headscale-oidc-watchdog.timer
+  register: headscale_watchdog_units
+  when: headscale_oidc_enabled | bool
+
+- name: Enable and start the headscale OIDC watchdog timer
+  become: true
+  ansible.builtin.systemd_service:
+    name: headscale-oidc-watchdog.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: headscale_oidc_enabled | bool
+
+# Run once on install so an OIDC-degraded headscale is restarted without waiting for
+# the timer's first interval; the timer handles recoveries thereafter.
+- name: Heal a currently-degraded headscale now
+  become: true
+  ansible.builtin.systemd_service:
+    name: headscale-oidc-watchdog.service
+    state: started
+  when:
+    - headscale_oidc_enabled | bool
+    - headscale_watchdog_script is changed or headscale_watchdog_units is changed
