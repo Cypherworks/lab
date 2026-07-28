@@ -25,6 +25,11 @@ speedtest_timezone: "Etc/UTC"
 # Default dashboard time range: 24h, week, or month.
 speedtest_default_chart_range: "24h"
 
+# Show the results dashboard to unauthenticated guests (no app login). Meant for
+# use behind an access gate (Caddy + Authentik forward-auth), where "unauthenticated"
+# means "already past Authentik" — so viewers don't hit the app's own login too.
+speedtest_public_dashboard: false
+
 # Prometheus export. Speedtest Tracker only exposes this as a UI setting (no env
 # var — upstream #2500), so the role sets it idempotently via artisan. Off by
 # default; the deploy enables it and allow-lists the scraper's IP.

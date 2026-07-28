@@ -8,6 +8,11 @@ caddy_acme_email: admin@example.com
 caddy_config_path: /etc/caddy/Caddyfile
 caddy_binary: /usr/local/bin/caddy
 
+# Authentik embedded-outpost upstreams (the server on :9000) for forward-auth. Set
+# in the deploy; a route with `authentik_gated: true` is fronted by an Authentik
+# login via these. Empty = gating unavailable.
+caddy_authentik_upstreams: []
+
 # One wildcard cert (Route53 DNS-01) covers every host below. Add/remove a service
 # by editing this list (in group_vars) and re-running — the reload is sub-second.
 # Each entry: name (matcher id), host (FQDN), and either upstream (single backend)
