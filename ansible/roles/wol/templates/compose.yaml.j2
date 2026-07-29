@@ -1,0 +1,18 @@
+{# Managed by the wol role. Builds + runs the custom WoL app (files/app). Host
+   networking so the magic packet broadcasts on the container's own segment (the
+   servers VLAN, reaching the wake targets); NET_RAW for the ICMP status ping, all
+   other capabilities dropped. Devices come from devices.json. #}
+services:
+  wol:
+    build: ./app
+    restart: unless-stopped
+    network_mode: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+    environment:
+      WOL_LISTEN: "0.0.0.0:{{ wol_http_port }}"
+      WOL_DEVICES_FILE: /config/devices.json
+    volumes:
+      - ./devices.json:/config/devices.json:ro
