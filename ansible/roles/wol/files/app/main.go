@@ -15,9 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
 )
 
 // Device is one wake target, as rendered into the config file from ip-plan.
@@ -98,41 +95,64 @@ func wake(mac string) error {
 	return nil
 }
 
-// online reports whether the host answers an ICMP echo within a second.
+// icmpChecksum is the 16-bit ones-complement checksum ICMP requires over its message.
+func icmpChecksum(b []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(b); i += 2 {
+		sum += uint32(b[i])<<8 | uint32(b[i+1])
+	}
+	if len(b)%2 == 1 {
+		sum += uint32(b[len(b)-1]) << 8
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	return ^uint16(sum)
+}
+
+// online reports whether the host answers an ICMP echo within a second, over a raw
+// ICMP socket (NET_RAW). Stdlib only — no third-party network code. On Linux the read
+// carries the IP header ahead of the ICMP message, so it's skipped by header length.
 func online(ip string) bool {
-	addr := net.ParseIP(ip)
-	if addr == nil {
+	dst, err := net.ResolveIPAddr("ip4", ip)
+	if err != nil {
 		return false
 	}
-	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	conn, err := net.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
-	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
-		Body: &icmp.Echo{ID: os.Getpid() & 0xffff, Seq: 1, Data: []byte("wol")},
-	}
-	b, err := msg.Marshal(nil)
-	if err != nil {
+
+	id := os.Getpid() & 0xffff
+	req := []byte{8, 0, 0, 0, byte(id >> 8), byte(id), 0, 1} // type 8 echo, code 0, id, seq 1
+	cs := icmpChecksum(req)
+	req[2], req[3] = byte(cs>>8), byte(cs)
+	if _, err := conn.WriteTo(req, dst); err != nil {
 		return false
 	}
-	if _, err := conn.WriteTo(b, &net.IPAddr{IP: addr}); err != nil {
-		return false
-	}
+
 	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		return false
 	}
-	reply := make([]byte, 1500)
-	n, _, err := conn.ReadFrom(reply)
-	if err != nil {
-		return false
+	buf := make([]byte, 1500)
+	for {
+		n, peer, err := conn.ReadFrom(buf)
+		if err != nil {
+			return false
+		}
+		if peer.String() != dst.String() {
+			continue
+		}
+		pkt := buf[:n]
+		if len(pkt) < 20 {
+			continue
+		}
+		ihl := int(pkt[0]&0x0f) * 4
+		if len(pkt) >= ihl+1 && pkt[ihl] == 0 { // ICMP type 0 = echo reply
+			return true
+		}
 	}
-	rm, err := icmp.ParseMessage(1, reply[:n])
-	if err != nil {
-		return false
-	}
-	return rm.Type == ipv4.ICMPTypeEchoReply
 }
 
 // statuses pings every device concurrently.
@@ -190,6 +210,11 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleHealthz answers the container health check without pinging any device.
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Write([]byte("ok"))
+}
+
 func handleWake(w http.ResponseWriter, r *http.Request) {
 	d, ok := deviceByName[r.PathValue("name")]
 	if !ok {
@@ -217,6 +242,7 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", handleIndex)
+	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("POST /wake/{name}", handleWake)
 	log.Printf("wol listening on %s with %d device(s)", addr, len(devices))
 	log.Fatal(http.ListenAndServe(addr, mux))

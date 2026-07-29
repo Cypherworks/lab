@@ -60,6 +60,32 @@ func TestIndexListsDevices(t *testing.T) {
 	}
 }
 
+func TestHealthz(t *testing.T) {
+	rr := httptest.NewRecorder()
+	handleHealthz(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rr.Code != http.StatusOK || rr.Body.String() != "ok" {
+		t.Fatalf("healthz = %d %q, want 200 \"ok\"", rr.Code, rr.Body.String())
+	}
+}
+
+// A correct ICMP checksum makes the ones-complement sum over the message (with the
+// checksum field filled in) equal 0xffff.
+func TestICMPChecksumInvariant(t *testing.T) {
+	msg := []byte{8, 0, 0, 0, 0x12, 0x34, 0, 1}
+	cs := icmpChecksum(msg)
+	msg[2], msg[3] = byte(cs>>8), byte(cs)
+	var sum uint32
+	for i := 0; i+1 < len(msg); i += 2 {
+		sum += uint32(msg[i])<<8 | uint32(msg[i+1])
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + (sum >> 16)
+	}
+	if sum != 0xffff {
+		t.Fatalf("ones-complement sum = %#x, want 0xffff", sum)
+	}
+}
+
 func TestWakeUnknownDeviceIs404(t *testing.T) {
 	withDevices(t, []Device{{Name: "node-ryzen", MAC: "10:ff:e0:84:29:d8", IP: "10.200.20.41"}})
 	rr := httptest.NewRecorder()
