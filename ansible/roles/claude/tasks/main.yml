@@ -1,0 +1,120 @@
+---
+- name: Install the distro toolchain
+  become: true
+  ansible.builtin.apt:
+    name: "{{ claude_apt_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# The box is reached over SSH; the cloud image had no server, so make sure it runs.
+- name: Enable and start sshd
+  become: true
+  ansible.builtin.systemd_service:
+    name: ssh
+    enabled: true
+    state: started
+
+# GitHub CLI — not in Debian, so from the official repo.
+- name: Add the GitHub CLI apt repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: githubcli
+    types: [deb]
+    uris: "https://cli.github.com/packages"
+    suites: stable
+    components: [main]
+    architectures: [amd64]
+    signed_by: "https://cli.github.com/packages/githubcli-archive-keyring.gpg"
+
+- name: Install the GitHub CLI
+  become: true
+  ansible.builtin.apt:
+    name: gh
+    state: present
+    update_cache: true
+
+# Go from the upstream tarball; the distro's trails CI. `creates` makes it idempotent —
+# clear /usr/local/go to move to a new version.
+- name: Install Go {{ claude_go_version }}
+  become: true
+  ansible.builtin.unarchive:
+    src: "https://go.dev/dl/go{{ claude_go_version }}.linux-amd64.tar.gz"
+    dest: /usr/local
+    remote_src: true
+    creates: /usr/local/go/bin/go
+
+- name: Put Go and the local bins on PATH for every login shell
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/profile.d/claude-path.sh
+    content: "export PATH=\"$PATH:/usr/local/go/bin:/usr/local/bin\"\n"
+    owner: root
+    group: root
+    mode: "0644"
+
+# Terraform + actionlint ship as release archives; extract just the binary.
+- name: Install Terraform {{ claude_terraform_version }}
+  become: true
+  ansible.builtin.unarchive:
+    src: "https://releases.hashicorp.com/terraform/{{ claude_terraform_version }}/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [terraform]
+    creates: /usr/local/bin/terraform
+
+- name: Install actionlint {{ claude_actionlint_version }}
+  become: true
+  ansible.builtin.unarchive:
+    src: "https://github.com/rhysd/actionlint/releases/download/v{{ claude_actionlint_version }}/actionlint_{{ claude_actionlint_version }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [actionlint]
+    creates: /usr/local/bin/actionlint
+
+# checkov isn't packaged for Debian; pipx installs it isolated and links the entrypoint
+# into /usr/local/bin so it is on every user's PATH.
+- name: Install the pipx tooling for all users
+  become: true
+  ansible.builtin.command:
+    cmd: "pipx install {{ item }}"
+    creates: "/opt/pipx/venvs/{{ item }}"
+  loop: "{{ claude_pipx_packages }}"
+  environment:
+    PIPX_HOME: /opt/pipx
+    PIPX_BIN_DIR: /usr/local/bin
+
+- name: Install Claude Code (npm, global)
+  become: true
+  community.general.npm:
+    name: "{{ claude_code_package }}"
+    global: true
+    state: present
+
+- name: Install a base tmux config
+  become: true
+  ansible.builtin.copy:
+    src: tmux.conf
+    dest: /etc/tmux.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the persistent-session helper
+  become: true
+  ansible.builtin.copy:
+    dest: /usr/local/bin/claude-session
+    content: |
+      #!/usr/bin/env bash
+      # Attach this user's persistent Claude Code tmux session, or create it.
+      exec tmux new-session -A -s claude
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Set up the claude workbench user, credentials, and repos
+  ansible.builtin.include_tasks: user.yml
+
+- name: Sync the operator's rules and memory from claude-config
+  ansible.builtin.include_tasks: config.yml
+  when: claude_config_repo | length > 0

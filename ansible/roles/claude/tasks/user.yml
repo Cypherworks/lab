@@ -1,0 +1,120 @@
+---
+# Dedicated workbench user: owns the repos, secrets, and Claude Code state. Humans SSH
+# in as their Authentik identity, then `sudo -iu claude`. Created before the skel alias
+# below, so its own shell keeps `claude` meaning the binary, not the enter-workbench alias.
+- name: Create the claude workbench user
+  become: true
+  ansible.builtin.user:
+    name: "{{ claude_user }}"
+    home: "{{ claude_home }}"
+    shell: /bin/bash
+    create_home: true
+    comment: Claude workbench
+
+- name: Permit the SSH-login group to become the claude user (only), no password
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/claude-workbench
+    content: "%{{ claude_operator_group }} ALL=({{ claude_user }}) NOPASSWD: ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+
+- name: Alias `claude` to enter the workbench for new login shells (skel)
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/skel/.bashrc
+    line: "alias claude='sudo -iu {{ claude_user }}'"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Keep the enter-workbench alias out of the claude user's own shell
+  become: true
+  ansible.builtin.lineinfile:
+    path: "{{ claude_home }}/.bashrc"
+    line: "alias claude='sudo -iu {{ claude_user }}'"
+    state: absent
+
+# --- credentials, from group_vars/claude.sops.yml ----------------------------
+- name: Render the workbench environment (gh, git, and Claude Code tokens)
+  become: true
+  ansible.builtin.template:
+    src: workbench.env.j2
+    dest: "{{ claude_home }}/.workbench-env"
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0600"
+  when: claude_github_pat | length > 0 or claude_oauth_token | length > 0
+
+- name: Source the workbench environment from the claude user's shell
+  become: true
+  ansible.builtin.lineinfile:
+    path: "{{ claude_home }}/.bashrc"
+    line: "[ -r ~/.workbench-env ] && . ~/.workbench-env"
+    create: true
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0644"
+
+- name: Ensure the claude user's .ssh directory exists
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.file:
+    path: "{{ claude_home }}/.ssh"
+    state: directory
+    mode: "0700"
+
+# OpenSSH rejects a private key without a trailing newline ("error in libcrypto"),
+# so normalise to exactly one regardless of how the SOPS value was chomped.
+- name: Install the commit-signing key
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.copy:
+    dest: "{{ claude_home }}/.ssh/id_claude_signing"
+    content: "{{ claude_git_signing_key | trim }}\n"
+    mode: "0600"
+  when: claude_git_signing_key | length > 0
+
+- name: Derive the signing public key
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.command:
+    cmd: "ssh-keygen -y -f {{ claude_home }}/.ssh/id_claude_signing"
+  register: claude_signing_pub
+  changed_when: false
+  when: claude_git_signing_key | length > 0
+
+- name: Write the signing public key
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.copy:
+    dest: "{{ claude_home }}/.ssh/id_claude_signing.pub"
+    content: "{{ claude_signing_pub.stdout }}\n"
+    mode: "0644"
+  when: claude_git_signing_key | length > 0
+
+- name: Configure git for the claude user (identity, commit signing, GitHub auth via gh)
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.template:
+    src: gitconfig.j2
+    dest: "{{ claude_home }}/.gitconfig"
+    mode: "0644"
+
+- name: Clone the working repos as the claude user
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.git:
+    repo: "{{ item.url }}"
+    dest: "{{ claude_home }}/git/cw/{{ item.name }}"
+    version: main
+    update: false
+  environment:
+    GH_TOKEN: "{{ claude_github_pat }}"
+  loop: "{{ claude_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: claude_github_pat | length > 0
