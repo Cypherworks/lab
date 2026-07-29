@@ -11,7 +11,7 @@ estate credentials, and container image builds are delegated to CI. Human login
 `ssh_ca_trust` roles; the box is reached by SSH over the Headscale overlay, not
 `incus exec`.
 
-Full design: `lab-deploy` `docs/claude-claude.md`.
+Full design: `lab-deploy` `docs/claude-workbench.md`.
 
 ## Usage
 
