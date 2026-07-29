@@ -1,0 +1,13 @@
+{# Managed by the node_exporter role. #}
+[Unit]
+# node_exporter binds to the host's lab address, which doesn't exist until the
+# network is configured. Without this it races the interface at boot, fails to bind,
+# and stays down — so monitoring reports the host down while it's actually up. Order
+# after the network and keep retrying so it comes up once the address is present.
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=5
