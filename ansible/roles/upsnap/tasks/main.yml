@@ -25,3 +25,6 @@
     project_src: "{{ upsnap_compose_dir }}"
     state: present
     pull: missing
+
+- name: Set up the UpSnap superuser (OpenBao-backed, zero human input)
+  ansible.builtin.include_tasks: superuser.yml

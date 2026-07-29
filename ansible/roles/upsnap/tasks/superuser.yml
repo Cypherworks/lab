@@ -1,0 +1,96 @@
+---
+# Create the UpSnap superuser with zero human input. The password is generated once
+# and kept in OpenBao KV (via the provisioner AppRole, the same identity authentik_app
+# uses), so a rebuild re-applies it identically and you retrieve it from OpenBao if you
+# ever need to log in. UpSnap sits behind Authentik forward-auth; this is its app-level
+# admin account.
+- name: Set up the UpSnap superuser from OpenBao
+  run_once: true
+  when:
+    - upsnap_admin_email | length > 0
+    - upsnap_ssm_provisioner_param | length > 0
+  block:
+    - name: Read the provisioner AppRole creds from SSM
+      environment: "{{ upsnap_aws_env }}"
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - get-parameter
+          - --name
+          - "{{ upsnap_ssm_provisioner_param }}"
+          - --with-decryption
+          - --query
+          - Parameter.Value
+          - --output
+          - text
+      register: upsnap_ssm
+      changed_when: false
+      no_log: true
+
+    - name: Log in with the provisioner AppRole
+      ansible.builtin.uri:
+        url: "{{ upsnap_bao_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ (upsnap_ssm.stdout | from_json).role_id }}"
+          secret_id: "{{ (upsnap_ssm.stdout | from_json).secret_id }}"
+        validate_certs: false
+      register: upsnap_bao_login
+      no_log: true
+
+    - name: Look up an existing superuser password in OpenBao KV
+      ansible.builtin.uri:
+        url: "{{ upsnap_bao_addr }}/v1/{{ upsnap_kv_mount }}/data/{{ upsnap_kv_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ upsnap_bao_login.json.auth.client_token }}"
+        validate_certs: false
+        status_code: [200, 404]
+      register: upsnap_kv_read
+      no_log: true
+
+    - name: Generate + store a superuser password when none exists
+      ansible.builtin.uri:
+        url: "{{ upsnap_bao_addr }}/v1/{{ upsnap_kv_mount }}/data/{{ upsnap_kv_path }}"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ upsnap_bao_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          data:
+            password: "{{ lookup('community.general.random_string', length=32, special=false) }}"
+        validate_certs: false
+      when: upsnap_kv_read.status == 404
+      no_log: true
+
+    - name: Read the stored superuser password
+      ansible.builtin.uri:
+        url: "{{ upsnap_bao_addr }}/v1/{{ upsnap_kv_mount }}/data/{{ upsnap_kv_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ upsnap_bao_login.json.auth.client_token }}"
+        validate_certs: false
+      register: upsnap_kv_final
+      no_log: true
+
+    - name: Upsert the UpSnap superuser
+      become: true
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - -f
+          - "{{ upsnap_compose_dir }}/compose.yaml"
+          - exec
+          - -T
+          - upsnap
+          - /app/upsnap
+          - superuser
+          - upsert
+          - "{{ upsnap_admin_email }}"
+          - "{{ upsnap_kv_final.json.data.data.password }}"
+      register: upsnap_superuser
+      changed_when: "'saved' in (upsnap_superuser.stdout | lower) or 'successfully' in (upsnap_superuser.stdout | lower)"
+      no_log: true

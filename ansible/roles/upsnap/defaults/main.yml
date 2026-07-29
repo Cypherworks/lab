@@ -13,3 +13,14 @@ upsnap_http_port: 8090
 
 upsnap_timezone: "Etc/UTC"
 upsnap_website_title: "Lab WoL"
+
+# OpenBao-backed superuser bootstrap (superuser.yml): the password is generated once
+# and stored in OpenBao KV, so setup needs no human input. Empty email skips it;
+# bao_addr / ssm param / aws env come from the deploy (the same provisioner AppRole
+# authentik_app uses).
+upsnap_admin_email: ""
+upsnap_bao_addr: ""
+upsnap_ssm_provisioner_param: ""
+upsnap_aws_env: {}
+upsnap_kv_mount: kv
+upsnap_kv_path: upsnap/superuser
