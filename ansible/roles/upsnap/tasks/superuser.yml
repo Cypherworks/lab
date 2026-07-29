@@ -29,6 +29,7 @@
       no_log: true
 
     - name: Log in with the provisioner AppRole
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao internal-CA listener over the trusted lab net
       ansible.builtin.uri:
         url: "{{ upsnap_bao_addr }}/v1/auth/approle/login"
         method: POST
@@ -41,6 +42,7 @@
       no_log: true
 
     - name: Look up an existing superuser password in OpenBao KV
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao internal-CA listener over the trusted lab net
       ansible.builtin.uri:
         url: "{{ upsnap_bao_addr }}/v1/{{ upsnap_kv_mount }}/data/{{ upsnap_kv_path }}"
         method: GET
@@ -52,6 +54,7 @@
       no_log: true
 
     - name: Generate + store a superuser password when none exists
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao internal-CA listener over the trusted lab net
       ansible.builtin.uri:
         url: "{{ upsnap_bao_addr }}/v1/{{ upsnap_kv_mount }}/data/{{ upsnap_kv_path }}"
         method: POST
@@ -66,6 +69,7 @@
       no_log: true
 
     - name: Read the stored superuser password
+      # checkov:skip=CKV_ANSIBLE_1: OpenBao internal-CA listener over the trusted lab net
       ansible.builtin.uri:
         url: "{{ upsnap_bao_addr }}/v1/{{ upsnap_kv_mount }}/data/{{ upsnap_kv_path }}"
         method: GET
