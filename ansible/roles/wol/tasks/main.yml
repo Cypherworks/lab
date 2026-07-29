@@ -1,0 +1,47 @@
+---
+# Docker itself comes from the shared `docker` role (meta dependency).
+- name: Create the wol directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ wol_compose_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Copy the wol app source
+  become: true
+  ansible.builtin.copy:
+    src: app/
+    dest: "{{ wol_compose_dir }}/app/"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Rebuild wol
+
+- name: Render the wol device list
+  become: true
+  ansible.builtin.template:
+    src: devices.json.j2
+    dest: "{{ wol_compose_dir }}/devices.json"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart wol
+
+- name: Render the wol compose
+  become: true
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: "{{ wol_compose_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Rebuild wol
+
+- name: Build + start the wol stack
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ wol_compose_dir }}"
+    state: present
+    build: policy

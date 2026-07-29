@@ -1,0 +1,13 @@
+---
+# Custom Wake-on-LAN web page (files/app), one container via docker compose. No auth
+# (Caddy + Authentik forward-auth gate it) and no database — the wake targets come
+# from wol_devices (set by the deploy from ip-plan), so it redeploys identically with
+# nothing to bootstrap.
+
+wol_compose_dir: /opt/wol
+
+# Web UI port the app listens on; Caddy reverse-proxies to this.
+wol_http_port: 8090
+
+# Wake targets: a list of { name, mac, ip }. Set by the deploy from ip-plan.
+wol_devices: []

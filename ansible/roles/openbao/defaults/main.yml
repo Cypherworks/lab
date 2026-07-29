@@ -75,7 +75,6 @@ openbao_provisioner_policy_rules: |
   path "sys/policies/acl/*"              { capabilities = ["create", "read", "update", "list"] }
   path "{{ openbao_pki_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
   path "{{ openbao_ssh_mount }}/*"       { capabilities = ["create", "read", "update", "list"] }
-  path "{{ openbao_kv_mount }}/*"        { capabilities = ["create", "read", "update", "list"] }
   path "auth/oidc/*"                     { capabilities = ["create", "read", "update", "list"] }
   path "auth/approle/*"                  { capabilities = ["create", "read", "update", "list"] }
   path "identity/*"                      { capabilities = ["create", "read", "update", "list"] }
@@ -175,9 +174,6 @@ openbao_oidc_group_policies: []
 openbao_ssh_enabled: false
 openbao_ssh_mount: ssh-client-signer
 
-# KV v2 engine for application credentials (app roles generate + store their own
-# secret here via the provisioner AppRole).
-openbao_kv_mount: kv
 # A real map (not a string) — SSH cert extensions are a map field; the role is
 # written as a JSON body so it types correctly.
 openbao_ssh_default_extensions:

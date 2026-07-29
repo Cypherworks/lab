@@ -1,0 +1,13 @@
+---
+- name: Rebuild wol
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ wol_compose_dir }}"
+    state: present
+    build: always
+
+- name: Restart wol
+  become: true
+  community.docker.docker_compose_v2:
+    project_src: "{{ wol_compose_dir }}"
+    state: restarted
