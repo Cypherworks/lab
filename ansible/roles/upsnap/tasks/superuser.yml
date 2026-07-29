@@ -1,10 +1,13 @@
 ---
-# Create the UpSnap superuser with zero human input. The password is generated once
-# and kept in OpenBao KV (via the provisioner AppRole, the same identity authentik_app
-# uses), so a rebuild re-applies it identically and you retrieve it from OpenBao if you
-# ever need to log in. UpSnap sits behind Authentik forward-auth; this is its app-level
-# admin account.
-- name: Set up the UpSnap superuser from OpenBao
+# Create the UpSnap superuser with zero human input. The controller-side block (run
+# on localhost, which reaches AWS + OpenBao) reads the provisioner AppRole from SSM
+# and fetches — or generates and stores — the password in OpenBao KV; the final task
+# runs the upsert on the upsnap host. The password persists in OpenBao, so a rebuild
+# re-applies it and you retrieve it from OpenBao to log in. UpSnap sits behind
+# Authentik forward-auth; this is its app-level admin account.
+- name: Fetch or generate the UpSnap superuser password in OpenBao
+  delegate_to: localhost
+  become: false
   run_once: true
   when:
     - upsnap_admin_email | length > 0
@@ -79,22 +82,27 @@
       register: upsnap_kv_final
       no_log: true
 
-    - name: Upsert the UpSnap superuser
-      become: true
-      ansible.builtin.command:
-        argv:
-          - docker
-          - compose
-          - -f
-          - "{{ upsnap_compose_dir }}/compose.yaml"
-          - exec
-          - -T
-          - upsnap
-          - /app/upsnap
-          - superuser
-          - upsert
-          - "{{ upsnap_admin_email }}"
-          - "{{ upsnap_kv_final.json.data.data.password }}"
-      register: upsnap_superuser
-      changed_when: "'saved' in (upsnap_superuser.stdout | lower) or 'successfully' in (upsnap_superuser.stdout | lower)"
-      no_log: true
+# Runs on the upsnap host (docker lives there); run_once above copied the password
+# result to it.
+- name: Upsert the UpSnap superuser
+  become: true
+  when:
+    - upsnap_admin_email | length > 0
+    - upsnap_ssm_provisioner_param | length > 0
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - -f
+      - "{{ upsnap_compose_dir }}/compose.yaml"
+      - exec
+      - -T
+      - upsnap
+      - /app/upsnap
+      - superuser
+      - upsert
+      - "{{ upsnap_admin_email }}"
+      - "{{ upsnap_kv_final.json.data.data.password }}"
+  register: upsnap_superuser
+  changed_when: "'saved' in (upsnap_superuser.stdout | lower) or 'successfully' in (upsnap_superuser.stdout | lower)"
+  no_log: true
