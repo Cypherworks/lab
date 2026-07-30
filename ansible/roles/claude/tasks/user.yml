@@ -1,7 +1,7 @@
 ---
-# Dedicated workbench user: owns the repos, secrets, and Claude Code state. Humans SSH
-# in as their Authentik identity, then `sudo -iu claude`. Created before the skel alias
-# below, so its own shell keeps `claude` meaning the binary, not the enter-workbench alias.
+# Dedicated workbench user: owns the repos, secrets, and Claude Code state.
+# Humans SSH in as their Authentik identity, then `sudo -iu claude`; `claude`
+# launch alias lives in /etc/profile.d (see below).
 - name: Create the claude workbench user
   become: true
   ansible.builtin.user:
@@ -21,22 +21,16 @@
     mode: "0440"
     validate: "visudo -cf %s"
 
-- name: Alias `claude` to enter the workbench for new login shells (skel)
+- name: Install the `claude` launch alias for all login shells
   become: true
-  ansible.builtin.lineinfile:
-    path: /etc/skel/.bashrc
-    line: "alias claude='sudo -iu {{ claude_user }}'"
-    create: true
+  ansible.builtin.copy:
+    dest: /etc/profile.d/claude-workbench.sh
+    content: |
+      # `claude` launches Claude Code as the workbench user (guarded).
+      [ "$(id -un)" = "{{ claude_user }}" ] || alias claude='sudo -iu {{ claude_user }} claude'
     owner: root
     group: root
     mode: "0644"
-
-- name: Keep the enter-workbench alias out of the claude user's own shell
-  become: true
-  ansible.builtin.lineinfile:
-    path: "{{ claude_home }}/.bashrc"
-    line: "alias claude='sudo -iu {{ claude_user }}'"
-    state: absent
 
 # --- credentials, from group_vars/claude.sops.yml ----------------------------
 - name: Render the workbench environment (gh, git, and Claude Code tokens)
@@ -49,10 +43,11 @@
     mode: "0600"
   when: claude_github_pat | length > 0 or claude_oauth_token | length > 0
 
-- name: Source the workbench environment from the claude user's shell
+# .profile not .bashrc: .bashrc's non-interactive guard would skip the token.
+- name: Source the workbench environment from the claude user's login shell
   become: true
   ansible.builtin.lineinfile:
-    path: "{{ claude_home }}/.bashrc"
+    path: "{{ claude_home }}/.profile"
     line: "[ -r ~/.workbench-env ] && . ~/.workbench-env"
     create: true
     owner: "{{ claude_user }}"
