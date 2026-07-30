@@ -125,6 +125,30 @@
 - name: Bring the bridges up before any profile references them
   ansible.builtin.meta: flush_handlers
 
+# networkd won't hot-create a VLAN netdev on reload (only at boot); made here.
+- name: Reconcile per-VLAN netdevs (networkd won't hot-create them; netplan owns boot)
+  become: true
+  ansible.builtin.shell:
+    cmd: |
+      set -e
+      vlan="{{ incus_uplink_interface }}.{{ item.vlan }}"
+      changed=0
+      if ! ip link show "$vlan" >/dev/null 2>&1; then
+        ip link add link {{ incus_uplink_interface }} name "$vlan" type vlan id {{ item.vlan }}
+        changed=1
+      fi
+      if [ ! -e /sys/class/net/{{ item.bridge }}/brif/"$vlan" ]; then
+        ip link set "$vlan" master {{ item.bridge }}
+        changed=1
+      fi
+      ip link set "$vlan" up
+      [ "$changed" -eq 1 ] && echo changed || echo ok
+  register: _vlan_reconcile
+  changed_when: "'changed' in _vlan_reconcile.stdout"
+  loop: "{{ incus_networks }}"
+  loop_control:
+    label: "{{ incus_uplink_interface }}.{{ item.vlan }}"
+
 # Every member has its own local storage; in a cluster the pool is defined
 # cluster-wide with a per-member source.
 - name: Carve a dedicated LV for Incus storage
