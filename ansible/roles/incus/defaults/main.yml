@@ -50,6 +50,10 @@ incus_networks:
   - name: services
     vlan: 30
     bridge: br30
+  # AI workbench (claude + MCP runners), firewalled off east-west from the lab.
+  - name: workbench
+    vlan: 55
+    bridge: br55
 
 # Clustering for a single management plane across the nodes. The bootstrap member
 # converts in place (incus cluster enable); the rest join with a single-use token

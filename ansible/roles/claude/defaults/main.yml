@@ -1,0 +1,56 @@
+---
+# The AI-assisted development workbench toolchain. Pin the binary versions to a
+# current release and keep them level with the CI images, so pre-push checks
+# match CI.
+claude_go_version: "1.25.12"
+claude_terraform_version: "1.11.4"
+claude_actionlint_version: "1.7.7"
+
+# Distro packages; openssh-server (the cloud image ships only the client).
+claude_apt_packages:
+  - openssh-server
+  - git
+  - tmux
+  - jq
+  - curl
+  - ca-certificates
+  - unzip
+  - build-essential
+  - python3
+  - python3-pip
+  - pipx
+  - shellcheck
+  - nodejs
+  - npm
+  - ansible
+  - ansible-lint
+  - yamllint
+
+# Not packaged for Debian; pipx installs it isolated in /usr/local/bin.
+claude_pipx_packages:
+  - checkov
+
+# Claude Code, from npm. Auth = CLAUDE_CODE_OAUTH_TOKEN (SOPS), headless box.
+claude_code_package: "@anthropic-ai/claude-code"
+
+# --- workbench user: owns the repos, secrets, and Claude Code state ---
+claude_user: claude
+claude_home: /home/claude
+# SSH-login LDAP group allowed to become claude (NOPASSWD), not the admins.
+claude_operator_group: ssh-users
+# Git identity for the workbench's commits.
+claude_git_user_name: "Claude Workbench"
+claude_git_user_email: "claude@cypherworks.co.uk"
+# Repos cloned into ~/git/cw (private — pulled with the PAT).
+claude_repos:
+  - { name: lab, url: "https://github.com/Cypherworks/lab.git" }
+  - { name: lab-deploy, url: "https://github.com/Cypherworks/lab-deploy.git" }
+
+# Secrets, from group_vars/claude.sops.yml. Empty = credential wiring skipped.
+claude_github_pat: ""
+claude_oauth_token: ""
+# SSH signing key for commits; register the public half on GitHub as signing.
+claude_git_signing_key: ""
+
+# --- claude-config: cloned as ~/.claude (rules, hooks). Empty skips. ---
+claude_config_repo: ""

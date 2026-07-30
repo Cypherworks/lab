@@ -1,0 +1,12 @@
+---
+# claude-config is the box's ~/.claude (rules, hooks, settings, statusline).
+- name: Clone claude-config into the claude user's ~/.claude
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.git:
+    repo: "{{ claude_config_repo }}"
+    dest: "{{ claude_home }}/.claude"
+    version: main
+    update: false
+  environment:
+    GH_TOKEN: "{{ claude_github_pat }}"

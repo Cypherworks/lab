@@ -1,0 +1,4 @@
+---
+# No role dependencies; the toolchain is self-contained. Human login
+# (Authentik LDAP + OpenBao SSH CA) via the sssd + ssh_ca_trust roles.
+dependencies: []
