@@ -7,7 +7,7 @@
     update_cache: true
     cache_valid_time: 3600
 
-# The box is reached over SSH; the cloud image had no server, so make sure it runs.
+# Reached over SSH; the cloud image shipped no server, so ensure sshd runs.
 - name: Enable and start sshd
   become: true
   ansible.builtin.systemd_service:
@@ -34,8 +34,7 @@
     state: present
     update_cache: true
 
-# Go from the upstream tarball; the distro's trails CI. `creates` makes it idempotent —
-# clear /usr/local/go to move to a new version.
+# Go from the upstream tarball (distro's trails CI); `creates` = idempotent.
 - name: Install Go {{ claude_go_version }}
   become: true
   ansible.builtin.unarchive:
@@ -72,8 +71,7 @@
     include: [actionlint]
     creates: /usr/local/bin/actionlint
 
-# checkov isn't packaged for Debian; pipx installs it isolated and links the entrypoint
-# into /usr/local/bin so it is on every user's PATH.
+# checkov isn't packaged for Debian; pipx installs it isolated, on the PATH.
 - name: Install the pipx tooling for all users
   become: true
   ansible.builtin.command:
@@ -106,8 +104,7 @@
     dest: /usr/local/bin/claude-session
     content: |
       #!/usr/bin/env bash
-      # Attach this user's persistent Claude Code tmux session, or create it.
-      exec tmux new-session -A -s claude
+      exec tmux new-session -A -s claude   # attach the session, or create
     owner: root
     group: root
     mode: "0755"

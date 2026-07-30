@@ -73,8 +73,7 @@
     state: directory
     mode: "0700"
 
-# OpenSSH rejects a private key without a trailing newline ("error in libcrypto"),
-# so normalise to exactly one regardless of how the SOPS value was chomped.
+# Trailing newline required; OpenSSH rejects a key without it (libcrypto).
 - name: Install the commit-signing key
   become: true
   become_user: "{{ claude_user }}"

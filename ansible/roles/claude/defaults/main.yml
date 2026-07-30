@@ -1,15 +1,12 @@
 ---
-# The AI-assisted development workbench toolchain. The pinned binary versions must be
-# confirmed against a current release before apply and kept level with the CI images,
-# so pre-push checks match CI.
+# The AI-assisted development workbench toolchain. Pin the binary versions to a
+# current release and keep them level with the CI images, so pre-push checks
+# match CI.
 claude_go_version: "1.25.12"
 claude_terraform_version: "1.11.4"
 claude_actionlint_version: "1.7.7"
 
-# From the distro. openssh-server makes the box SSH-accessible — the Incus cloud image
-# ships only the client, so without this there is no sshd for the ssh_ca_trust login.
-# ansible/ansible-lint/yamllint/shellcheck mirror the CI linters; nodejs + npm carry
-# Claude Code.
+# Distro packages; openssh-server (the cloud image ships only the client).
 claude_apt_packages:
   - openssh-server
   - git
@@ -29,21 +26,17 @@ claude_apt_packages:
   - ansible-lint
   - yamllint
 
-# Not packaged for Debian — installed isolated with pipx, linked into /usr/local/bin.
+# Not packaged for Debian; pipx installs it isolated in /usr/local/bin.
 claude_pipx_packages:
   - checkov
 
-# Claude Code, from npm. Auth is a CLAUDE_CODE_OAUTH_TOKEN (from SOPS) in the claude
-# user's env — the box is headless, so the browser OAuth flow isn't usable.
+# Claude Code, from npm. Auth = CLAUDE_CODE_OAUTH_TOKEN (SOPS), headless box.
 claude_code_package: "@anthropic-ai/claude-code"
 
-# --- workbench user ----------------------------------------------------------
-# A dedicated local user owns the repos, secrets, and Claude Code state. Humans SSH in
-# as their Authentik identity, then `sudo -iu claude` (the skel alias).
+# --- workbench user: owns the repos, secrets, and Claude Code state ---
 claude_user: claude
 claude_home: /home/claude
-# The SSH-login LDAP group (sssd role) allowed to become the claude user, NOPASSWD —
-# not the ssh-sudoers admin group.
+# SSH-login LDAP group allowed to become claude (NOPASSWD), not the admins.
 claude_operator_group: ssh-users
 # Git identity for the workbench's commits.
 claude_git_user_name: "Claude Workbench"
@@ -53,12 +46,10 @@ claude_repos:
   - { name: lab, url: "https://github.com/Cypherworks/lab.git" }
   - { name: lab-deploy, url: "https://github.com/Cypherworks/lab-deploy.git" }
 
-# Secrets, from group_vars/claude.sops.yml. Empty = the credential wiring is skipped.
+# Secrets, from group_vars/claude.sops.yml. Empty = credential wiring skipped.
 claude_github_pat: ""
 claude_oauth_token: ""
-# SSH private key git uses to sign commits (the repos' branch rules require signed
-# commits). Its public half must be registered on GitHub as a *signing* key. Empty =
-# signing disabled.
+# SSH signing key for commits; register the public half on GitHub as signing.
 claude_git_signing_key: ""
 
 # --- claude-config: cloned as ~/.claude (rules, hooks). Empty skips. ---
