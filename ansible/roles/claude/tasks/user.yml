@@ -54,6 +54,17 @@
     group: "{{ claude_user }}"
     mode: "0644"
 
+# ~/.claude.json is gitignored runtime; seed it, then Claude Code owns it.
+- name: Mark Claude Code onboarding complete so first launch skips theme + login
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.copy:
+    dest: "{{ claude_home }}/.claude.json"
+    content: |
+      {"hasCompletedOnboarding": true}
+    mode: "0600"
+    force: false
+
 - name: Ensure the claude user's .ssh directory exists
   become: true
   become_user: "{{ claude_user }}"
