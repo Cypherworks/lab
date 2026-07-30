@@ -30,6 +30,12 @@ headscale_selfjoin_user: ""
 # MagicDNS suffix — deliberately a tailnet-only subdomain so it never clashes with
 # the real Route53 zone.
 headscale_base_domain: ts.example.com
+# DNS servers pushed to clients (accept-dns); see headscale_dns_override_local.
+headscale_dns_nameservers:
+  - 1.1.1.1
+  - 1.0.0.1
+# Force accept-dns clients onto those servers, overriding local DNS.
+headscale_dns_override_local: false
 headscale_acme_email: admin@example.com
 
 # OIDC against Authentik — off until Authentik + the EC2 passthrough exist; then
