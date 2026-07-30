@@ -61,10 +61,5 @@ claude_oauth_token: ""
 # signing disabled.
 claude_git_signing_key: ""
 
-# --- rules + memory (claude-config) ------------------------------------------
-# Private repo holding the operator's shared Claude Code config: the global CLAUDE.md,
-# its local.md import, and the memory dir. Cloned into the claude user's home, linked
-# into ~/.claude, with autoMemoryDirectory pointed at its memory/. Empty = skip (the
-# box runs with no global rules/memory). Set in group_vars once the repo exists.
+# --- claude-config: cloned as ~/.claude (rules, hooks). Empty skips. ---
 claude_config_repo: ""
-claude_config_dir: "{{ claude_home }}/.claude-config"

@@ -1,45 +1,12 @@
 ---
-# Bring the operator's rules + memory onto the box from the private claude-config repo:
-# link the global CLAUDE.md + local.md into ~/.claude, and aim Claude Code's auto-memory
-# at the repo's memory/ so it is one stable, versioned location (not the path-slug dir).
-- name: Clone the claude-config repo
+# claude-config is the box's ~/.claude (rules, hooks, settings, statusline).
+- name: Clone claude-config into the claude user's ~/.claude
   become: true
   become_user: "{{ claude_user }}"
   ansible.builtin.git:
     repo: "{{ claude_config_repo }}"
-    dest: "{{ claude_config_dir }}"
+    dest: "{{ claude_home }}/.claude"
     version: main
     update: false
   environment:
     GH_TOKEN: "{{ claude_github_pat }}"
-
-- name: Ensure the claude user's ~/.claude exists
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.file:
-    path: "{{ claude_home }}/.claude"
-    state: directory
-    mode: "0700"
-
-- name: Link the global rules from claude-config into ~/.claude
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.file:
-    src: "{{ claude_config_dir }}/{{ item }}"
-    dest: "{{ claude_home }}/.claude/{{ item }}"
-    state: link
-    force: true
-  loop:
-    - CLAUDE.md
-    - local.md
-
-- name: Point Claude Code's auto-memory at the claude-config checkout
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.copy:
-    dest: "{{ claude_home }}/.claude/settings.json"
-    content: |
-      {
-        "autoMemoryDirectory": "~/.claude-config/memory"
-      }
-    mode: "0644"

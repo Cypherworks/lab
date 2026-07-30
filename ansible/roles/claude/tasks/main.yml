@@ -115,6 +115,6 @@
 - name: Set up the claude workbench user, credentials, and repos
   ansible.builtin.include_tasks: user.yml
 
-- name: Sync the operator's rules and memory from claude-config
+- name: Sync the operator's rules and hooks from claude-config
   ansible.builtin.include_tasks: config.yml
   when: claude_config_repo | length > 0
