@@ -37,9 +37,12 @@ tls_letsencrypt_challenge_type: TLS-ALPN-01
 dns:
   magic_dns: true
   base_domain: {{ headscale_base_domain }}
+  override_local_dns: {{ headscale_dns_override_local | string | lower }}
   nameservers:
     global:
-      - 1.1.1.1
+{% for ns in headscale_dns_nameservers %}
+      - {{ ns }}
+{% endfor %}
 {% if headscale_oidc_enabled %}
 
 # MFA + device identity happen here: enrolment redirects to Authentik (reached via
