@@ -31,4 +31,29 @@ check "Closes #5" "$(issue_ref_line 5 '')"  "closes -> Closes #N"
 check "Refs #7"   "$(issue_ref_line '' 7)"  "refs -> Refs #N"
 check ""          "$(issue_ref_line '' '')" "neither -> empty"
 
+# End-to-end via a stub gh: proves draft + labels + reviewer + issue link.
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+cat > "$tmp/gh" <<'STUB'
+#!/usr/bin/env bash
+if [ "$1 $2" = "label list" ]; then
+  printf 'documentation\narea:devsecops\np1\n'
+elif [ "$1 $2" = "pr create" ]; then
+  shift 2
+  printf '%s\n' "$@"
+fi
+STUB
+chmod +x "$tmp/gh"
+
+out=$(PATH="$tmp:$PATH" CW_CLAUDE_REVIEWER=reviewbot \
+  main --type documentation --area area:devsecops --priority p1 \
+       --title t --body b --closes 5)
+has() { printf '%s\n' "$out" | grep -qxF -- "$1"; }
+check yes "$(has --draft && echo yes || echo no)"        "create call is a draft"
+check yes "$(has documentation && echo yes || echo no)"  "type label passed"
+check yes "$(has area:devsecops && echo yes || echo no)" "area label passed"
+check yes "$(has p1 && echo yes || echo no)"             "priority label passed"
+check yes "$(has reviewbot && echo yes || echo no)"      "reviewer/assignee passed"
+check yes "$(printf '%s\n' "$out" | grep -qF 'Closes #5' && echo yes || echo no)" "body links issue"
+
 exit "$fail"

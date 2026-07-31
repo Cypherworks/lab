@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # cw-claude-pr — open a PR on the current repo with the required hygiene:
 # a validated type + area label (priority optional), a reviewer + assignee when
-# one is configured, and a linked issue when given. The Bash hook redirects a
-# raw `gh pr create` here, so PRs are always labelled and reviewed.
+# one is configured, a linked issue when given, and always as a DRAFT so nothing
+# half-built gets merged (mark it ready with `gh pr ready` when it's done). The
+# Bash hook redirects a raw `gh pr create` here, so this hygiene is unavoidable.
 #
 # Generic mechanism: no site data. The reviewer/assignee login comes from the
 # environment (CW_CLAUDE_REVIEWER), set by the consuming deploy repo. Labels are
@@ -61,7 +62,7 @@ main() {
   full_body="$body"
   [ -z "$ref_line" ] || full_body="${body}${body:+$'\n\n'}${ref_line}"
 
-  local args=(--base "$base" --title "$title" --body "$full_body"
+  local args=(--draft --base "$base" --title "$title" --body "$full_body"
               --label "$type" --label "$area")
   [ -z "$priority" ] || args+=(--label "$priority")
   if [ -n "${CW_CLAUDE_REVIEWER:-}" ]; then
