@@ -40,16 +40,21 @@ slug_from_url() { # <url> -> owner/repo
 # plus an add so each entry is a plain path. Runs git in the current repo; the unit
 # test drives it against a throwaway repo.
 changes_json() { # <base_ref> <head_ref> -> {additions:[...],deletions:[...]}
-  local base="$1" head="$2" status path contents adds='[]' dels='[]'
+  local base="$1" head="$2" status path adds='[]' dels='[]' cfile
+  # base64 contents can exceed a single argv element (MAX_ARG_STRLEN, 128 KiB),
+  # so read them from a file (--rawfile), never as a jq --arg.
+  cfile=$(mktemp)
   while IFS=$'\t' read -r status path; do
     if [ "$status" = D ]; then
       dels=$(jq -c --arg p "$path" '. + [{path:$p}]' <<<"$dels")
     else
-      contents=$(git show "$head:$path" | base64 -w0)
-      adds=$(jq -c --arg p "$path" --arg c "$contents" '. + [{path:$p,contents:$c}]' <<<"$adds")
+      git show "$head:$path" | base64 -w0 > "$cfile"
+      adds=$(jq -c --arg p "$path" --rawfile c "$cfile" '. + [{path:$p,contents:$c}]' <<<"$adds")
     fi
   done < <(git diff --no-renames --name-status "$base" "$head")
-  jq -cn --argjson a "$adds" --argjson d "$dels" '{additions:$a,deletions:$d}'
+  rm -f "$cfile"
+  # Feed the (possibly large) additions array via stdin, not --argjson.
+  jq -c --argjson d "$dels" '{additions:.,deletions:$d}' <<<"$adds"
 }
 
 token() { cw-claude-token; }
@@ -65,19 +70,23 @@ create_ref() { # <slug> <branch> <sha>
 
 # Call the mutation; echo the new commit oid, or fail on a GraphQL error.
 commit_on_branch() { # <slug> <branch> <expected_oid> <headline> <body> <changes>
-  local query resp
+  local query vars reqbody resp
   # $input is a GraphQL variable, not a shell expansion.
   # shellcheck disable=SC2016
   query='mutation($input: CreateCommitOnBranchInput!){ createCommitOnBranch(input:$input){ commit { oid } } }'
-  resp=$(curl -sS --fail-with-body \
+  # The fileChanges JSON can exceed a single argv element, so build the variables
+  # and the request body by piping through stdin (printf is a builtin), and hand
+  # the body to curl on stdin too. Nothing large is ever passed as an argument.
+  vars=$(printf '%s' "$6" | jq -c \
+    --arg repo "$1" --arg branch "$2" --arg oid "$3" --arg headline "$4" --arg mbody "$5" \
+    '{input:{branch:{repositoryNameWithOwner:$repo,branchName:$branch},
+             expectedHeadOid:$oid,message:{headline:$headline,body:$mbody},
+             fileChanges:.}}') || return 1
+  reqbody=$(printf '%s' "$vars" | jq -c --arg q "$query" '{query:$q,variables:.}') || return 1
+  resp=$(printf '%s' "$reqbody" | curl -sS --fail-with-body \
     -H "Authorization: Bearer $(token)" \
     -H "Content-Type: application/json" \
-    -d "$(jq -cn --arg q "$query" --argjson v "$(jq -cn \
-          --arg repo "$1" --arg branch "$2" --arg oid "$3" \
-          --arg headline "$4" --arg mbody "$5" --argjson changes "$6" \
-          '{input:{branch:{repositoryNameWithOwner:$repo,branchName:$branch},
-                   expectedHeadOid:$oid,message:{headline:$headline,body:$mbody},
-                   fileChanges:$changes}}')" '{query:$q,variables:$v}')" \
+    --data-binary @- \
     "$api_base/graphql") || return 1
   if jq -e '.errors' >/dev/null 2>&1 <<<"$resp"; then
     log "graphql error: $(jq -c '.errors' <<<"$resp")"

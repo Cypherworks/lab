@@ -50,4 +50,22 @@ check del.txt "$(jq -r '.deletions[0].path' <<<"$out")" "del.txt is the deletion
 added_content=$(jq -r '.additions[] | select(.path=="add.txt") | .contents' <<<"$out" | base64 -d)
 check hi "$(printf '%s' "$added_content" | tr -d '\n')" "addition contents base64 round-trip"
 
+# Regression: base64 over the 128 KiB single-arg limit must still shape.
+big=$(
+  d=$(mktemp -d)
+  cd "$d" || exit 1
+  git init -q .
+  git config user.email t@example.test
+  git config user.name test
+  git config commit.gpgsign false
+  git commit -q --allow-empty -m base
+  base=$(git rev-parse HEAD)
+  head -c 200000 /dev/zero | tr '\0' 'a' > big.txt
+  git add -A && git commit -qm head
+  changes_json "$base" "$(git rev-parse HEAD)"
+  rm -rf "$d"
+)
+check 1 "$(jq '.additions | length' <<<"$big")" "large file: one addition"
+check 200000 "$(jq -r '.additions[0].contents' <<<"$big" | base64 -d | wc -c)" "large file: 200 KB round-trip"
+
 exit "$fail"
