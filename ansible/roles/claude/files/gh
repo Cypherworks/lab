@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# gh wrapper: export a fresh GitHub App installation token before delegating to
+# the real gh, so a long-lived session never hits an expired GH_TOKEN. git is
+# already covered by its credential helper; this does the same for gh.
+# cw-claude-token caches and only re-mints near expiry, so the call is cheap.
+# The real gh is /usr/bin/gh (apt); override with CW_CLAUDE_REAL_GH.
+token="$(cw-claude-token)"
+export GH_TOKEN="$token"
+exec "${CW_CLAUDE_REAL_GH:-/usr/bin/gh}" "$@"
