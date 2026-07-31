@@ -9,6 +9,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 - Debian/Ubuntu on the target (systemd, `update-ca-certificates`).
 - Caddy already installed and running as a systemd service. In this library Caddy is provisioned by Terraform cloud-init on the incus instance (in the deploy repo); this role owns only the config and trust store, so a route change is an Ansible run plus reload, not an instance rebuild.
 - The Caddy binary must include the `dns.providers.route53` module (the template uses `tls { dns route53 }` for a wildcard cert), and Route53 credentials must be available to the running service.
+- Setting `caddy_l4_proxies` requires the `caddy-l4` plugin in the binary build; without it the rendered `layer4` block fails at runtime.
 - Ansible `ansible.builtin` only. No external collections.
 
 ## Role variables
@@ -20,9 +21,13 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `caddy_config_path` | `/etc/caddy/Caddyfile` | Where the Caddyfile is written. |
 | `caddy_binary` | `/usr/local/bin/caddy` | Caddy binary used for `validate` and `reload`. |
 | `caddy_routes` | `[]` | Site data. Declarative list of routes (see below). |
+| `caddy_authentik_upstreams` | `[]` | Authentik embedded-outpost upstreams (server on `:9000`) that back a route's `authentik_gated` forward-auth. Empty means gating is unavailable. |
+| `caddy_l4_proxies` | `[]` | Raw-TCP (layer4) passthrough proxies. Each entry renders a `:port` block proxying to `upstreams` with no TLS termination. |
 | `caddy_trusted_ca_certs` | `{}` | Site data. Map of name to PEM content, installed into the system trust store so routes can verify internal HTTPS upstreams. |
 
-Each `caddy_routes` entry: `name` (matcher id), `host` (FQDN), and either `upstream` (single backend) or `upstreams` (a list, load-balanced). Optional: `lb_policy` (defaults to `round_robin` when more than one upstream), `health_uri` and `health_interval` (default `10s`) for active health checks, `tls_skip_verify` for self-signed backends, `header_up` (a map of headers to set upstream), and `header_up_remove` (a list of headers to strip).
+Each `caddy_routes` entry: `name` (matcher id), `host` (FQDN), and either `upstream` (single backend) or `upstreams` (a list, load-balanced). Optional: `lb_policy` (defaults to `round_robin` when more than one upstream), `health_uri` and `health_interval` (default `10s`) for active health checks, `tls_skip_verify` for self-signed backends, `header_up` (a map of headers to set upstream), `header_up_remove` (a list of headers to strip), and `authentik_gated` (front the route with an Authentik login via `caddy_authentik_upstreams`).
+
+Each `caddy_l4_proxies` entry: `port`, `upstreams` (a list of `host:port`), `lb_policy` (default `round_robin`), and `health_interval` (default `5s`).
 
 ## Dependencies
 
@@ -31,7 +36,7 @@ None.
 ## What it does
 
 1. Installs each entry of `caddy_trusted_ca_certs` to `/usr/local/share/ca-certificates/<name>.crt` (`0644`). A change notifies both `Update CA trust` and `Restart Caddy`.
-2. Renders the Caddyfile to `caddy_config_path` (`0644`) from `Caddyfile.j2`: one `*.{{ caddy_domain }}` site with a Route53 DNS-01 wildcard cert, a `handle` block per route, and a default `respond "lab ingress" 200`. Notifies `Reload Caddy`.
+2. Renders the Caddyfile to `caddy_config_path` (`0644`) from `Caddyfile.j2`: one `*.{{ caddy_domain }}` site with a Route53 DNS-01 wildcard cert, a `handle` block per route, and a default `respond "lab ingress" 200`. When `caddy_l4_proxies` is set, a global `layer4` block renders each raw-TCP passthrough (no TLS termination, so mutual-TLS backends and cert-pinning clients survive end to end). Notifies `Reload Caddy`.
 3. Runs `caddy validate --adapter caddyfile` against the rendered file (`changed_when: false`). This gates the change: a bad config fails the play before any handler runs, so Caddy keeps serving the previous config.
 
 Handlers, ordered deliberately:

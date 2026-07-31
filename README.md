@@ -14,7 +14,7 @@ The code was written for a defence/government-oriented home lab and follows secu
 ## Layout
 
 ```
-ansible/roles/     26 roles — OS baseline, DNS, ingress, HA data tier, virtualisation, identity, secrets, observability
+ansible/roles/     34 roles — OS baseline, DNS, ingress, HA data tier, virtualisation, identity, secrets, observability, CI/dev workbench, backup, Pi hardware
 terraform/modules/ 5 UniFi network modules — networks, firewall, switch ports, port forwards, WLANs
 scripts/           host imaging and operational helpers
 ```
@@ -33,6 +33,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 | [`ssh_ca_trust`](ansible/roles/ssh_ca_trust) | Trust an SSH certificate authority for user certificates via an additive sshd drop-in. |
 | [`sssd`](ansible/roles/sssd) | SSSD LDAP client against an Authentik LDAP outpost; identity by default, optional PAM login. |
 | [`tailscale`](ansible/roles/tailscale) | Join a host to a Headscale/Tailscale overlay. |
+| [`oob_tunnel`](ansible/roles/oob_tunnel) | Break-glass out-of-band access: a persistent outbound reverse SSH tunnel (autossh) to a relay's loopback, independent of the primary overlay. |
 
 ### DNS, network, and ingress
 
@@ -59,19 +60,40 @@ Each role has its own README with variables, dependencies, and an example. Roles
 | Role | Purpose |
 |------|---------|
 | [`incus`](ansible/roles/incus) | Incus with web UI, per-VLAN bridges, dedicated storage, and optional clustering. |
+| [`proxmox`](ansible/roles/proxmox) | Configure a standalone Proxmox VE host (PVE 9.x / Debian 13) on top of a stock install. |
 | [`openbao`](ansible/roles/openbao) | OpenBao secrets manager — PKI, AWS-KMS auto-unseal, OIDC, SSH CA, S3 snapshots. |
-| [`authentik`](ansible/roles/authentik) | Authentik identity provider, standalone all-in-one deployment. |
 | [`authentik_app`](ansible/roles/authentik_app) | Authentik app tier against an external HA database, with blueprint integrations and an LDAP outpost. |
 
-### Observability and applications
+### Observability and logging
 
 | Role | Purpose |
 |------|---------|
-| [`monitoring`](ansible/roles/monitoring) | VictoriaMetrics, vmalert, Alertmanager, ntfy, Grafana, and exporters on one host. |
+| [`monitoring`](ansible/roles/monitoring) | VictoriaMetrics, vmalert, Alertmanager, ntfy, Grafana, VictoriaLogs, and exporters on one host. |
 | [`node_exporter`](ansible/roles/node_exporter) | Prometheus node_exporter on bare-metal hosts. |
+| [`vector`](ansible/roles/vector) | Per-host log-shipping agent: ships the systemd journal to VictoriaLogs over the Elasticsearch bulk endpoint. |
+
+### Applications and endpoints
+
+| Role | Purpose |
+|------|---------|
 | [`unifi_controller`](ansible/roles/unifi_controller) | Self-hosted UniFi Network controller and MongoDB. |
 | [`vaultwarden`](ansible/roles/vaultwarden) | Vaultwarden password manager. |
 | [`speedtest`](ansible/roles/speedtest) | Speedtest Tracker with a Prometheus endpoint. |
+| [`kiosk`](ansible/roles/kiosk) | Turn a headless Ubuntu host into a wall-mounted fullscreen Chromium kiosk (X11), managed as a systemd service. |
+| [`wol`](ansible/roles/wol) | Wake-on-LAN web app for powering on burst hosts, behind the ingress. |
+
+### CI and developer workbench
+
+| Role | Purpose |
+|------|---------|
+| [`claude`](ansible/roles/claude) | AI-assisted development workbench: the CI toolchain (Go, Node, Terraform, Ansible, linters, gh), Claude Code, tmux, and the cw-claude GitHub App helper scripts. |
+| [`github_runner`](ansible/roles/github_runner) | Self-hosted, ephemeral GitHub Actions runner as a container on a Docker host; registers against a single repository or a whole organisation. |
+
+### Backup
+
+| Role | Purpose |
+|------|---------|
+| [`s3_backup`](ansible/roles/s3_backup) | Generic scheduled backup to S3: a systemd oneshot + timer that runs a caller-supplied dump command and uploads to a bucket. |
 
 ### Raspberry Pi hardware
 
@@ -134,6 +156,10 @@ Pin `ref` to an immutable commit or tag, never a moving branch.
 - Terraform `>= 1.10`
 - SOPS with an age key for encrypted variables
 - For host imaging: macOS with `xorriso` (x86) and admin rights to write removable media
+
+## Authorship
+
+The roles, modules, and documentation in this repository were designed and written by Claude (Anthropic's Claude Code), maintained under human review and developed alongside the private deployment that consumes them. Changes land through reviewed pull requests.
 
 ## Security posture
 

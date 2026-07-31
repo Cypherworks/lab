@@ -7,7 +7,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 ## Requirements
 
 - Debian/Ubuntu on the target (apt, systemd). Installs from a downloaded `.deb`, which creates the `headscale` service and user.
-- Ansible `ansible.builtin` only. No external collections.
+- Ansible `ansible.builtin` plus `ansible.posix` (the metrics non-local-bind step uses `ansible.posix.sysctl`).
 - Outbound HTTPS to `github.com` to fetch the pinned release. Defaults ship an `arm64` package; set `headscale_arch: amd64` for x86.
 - Reachability for a TLS-ALPN-01 cert on 443 (standalone) or an SNI passthrough front (the `sni_router` role) when `headscale_listen_addr` is a local port.
 
@@ -26,6 +26,8 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_metrics_listen_addr` | `127.0.0.1:9090` | Prometheus `/metrics` bind. Override to the host's tailnet IP to scrape over the overlay. Never public. |
 | `headscale_metrics_nonlocal_bind` | `false` | Set `true` when `headscale_metrics_listen_addr` is this host's own tailnet IP: that address only exists after the host joins the overlay Headscale serves, so it must be allowed to bind before the address is up. See notes. |
 | `headscale_base_domain` | `ts.example.com` | MagicDNS suffix; a tailnet-only subdomain so it never clashes with the real Route53 zone. |
+| `headscale_dns_nameservers` | `["1.1.1.1", "1.0.0.1"]` | DNS servers pushed to `accept-dns` clients. |
+| `headscale_dns_override_local` | `false` | Force `accept-dns` clients onto those servers, overriding local DNS. |
 | `headscale_acme_email` | `admin@example.com` | ACME contact email. |
 | `headscale_oidc_enabled` | `false` | Whether to render the OIDC block. |
 | `headscale_oidc_only_start_if_available` | `false` | Deliberately false. See notes on the boot deadlock. |
@@ -34,6 +36,8 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_oidc_client_secret` | `""` | Required when OIDC enabled, from SOPS. OIDC client secret. |
 | `headscale_oidc_allowed_groups` | `["lab-admins"]` | Authentik groups permitted to obtain the lab routes. |
 | `headscale_oidc_scopes` | `["openid", "profile", "email"]` | Requested scopes. Deliberately excludes `groups`. See notes. |
+| `headscale_oidc_watchdog_on_boot` | `2min` | Delay after boot before the OIDC self-heal watchdog timer first fires. |
+| `headscale_oidc_watchdog_interval` | `5min` | Interval between OIDC self-heal watchdog runs. |
 | `headscale_selfjoin_user` | `""` | When set, the role ensures this Headscale user exists and resolves its numeric id into `headscale_selfjoin_user_id`, so the host can mint its own pre-auth key and self-join. Empty on standalone control planes. |
 
 ## Dependencies
@@ -43,11 +47,12 @@ None.
 ## What it does
 
 1. Downloads the pinned `.deb` to `/tmp/{{ headscale_deb_name }}` (`0644`), verified against `headscale_checksum`.
-2. Installs it with apt, which creates the `headscale` systemd service and the `headscale` group.
+2. Installs it with apt, which creates the `headscale` systemd service and the `headscale` group, then holds the package (`dpkg_selections`) so unattended-upgrades can never change or autoremove it.
 3. Renders `/etc/headscale/config.yaml` (`0640`, group `headscale`) from `config.yaml.j2`: `server_url`, listen/metrics/gRPC addresses, IPv4/IPv6 tailnet prefixes, a self-hosted embedded DERP relay (region 999, STUN on `0.0.0.0:3478`, no public Tailscale DERP), a sqlite database, a TLS-ALPN-01 Let's Encrypt cert on 443, MagicDNS, and (only when `headscale_oidc_enabled`) the OIDC block.
 4. When `headscale_metrics_nonlocal_bind`, sets `net.ipv4.ip_nonlocal_bind=1` so the metrics address can be bound before it exists on an interface.
 5. Probes the listen port and enables the service, restarting it when the config changed, the sysctl changed, or nothing is listening, otherwise just ensuring it is started; then `wait_for`s the port.
 6. When `headscale_selfjoin_user` is set, ensures that user exists (tolerating "already exists") and resolves its numeric id into `headscale_selfjoin_user_id`.
+7. When `headscale_oidc_enabled`, installs the OIDC self-heal watchdog (`headscale-oidc-watchdog.sh` plus its `.service`/`.timer` units) and enables the timer. Headscale loads OIDC discovery only at startup, so an issuer unreachable then leaves it in CLI-only enrolment; the watchdog restarts Headscale once the issuer is reachable. A one-shot heal runs on install when the script or units changed, so a currently-degraded server recovers without waiting for the first timer interval.
 
 Handlers: none — the running service is reconciled to the on-disk config directly in tasks (see Notes).
 

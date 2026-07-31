@@ -42,7 +42,7 @@ claude_operator_group: ssh-users
 # Git identity for the workbench's commits.
 claude_git_user_name: "Claude Workbench"
 claude_git_user_email: "claude@cypherworks.co.uk"
-# Repos cloned into ~/git/cw (private — pulled with the PAT).
+# Repos cloned into ~/git/cw (private — pulled with the cw-claude App token).
 claude_repos:
   - { name: lab, url: "https://github.com/Cypherworks/lab.git" }
   - { name: lab-deploy, url: "https://github.com/Cypherworks/lab-deploy.git" }

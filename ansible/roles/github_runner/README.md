@@ -33,7 +33,12 @@ container actions. This keeps the runner unprivileged.
 | `github_runner_org` | `""` | Org name when scope is `org`. |
 | `github_runner_data_dir` | `/opt/github-runner` | Compose + work root. |
 | `github_runner_ephemeral` | `true` | De-register after each job. |
-| `github_runner_docker_cli` | `omit` | Synology docker path if not on PATH. |
+| `github_runner_pull` | `always` | Re-pull the image each run so a deprecated runner version self-heals. |
+| `github_runner_security_opt` | `[]` | Extra container `security_opt` entries; empty keeps the default seccomp profile. |
+
+`github_runner_docker_cli` has no default: it is unset in the role and falls back to
+`default(omit)` at the compose step, so `docker` is found on PATH. Set it to the Synology
+docker path only when `docker` is not on the ansible user's PATH.
 
 ## Prerequisites
 

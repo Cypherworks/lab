@@ -1,7 +1,8 @@
 ---
 # Authentik app tier: server + worker only (the HA Postgres/Redis data tier is
-# external, reached via the node-local HAProxy frontends at 127.0.0.1). One app
-# node per cluster member; Caddy load-balances the servers.
+# external, reached via the node-local HAProxy frontends on the node's lab IP,
+# not loopback, because the containers run on the compose bridge, not host
+# networking). One app node per member; Caddy load-balances the servers.
 
 # PIN to a confirmed current stable before apply — verify against
 # https://github.com/goauthentik/authentik/releases (the registry tag must exist).
