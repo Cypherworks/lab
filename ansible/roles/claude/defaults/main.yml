@@ -53,6 +53,8 @@ claude_github_app_id: ""
 claude_github_app_private_key: ""
 # Where the app private key is written on the box (0600), for cw-claude-token.
 claude_github_app_key_path: "{{ claude_home }}/.config/cw-claude/app.pem"
+# PR reviewer + assignee login for cw-claude-pr (empty = don't set a reviewer).
+claude_github_reviewer: ""
 
 # --- claude-config: cloned as ~/.claude (rules, hooks). Empty skips. ---
 claude_config_repo: ""

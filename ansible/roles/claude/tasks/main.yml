@@ -121,6 +121,7 @@
     - cw-claude-token
     - cw-claude-credential
     - cw-claude-push
+    - cw-claude-pr
 
 - name: Set up the claude workbench user, credentials, and repos
   ansible.builtin.include_tasks: user.yml

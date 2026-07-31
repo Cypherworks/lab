@@ -19,9 +19,9 @@ check() { # <expected> <actual> <label>
 }
 
 # slug_from_url: https/ssh, with and without .git.
-check Cypherworks/lab "$(slug_from_url https://github.com/Cypherworks/lab.git)" "https + .git"
-check Cypherworks/lab "$(slug_from_url https://github.com/Cypherworks/lab)"     "https no .git"
-check Cypherworks/lab "$(slug_from_url git@github.com:Cypherworks/lab.git)"     "ssh form"
+check octo-org/widget "$(slug_from_url https://github.com/octo-org/widget.git)" "https + .git"
+check octo-org/widget "$(slug_from_url https://github.com/octo-org/widget)"     "https no .git"
+check octo-org/widget "$(slug_from_url git@github.com:octo-org/widget.git)"     "ssh form"
 
 # changes_json: build a real repo, take a base commit, then add/modify/delete.
 tmp=$(mktemp -d)
