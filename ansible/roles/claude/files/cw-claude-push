@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# cw-claude-push — land the current branch as a Verified cw-claude[bot] commit.
+#
+# WHY: the repos' branch rules require signed commits, and a GitHub App/bot cannot
+# own a signing key. GitHub signs commits created through its API, so this recreates
+# the local branch's changes as one commit via the createCommitOnBranch GraphQL
+# mutation. The commit is authored by the app installation token, so GitHub marks it
+# Verified as cw-claude[bot]. The local branch is then reset to the result.
+#
+# `git commit` is unchanged, so every local hook and pre-commit still runs and
+# validates the message; only the push path changes. Run this instead of git push.
+#
+# One commit per invocation: the diff between the remote branch head (or the fork
+# point from main, for a new branch) and local HEAD. Merges squash anyway.
+#
+# LIMITATION: createCommitOnBranch's FileAddition is path + base64 contents only,
+# with no file mode, so files it writes are committed non-executable (0644). The
+# estate sets executable modes at deploy (ansible), so this is cosmetic here.
+#
+# Auth is the installation token from cw-claude-token. CW_CLAUDE_API overrides the
+# API base (default https://api.github.com).
+set -uo pipefail
+
+log() { echo "cw-claude-push: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+api_base="${CW_CLAUDE_API:-https://api.github.com}"
+
+# Pure: owner/repo from a github remote URL (https or ssh form, with/without .git).
+slug_from_url() { # <url> -> owner/repo
+  local u="$1"
+  u="${u%.git}"
+  u="${u#https://github.com/}"
+  u="${u#git@github.com:}"
+  printf '%s' "$u"
+}
+
+# The createCommitOnBranch fileChanges object for the diff base..head: additions
+# carry base64 contents, deletions carry the path. Renames are split into a delete
+# plus an add so each entry is a plain path. Runs git in the current repo; the unit
+# test drives it against a throwaway repo.
+changes_json() { # <base_ref> <head_ref> -> {additions:[...],deletions:[...]}
+  local base="$1" head="$2" status path contents adds='[]' dels='[]'
+  while IFS=$'\t' read -r status path; do
+    if [ "$status" = D ]; then
+      dels=$(jq -c --arg p "$path" '. + [{path:$p}]' <<<"$dels")
+    else
+      contents=$(git show "$head:$path" | base64 -w0)
+      adds=$(jq -c --arg p "$path" --arg c "$contents" '. + [{path:$p,contents:$c}]' <<<"$adds")
+    fi
+  done < <(git diff --no-renames --name-status "$base" "$head")
+  jq -cn --argjson a "$adds" --argjson d "$dels" '{additions:$a,deletions:$d}'
+}
+
+token() { cw-claude-token; }
+
+# Create the remote branch ref at <sha> (for a branch that doesn't exist yet).
+create_ref() { # <slug> <branch> <sha>
+  curl -sS --fail-with-body -X POST \
+    -H "Authorization: Bearer $(token)" \
+    -H "Accept: application/vnd.github+json" \
+    -d "$(jq -cn --arg r "refs/heads/$2" --arg s "$3" '{ref:$r,sha:$s}')" \
+    "$api_base/repos/$1/git/refs" >/dev/null
+}
+
+# Call the mutation; echo the new commit oid, or fail on a GraphQL error.
+commit_on_branch() { # <slug> <branch> <expected_oid> <headline> <body> <changes>
+  local query resp
+  # $input is a GraphQL variable, not a shell expansion.
+  # shellcheck disable=SC2016
+  query='mutation($input: CreateCommitOnBranchInput!){ createCommitOnBranch(input:$input){ commit { oid } } }'
+  resp=$(curl -sS --fail-with-body \
+    -H "Authorization: Bearer $(token)" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -cn --arg q "$query" --argjson v "$(jq -cn \
+          --arg repo "$1" --arg branch "$2" --arg oid "$3" \
+          --arg headline "$4" --arg mbody "$5" --argjson changes "$6" \
+          '{input:{branch:{repositoryNameWithOwner:$repo,branchName:$branch},
+                   expectedHeadOid:$oid,message:{headline:$headline,body:$mbody},
+                   fileChanges:$changes}}')" '{query:$q,variables:$v}')" \
+    "$api_base/graphql") || return 1
+  if jq -e '.errors' >/dev/null 2>&1 <<<"$resp"; then
+    log "graphql error: $(jq -c '.errors' <<<"$resp")"
+    return 1
+  fi
+  jq -re '.data.createCommitOnBranch.commit.oid' <<<"$resp"
+}
+
+main() {
+  local branch slug base head changes headline body new_oid
+  branch=$(git rev-parse --abbrev-ref HEAD)
+  [ "$branch" != HEAD ] || die "detached HEAD; checkout a branch first"
+  slug=$(slug_from_url "$(git remote get-url origin)") || die "no origin remote"
+  git fetch -q origin || die "git fetch failed"
+  head=$(git rev-parse HEAD)
+
+  if base=$(git rev-parse -q --verify "refs/remotes/origin/$branch" 2>/dev/null); then
+    :
+  else
+    base=$(git merge-base "refs/remotes/origin/main" HEAD) || die "no merge-base with origin/main"
+    create_ref "$slug" "$branch" "$base" || die "could not create remote branch $branch"
+  fi
+
+  [ "$base" != "$head" ] || { log "nothing to push"; return 0; }
+
+  changes=$(changes_json "$base" "$head")
+  headline=$(git log -1 --format=%s HEAD)
+  body=$(git log -1 --format=%b HEAD)
+  new_oid=$(commit_on_branch "$slug" "$branch" "$base" "$headline" "$body" "$changes") \
+    || die "createCommitOnBranch failed"
+
+  git fetch -q origin "$branch" || die "post-commit fetch failed"
+  git reset -q --hard "$new_oid" || die "could not resync local branch to $new_oid"
+  log "landed $new_oid on $slug@$branch (Verified as cw-claude[bot])"
+}
+
+# Do not run main when the file is sourced (the unit test sources it).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
