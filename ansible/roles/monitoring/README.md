@@ -1,6 +1,6 @@
 # monitoring
 
-Deploys the lab observability stack (VictoriaMetrics, vmalert, Alertmanager to ntfy, Grafana, plus exporters and a go2rtc CCTV restream) on one Incus host via docker compose.
+Deploys the lab observability stack (VictoriaMetrics, VictoriaLogs, vmalert, Alertmanager to ntfy, Grafana, plus exporters and a go2rtc CCTV restream) on one Incus host via docker compose.
 
 Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a generic, parameterised role. Supply site data (IPs, secrets, hostnames) from your inventory and SOPS, not from the role.
 
@@ -25,21 +25,21 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_vmalert_image` | `victoriametrics/vmalert:v1.102.1` | vmalert (rule evaluation). |
 | `monitoring_alertmanager_image` | `prom/alertmanager:v0.27.0` | Alertmanager. |
 | `monitoring_grafana_image` | `grafana/grafana:11.2.0` | Grafana. |
-| `monitoring_ntfy_image` | `binwiederhier/ntfy:v2.11.0` | Self-hosted ntfy. |
+| `monitoring_ntfy_image` | `binwiederhier/ntfy:v2.26.0` | Self-hosted ntfy. |
 | `monitoring_redis_exporter_image` | `oliver006/redis_exporter:v1.62.0` | Redis exporter. |
 | `monitoring_blackbox_image` | `prom/blackbox-exporter:v0.25.0` | Blackbox exporter (https probes). |
 | `monitoring_snmp_exporter_image` | `prom/snmp-exporter:v0.26.0` | SNMP exporter. |
 | `monitoring_go2rtc_image` | `alexxit/go2rtc:1.9.14` | go2rtc CCTV restream. |
+| `monitoring_victorialogs_image` | `victoriametrics/victoria-logs:v1.51.0` | VictoriaLogs (log storage + query). |
 
-### Retention, scrape, and kiosk
+### Retention and scrape
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `monitoring_retention` | `"30d"` | Metric retention. Modest, given constrained storage. |
+| `monitoring_logs_retention` | `"30d"` | VictoriaLogs retention, on the same constrained budget. |
 | `monitoring_scrape_interval` | `"30s"` | Global scrape interval. |
-| `monitoring_kiosk_playlist_name` | `"Lab Kiosk"` | Name of the Grafana kiosk playlist created via the API. |
-| `monitoring_kiosk_tag` | `"kiosk"` | Dashboards carrying this tag are rotated in the kiosk playlist. |
-| `monitoring_kiosk_rotate_interval` | `"30s"` | Playlist rotation interval. |
+| `monitoring_grafana_anonymous_enabled` | `false` | Anonymous view-only Grafana access (for the wall kiosk); admin/edit stays behind Authentik OIDC. |
 
 ### Scrape targets (from inventory, no IPs in the role)
 
@@ -55,6 +55,9 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
 | `monitoring_blackbox_targets` | `[]` | Plain list of https URLs for cert-expiry probes; the URL becomes the `instance` label. |
 | `monitoring_snmp_targets` | `[]` | SNMPv3 targets (the Synology NAS): `{target: "ip:161", instance}`. |
+| `monitoring_incus_metrics_targets` | `[]` | Incus cluster `/1.0/metrics` over mTLS: `{target: "member-ip:8444", instance}`. Empty omits the job. |
+| `monitoring_incus_metrics_cert` | `""` | Metrics scraper client cert (PEM); the TF-generated keypair, mounted as a docker secret. |
+| `monitoring_incus_metrics_key` | `""` | Metrics scraper client key (PEM); mounted as a docker secret. |
 | `monitoring_headscale_target` | `""` | Headscale control-plane `/metrics` over the overlay (`tailnet-ip:9090`). |
 | `monitoring_hass_target` | `""` | Home Assistant Prometheus scrape via Caddy (`host:443`). |
 | `monitoring_hass_token` | `""` | HASS long-lived token (SOPS); injected via container env and expanded by vmsingle, never written to the on-disk scrape config. |
@@ -87,6 +90,10 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 |----------|---------|-------------|
 | `monitoring_ntfy_base_url` | `""` | Public base URL ntfy serves on. |
 | `monitoring_ntfy_topic` | `"lab-alerts"` | Alert topic. |
+| `monitoring_ntfy_upstream_base_url` | `"https://ntfy.sh"` | Upstream ntfy that relays the wake-up push (APNS/FCM) so the phone app gets instant delivery; only a poll trigger leaves the lab. Empty disables. |
+| `monitoring_ntfy_alert_priority` | `"high"` | Alert notification priority (high = sound/vibrate). |
+| `monitoring_ntfy_alert_tags` | `"warning"` | Alert notification tags. |
+| `monitoring_alertmanager_repeat_interval` | `"24h"` | How often Alertmanager re-notifies a still-firing alert. |
 | `monitoring_ntfy_user` | `""` | Human username (web UI + phone app), from the deploy. |
 | `monitoring_ntfy_alertmanager_password` | `""` | SOPS — the alertmanager publisher user. |
 | `monitoring_ntfy_user_password` | `""` | SOPS — the human subscriber user. |
@@ -107,11 +114,18 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `monitoring_go2rtc_api_port` | `1984` | go2rtc HTTP port (MSE/HLS/UI). |
+| `monitoring_go2rtc_video_transcode` | `false` | Transcode camera video to H.264 (browser MSE needs it for H.265 cameras); software transcode, costs CPU on the host. |
 | `monitoring_go2rtc_front_url` | `""` | SOPS — front camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_garage_carport_url` | `""` | SOPS — garage/carport camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_username` | `""` | Optional go2rtc Basic auth username. Empty leaves auth off. |
 | `monitoring_go2rtc_password` | `""` | Optional go2rtc Basic auth password. |
 | `monitoring_go2rtc_public_url` | `""` | Browser-facing go2rtc base URL (Caddy front) the Grafana CCTV iframe points at. |
+
+### Power sensors (Home Assistant)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `monitoring_power_sensors` | *map of nine `""` keys* | HASS power/energy sensor entity IDs for the lab-overview power matrix (now W plus day/month kWh, per location: rack, desk, office). Site-specific; empty leaves those blocks with no data. |
 
 ## Dependencies
 
@@ -119,12 +133,9 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 
 ## What it does
 
-Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config, ntfy config, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the dashboard JSON. Secrets (the `.env`, and the HASS token file at mode `0600`) are rendered separately. It then brings the stack up with `docker_compose_v2`.
+Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config, ntfy config, the ntfy-alert template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the dashboard JSON. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`) so Grafana stops serving them. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. It then brings the stack up with `docker_compose_v2`.
 
-After the stack is up it runs two API-driven, idempotent provisioning steps:
-
-- ntfy starts deny-all, so the role waits for it, then creates the `alertmanager` (write-only) and human subscriber (read-only) users and sets their topic ACLs. Re-adding an existing user is tolerated.
-- The Grafana file provisioner can't create playlists, so the role waits for Grafana, checks whether the kiosk playlist exists, and creates it via the API if not. The playlist rotates every dashboard tagged `monitoring_kiosk_tag`, so new dashboards join just by carrying the tag.
+After the stack is up it runs one API-driven, idempotent provisioning step: ntfy starts deny-all, so the role waits for it, then creates the `alertmanager` (write-only) and human subscriber (read-only) users and sets their topic ACLs. Re-adding an existing user is tolerated.
 
 vmsingle is used instead of Prometheus for lighter storage and better compaction on the resource- and heat-constrained rig; it is PromQL-compatible, so Grafana treats it as a Prometheus datasource. Any config, env, or compose change restarts the stack.
 

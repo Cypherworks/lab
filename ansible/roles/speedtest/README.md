@@ -21,6 +21,10 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `speedtest_app_url` | `""` | Public URL Caddy serves the app on; used to build absolute links. Set by the deploy. |
 | `speedtest_schedule` | `"0 */6 * * *"` | Cron schedule for running Ookla tests. Default is every 6 hours. |
 | `speedtest_timezone` | `"Etc/UTC"` | Container timezone. |
+| `speedtest_default_chart_range` | `"24h"` | Default dashboard time range: `24h`, `week`, or `month`. |
+| `speedtest_public_dashboard` | `false` | Show the results dashboard to unauthenticated guests (meant for use behind a Caddy + Authentik access gate). |
+| `speedtest_prometheus_enabled` | `false` | Enable the app's Prometheus export (set idempotently in the app's settings, since upstream has no env var). Off by default. |
+| `speedtest_prometheus_allowed_ips` | `[]` | IPs allow-listed to reach the Prometheus endpoint when it is enabled. |
 | `speedtest_puid` | `1000` | UID the LinuxServer image drops to. |
 | `speedtest_pgid` | `1000` | GID the LinuxServer image drops to. |
 | `speedtest_app_key` | `""` | Laravel `APP_KEY` that encrypts stored data. A secret from SOPS; generate with `openssl rand -base64 32` prefixed with `base64:`. |
@@ -31,7 +35,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 ## What it does
 
-Creates `speedtest_compose_dir`, renders the `.env` (carrying the `APP_KEY` secret, mode `0600`) and the compose file, then brings the stack up with `docker_compose_v2`. Speedtest Tracker periodically runs Ookla speedtests and graphs upload, download, and latency over time. It is SQLite-backed (a single `/config` volume), so it carries no dependency on the lab's Patroni data tier. It exposes a native `/prometheus` endpoint for scraping.
+Creates `speedtest_compose_dir`, renders the `.env` (carrying the `APP_KEY` secret, mode `0600`) and the compose file, then brings the stack up with `docker_compose_v2`. Speedtest Tracker periodically runs Ookla speedtests and graphs upload, download, and latency over time. It is SQLite-backed (a single `/config` volume), so it carries no dependency on the lab's Patroni data tier.
+
+The app can expose a native `/prometheus` endpoint, but it is off by default. Speedtest Tracker only exposes this as a UI setting (no env var, upstream #2500), so when `speedtest_prometheus_enabled` is set the role turns it on idempotently in the app's settings and allow-lists the scraper IPs in `speedtest_prometheus_allowed_ips`.
 
 Changes to the `.env` or the compose file restart the stack.
 
@@ -48,4 +54,4 @@ Changes to the `.env` or the compose file restart the stack.
 
 ## Notes
 
-The native `/prometheus` endpoint (on the app's HTTP port) is what the `monitoring` role scrapes via `monitoring_speedtest_targets`.
+When `speedtest_prometheus_enabled` is set, the native `/prometheus` endpoint (on the app's HTTP port) is what the `monitoring` role scrapes via `monitoring_speedtest_targets`.

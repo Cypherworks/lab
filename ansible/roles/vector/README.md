@@ -10,7 +10,9 @@ endpoint from your inventory; the role holds no site data.
 
 ## How it works
 
-The `.deb` ships the `vector` user and a systemd unit. The role adds the `vector` user to
+The `.deb` ships the `vector` user and a systemd unit. The role holds the Vector package
+(`dpkg_selections … selection: hold`) so unattended-upgrades can't change or autoremove it,
+adds the `vector` user to
 `systemd-journal` so it can read the journal, renders a single config to
 `/etc/vector/vector.yaml`, and pins the service to that file with a systemd drop-in (so the
 packaged default config can't also load). Logs are grouped into VictoriaLogs streams by
