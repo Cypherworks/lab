@@ -33,4 +33,5 @@ Set either `kiosk_url`, or `kiosk_grafana_url` + `kiosk_grafana_playlist_name`
 
 The output name (`kiosk_x_output`) may need tuning to the monitor — check
 `xrandr` on the box if the screen is blank or wrong-sized. Runs as a local
-autologin user, independent of any SSSD/LDAP login on the host.
+user via the `kiosk.service` systemd unit (no getty autologin; the console getty
+is masked), independent of any SSSD/LDAP login on the host.

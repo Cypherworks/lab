@@ -32,7 +32,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `sssd_auto_private_groups` | `hybrid` | Synthesize a user-private primary group when `uid == gid` and no real group owns that gid. |
 | `sssd_enable_pam_auth` | `false` | Opt-in switch for PAM login/sudo. Off means identity-only (NSS). |
 | `sssd_ssh_access_group` | `ssh-users` | LDAP group whose members may log in (PAM access filter on `memberOf`). |
-| `sssd_sudo_group` | `ssh-sudoers` | LDAP group granted password-authenticated sudo; empty installs no sudo rule. |
+| `sssd_sudo_group` | `ssh-sudoers` | LDAP group granted passwordless (`NOPASSWD`) sudo; empty installs no sudo rule. |
 | `sssd_pam_profiles` | `[sss, mkhomedir]` | PAM profiles enabled via `pam-auth-update` when auth is on. |
 | `sssd_local_exempt_users` | `[root, ansible]` | Accounts SSSD must never resolve from LDAP; kept purely local. |
 

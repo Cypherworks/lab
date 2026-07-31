@@ -16,10 +16,11 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `vaultwarden_compose_dir` | `/opt/vaultwarden` | Host directory for the compose file, env file, and the SQLite `/data` volume. |
-| `vaultwarden_image` | `vaultwarden/server:1.36.0` | Pinned container image. Confirm the registry tag exists before apply. |
+| `vaultwarden_image` | `vaultwarden/server:1.37.1` | Pinned container image. Confirm the registry tag exists before apply. |
 | `vaultwarden_http_port` | `8080` | Host port mapped to the container's HTTP (`:80`); Caddy reverse-proxies to this and carries the websocket upgrade for live sync. |
 | `vaultwarden_domain` | `""` | Public URL Caddy serves it on. Required for WebAuthn/2FA, attachments, and links. Set by the deploy. |
 | `vaultwarden_signups_allowed` | `false` | Whether public signups are open. Off by default. |
+| `vaultwarden_signups_domains_whitelist` | `""` | Comma-separated email domains signups are restricted to (rendered as `SIGNUPS_DOMAINS_WHITELIST`). Empty means no restriction. |
 | `vaultwarden_admin_token` | `""` | Admin panel token, an argon2 PHC string from SOPS. Generate with `docker run --rm -it vaultwarden/server /vaultwarden hash`. Empty disables the admin panel entirely. |
 
 ## Dependencies

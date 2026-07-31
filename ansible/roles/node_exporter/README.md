@@ -25,6 +25,8 @@ None.
 
 Installs the Debian `prometheus-node-exporter` package (which ships a hardened systemd unit), writes `/etc/default/prometheus-node-exporter` to set the listen address and port, then enables and starts the service. A change to the defaults file restarts the exporter.
 
+It also installs a systemd drop-in override (`node-exporter-override.conf.j2`) with `After=network-online.target` and `Restart=on-failure`. The exporter binds the host's lab address, which doesn't exist until the network is up, so ordering it after the network and retrying on failure stops a reboot from leaving it dead (and the host showing down in monitoring).
+
 The collector set is left at the package default, which includes `hwmon` and `thermal_zone`. That gives CPU temperature on both the x86 nodes (coretemp via hwmon) and the ARM Pis (thermal_zone).
 
 ## Example

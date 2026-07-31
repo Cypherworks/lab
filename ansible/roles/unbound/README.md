@@ -47,4 +47,3 @@ Handler: `Restart unbound`.
 
 - `validate: unbound-checkconf` gates the template write, so a broken config fails the task rather than reloading a running resolver into a bad state.
 - The resolver answers on loopback only. It is meant to sit behind blocky, not to serve clients directly.
-- The defaults file comment still refers to "AdGuard Home" as the frontend; the actual frontend in this library is the `blocky` role. Functionally identical (both forward to loopback), but the comment is stale.

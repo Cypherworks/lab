@@ -21,6 +21,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `keepalived_interface` | `eth0` | Interface carrying the VIP. |
 | `keepalived_vrid` | `51` | Virtual router ID; unique per VRRP domain on the segment. |
 | `keepalived_instance` | `VI_1` | VRRP instance name. |
+| `keepalived_check_name` | `chk_service` | Label for the `vrrp_script` block that wraps the health check. |
 | `keepalived_check_command` | `""` | Optional health check; exit 0 when healthy. Empty disables the check. |
 | `keepalived_check_weight` | `-60` | Priority shed on check failure. Must exceed the MASTER/BACKUP gap so a failed MASTER drops below a healthy BACKUP. |
 | `keepalived_check_interval` / `_fall` / `_rise` | `2` / `2` / `2` | Check cadence and the consecutive fail/pass counts to change state. |

@@ -15,9 +15,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `unattended_upgrades_origins` | `["${distro_id}:${distro_codename}-security", "${distro_id}ESMApps:${distro_codename}-apps-security", "${distro_id}ESM:${distro_codename}-infra-security"]` | Allowed origins written to the policy; the ESM entries cover the Ubuntu apps/infra security pockets. |
-| `unattended_upgrades_auto_reboot` | `true` | Whether to reboot automatically after an update that needs it. |
-| `unattended_upgrades_auto_reboot_time` | `"03:30"` | Time of day for the automatic reboot. |
-| `unattended_upgrades_remove_unused_deps` | `true` | Whether to remove unused dependencies after upgrades. |
+| `unattended_upgrades_auto_reboot` | `false` | Whether to reboot automatically after an update that needs it. |
+| `unattended_upgrades_auto_reboot_time` | `"03:30"` | Time of day for the automatic reboot, when `unattended_upgrades_auto_reboot` is enabled. |
+| `unattended_upgrades_remove_unused_deps` | `false` | Whether to remove unused dependencies after upgrades. |
 
 No inventory data or secrets are required.
 
@@ -45,4 +45,4 @@ None.
 
 This is the free stand-in for Ubuntu Pro Livepatch/ESM: it applies the security pocket automatically rather than providing live kernel patching.
 
-The `${distro_id}`/`${distro_codename}` tokens are apt's own variables, expanded by unattended-upgrades at run time, not by Jinja. Automatic reboots occur at the configured time and will interrupt running workloads; adjust or disable per host group where that is unacceptable.
+The `${distro_id}`/`${distro_codename}` tokens are apt's own variables, expanded by unattended-upgrades at run time, not by Jinja. Automatic reboot is off by default; enable `unattended_upgrades_auto_reboot` per host group where an unattended reboot at the configured time is acceptable, remembering it will interrupt running workloads.

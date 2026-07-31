@@ -1,6 +1,6 @@
 # authentik_app
 
-Deploys the Authentik app tier (server and worker only) against external HA Postgres/Redis via node-local HAProxy, renders eight integration blueprints, and ships an LDAP outpost.
+Deploys the Authentik app tier (server and worker only) against external HA Postgres/Redis via node-local HAProxy, renders eleven integration blueprints, and ships an LDAP outpost.
 
 Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a generic, parameterised role. Supply site data (IPs, secrets, hostnames) from your inventory and SOPS, not from the role.
 
@@ -35,12 +35,22 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `nas_oidc_redirect_uris` | `[]` | NAS (DSM) OIDC base URLs, internal + external (site data). |
 | `grafana_oidc_redirect_uri` | `""` | Grafana `generic_oauth` callback (site data). |
 | `authentik_admin_email` | `""` | Email set on the bootstrap superuser (akadmin) by the core blueprint (site data). |
+| `authentik_admin_user_enabled` | `false` | Provision an operator admin account via the user blueprint (email + password from SOPS). |
+| `authentik_admin_user_groups` | `[]` | Groups the operator admin account joins (superadmin + per-app + host login). |
 | `authentik_ldap_base_dn` | `""` | Base DN the LDAP outpost serves (site data). |
 | `authentik_ldap_outpost_host` | `""` | Public Authentik URL the outpost dials back on (site data). |
 | `ldap_outpost_token` | `""` | Outpost service-account token / `AUTHENTIK_TOKEN` (from SOPS). |
 | `ldap_search_password` | `""` | App-password for the `ldap-search` bind account (SSSD bind credential; from SOPS). |
 | `ldaps_cert` | `""` | LDAPS server cert (PEM) for the outpost's 6636 listener (from SOPS); empty = self-signed. |
 | `ldaps_key` | `""` | LDAPS server key (PEM) (from SOPS). |
+| `authentik_ldaps_pki_role` | `""` | OpenBao PKI role that issues the LDAPS cert; empty skips live issuance. |
+| `authentik_ldaps_pki_mount` | `pki` | OpenBao PKI mount the cert is issued from. |
+| `authentik_ldaps_common_name` | `""` | Common name on the issued LDAPS cert (site data). |
+| `authentik_ldaps_ip_sans` | `""` | IP SANs on the issued LDAPS cert; must be the app-node IPs SSSD dials (site data). |
+| `authentik_ldaps_ttl` | `8760h` | TTL of the issued LDAPS cert. |
+| `authentik_ldaps_bao_addr` | `""` | OpenBao address the issuance calls (site data). |
+| `authentik_ldaps_ssm_provisioner_param` | `""` | SSM param holding the provisioner AppRole creds used to issue. |
+| `authentik_ldaps_aws_env` | `{}` | AWS creds/region for the SSM read (from tf); empty uses the ambient profile. |
 | `authentik_secret_key` | `""` | Authentik secret key (from SOPS). |
 | `authentik_pg_password` | `""` | Postgres password (from SOPS). |
 | `authentik_redis_password` | `""` | Redis password (from SOPS). |
@@ -54,6 +64,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `openbao_oidc_client_id` | `""` | OpenBao OIDC client id (from SOPS; blueprint reads via `!Env`). |
 | `openbao_oidc_client_secret` | `""` | OpenBao OIDC client secret (from SOPS). |
 | `openbao_oidc_redirect_uris` | `[]` | OpenBao UI + CLI callbacks; must match the openbao role's `allowed_redirect_uris` (site data). |
+| `proxmox_oidc_client_id` | `""` | Proxmox VE OIDC client id (from SOPS; blueprint reads via `!Env`). |
+| `proxmox_oidc_client_secret` | `""` | Proxmox VE OIDC client secret (from SOPS). |
+| `proxmox_oidc_redirect_uris` | `[]` | Proxmox VE UI base URL callbacks (site data). |
 
 ## Dependencies
 
@@ -63,9 +76,11 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 1. Creates the compose, blueprints, and media directories.
 2. Copies branding assets into `<media>/public`.
-3. Renders the eight integration blueprints into `authentik_blueprints_dir`: `core`, `grafana`, `headscale`, `invitation`, `ldap`, `nas`, `openbao`, `recovery`.
-4. Renders the `.env` and compose file.
-5. Starts the stack (server + worker) with `docker_compose_v2`, pulling missing images.
+3. When `authentik_ldaps_pki_role` is set, issues the LDAPS outpost cert from OpenBao PKI (`ldaps_cert.yml`) before the blueprint and compose consume it.
+4. Renders the eleven integration blueprints into `authentik_blueprints_dir`: `headscale`, `core`, `recovery`, `invitation`, `nas`, `grafana`, `openbao`, `proxmox`, `ldap`, `user`, `forward_auth`.
+5. Renders the `.env` and compose file.
+6. Starts the stack (server + worker) with `docker_compose_v2`, pulling missing images.
+7. When LDAPS issuance is enabled, bounces the outpost until it serves the CA-issued cert (SAN = this node's IP).
 
 ## Example
 

@@ -16,6 +16,10 @@ group_vars). Host login (SSSD) and metrics (`node_exporter`) are separate roles.
 5. Authentik OIDC: an `openid` realm pointed at the Authentik proxmox app, with
    the groups claim synced onto a pre-created admin group that gets an
    Administrator ACL. Skipped when the issuer URL is empty.
+6. Wake-on-LAN arming: installs a `wol-arm.service` (from `wol-arm.service.j2`)
+   that runs `ethtool -s <iface> wol g` at boot, so the host can be woken by a
+   magic packet after powering off between builds. Skipped when `proxmox_wol_mac`
+   is empty.
 
 ## Assumptions
 
@@ -27,7 +31,7 @@ group_vars). Host login (SSSD) and metrics (`node_exporter`) are separate roles.
 
 - apt suite/keyring path (`proxmox_repo_suite`, `proxmox_repo_keyring`).
 - `pveum realm add` flag names — especially `--username-claim` (Authentik's
-  profile scope emits `preferred_username`) and the groups-sync behaviour.
+  profile scope; the shipped default claim is `username`) and the groups-sync behaviour.
 
 ## Key variables
 
@@ -38,5 +42,7 @@ group_vars). Host login (SSSD) and metrics (`node_exporter`) are separate roles.
 | `proxmox_nas_server` / `proxmox_nas_export` | `""` | NFS server + export; empty skips. |
 | `proxmox_oidc_issuer_url` | `""` | Authentik app issuer; empty skips OIDC. |
 | `proxmox_oidc_client_id` / `_secret` | `""` | OIDC client creds (SOPS). |
-| `proxmox_admin_group` | `proxmox-admins` | PVE group the groups claim maps to. |
+| `proxmox_admin_group` | `proxmox-admins-authentik` | PVE group the groups claim maps to. |
+| `proxmox_wol_enabled` | `true` | Arm Wake-on-LAN on the NIC at boot. |
+| `proxmox_wol_mac` | `""` | Host MAC that WoL matches; empty skips arming. |
 | `proxmox_ops_ssh_authorized_keys` | `[]` | Root authorized keys. |
