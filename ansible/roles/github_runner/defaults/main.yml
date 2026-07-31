@@ -20,6 +20,11 @@ github_runner_access_token: ""
 # Full repo URL the runner registers against, e.g. https://github.com/org/repo.
 github_runner_repo_url: ""
 
+# RUNNER_SCOPE: repo | org | ent. 'org' also needs github_runner_org below.
+github_runner_scope: repo
+# Org name for org scope (RUNNER_SCOPE=org); needs an org-admin PAT.
+github_runner_org: ""
+
 # Ephemeral: de-register after each job so no state leaks between runs.
 github_runner_ephemeral: true
 

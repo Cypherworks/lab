@@ -11,10 +11,14 @@ services:
 {% endfor %}
 {% endif %}
     environment:
+      RUNNER_SCOPE: "{{ github_runner_scope }}"
+{% if github_runner_scope == 'org' %}
+      ORG_NAME: "{{ github_runner_org }}"
+{% else %}
       REPO_URL: "{{ github_runner_repo_url }}"
+{% endif %}
       ACCESS_TOKEN: "{{ github_runner_access_token }}"
       RUNNER_NAME: "{{ github_runner_name }}"
-      RUNNER_SCOPE: repo
       LABELS: "{{ github_runner_labels }}"
       EPHEMERAL: "{{ 'true' if github_runner_ephemeral else 'false' }}"
       DISABLE_AUTO_UPDATE: "true"
