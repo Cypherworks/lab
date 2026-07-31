@@ -56,4 +56,24 @@ check yes "$(has p1 && echo yes || echo no)"             "priority label passed"
 check yes "$(has reviewbot && echo yes || echo no)"      "reviewer/assignee passed"
 check yes "$(printf '%s\n' "$out" | grep -qF 'Closes #5' && echo yes || echo no)" "body links issue"
 
+# repo_has_area_labels: only when an area:* label exists.
+check yes "$(repo_has_area_labels "$labels")"             "area:* present -> yes"
+check no  "$(repo_has_area_labels $'bug\ndocumentation')" "no area:* -> no"
+
+# A repo without area:* labels: --area not required; type-only create.
+cat > "$tmp/gh" <<'STUB2'
+#!/usr/bin/env bash
+if [ "$1 $2" = "label list" ]; then
+  printf 'bug\ndocumentation\nenhancement\n'
+elif [ "$1 $2" = "pr create" ]; then
+  shift 2; printf '%s\n' "$@"
+fi
+STUB2
+chmod +x "$tmp/gh"
+out2=$(PATH="$tmp:$PATH" main --type documentation --title t --body b)
+has2() { printf '%s\n' "$out2" | grep -qxF -- "$1"; }
+check yes "$(has2 --draft && echo yes || echo no)"       "no-area repo: still a draft"
+check yes "$(has2 documentation && echo yes || echo no)" "no-area repo: type label passed"
+check no  "$(printf '%s\n' "$out2" | grep -q '^area:' && echo yes || echo no)" "no-area repo: no area label"
+
 exit "$fail"

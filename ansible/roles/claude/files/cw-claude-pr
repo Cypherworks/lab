@@ -29,6 +29,11 @@ issue_ref_line() { # <closes> <refs>
   fi
 }
 
+# Pure: does the repo define any area:* labels? (in the newline-separated set)
+repo_has_area_labels() { # <available> -> yes|no
+  if printf '%s\n' "$1" | grep -q '^area:'; then echo yes; else echo no; fi
+}
+
 main() {
   local type="" area="" priority="" closes="" refs="" title="" body="" base="main"
   while [ $# -gt 0 ]; do
@@ -46,7 +51,6 @@ main() {
   done
 
   [ -n "$type" ] || die "--type is required"
-  [ -n "$area" ] || die "--area is required"
   [ -n "$title" ] || die "--title is required"
   [ -z "$closes" ] || [ -z "$refs" ] || die "use only one of --closes / --refs"
 
@@ -54,7 +58,11 @@ main() {
   labels=$(gh label list --limit 100 --json name --jq '.[].name') \
     || die "could not list the repo's labels"
   label_ok "$type" "$labels" || die "type label not found in this repo: $type"
-  label_ok "$area" "$labels" || die "area label not found in this repo: $area"
+  # --area is required only where the repo defines area:* labels.
+  if [ "$(repo_has_area_labels "$labels")" = yes ] && [ -z "$area" ]; then
+    die "--area is required (this repo defines area:* labels)"
+  fi
+  [ -z "$area" ] || label_ok "$area" "$labels" || die "area label not found in this repo: $area"
   [ -z "$priority" ] || label_ok "$priority" "$labels" || die "priority label not found: $priority"
 
   local ref_line full_body
@@ -63,7 +71,8 @@ main() {
   [ -z "$ref_line" ] || full_body="${body}${body:+$'\n\n'}${ref_line}"
 
   local args=(--draft --base "$base" --title "$title" --body "$full_body"
-              --label "$type" --label "$area")
+              --label "$type")
+  [ -z "$area" ] || args+=(--label "$area")
   [ -z "$priority" ] || args+=(--label "$priority")
   if [ -n "${CW_CLAUDE_REVIEWER:-}" ]; then
     args+=(--reviewer "$CW_CLAUDE_REVIEWER" --assignee "$CW_CLAUDE_REVIEWER")
