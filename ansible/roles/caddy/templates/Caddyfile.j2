@@ -27,6 +27,11 @@
 	tls {
 		dns route53
 	}
+	# 421 when Host != negotiated SNI: blocks the EC2 passthrough Host pivot.
+	@sni_mismatch expression `{http.request.tls.server_name} != "" && {http.request.tls.server_name} != {http.request.host}`
+	handle @sni_mismatch {
+		respond 421
+	}
 {% for route in caddy_routes %}
 	@{{ route.name }} host {{ route.host }}
 	handle @{{ route.name }} {
