@@ -109,3 +109,16 @@
   loop_control:
     label: "{{ item.name }}"
   when: claude_github_app_id | length > 0 and claude_github_app_private_key | length > 0
+
+# So a local `git commit` runs the repo's pre-commit hooks, not just CI.
+- name: Register the pre-commit git hook in each cloned repo
+  become: true
+  become_user: "{{ claude_user }}"
+  ansible.builtin.command:
+    cmd: pre-commit install
+    chdir: "{{ claude_home }}/git/cw/{{ item.name }}"
+    creates: "{{ claude_home }}/git/cw/{{ item.name }}/.git/hooks/pre-commit"
+  loop: "{{ claude_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: claude_github_app_id | length > 0 and claude_github_app_private_key | length > 0

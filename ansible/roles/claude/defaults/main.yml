@@ -29,6 +29,7 @@ claude_apt_packages:
 # Not packaged for Debian; pipx installs it isolated in /usr/local/bin.
 claude_pipx_packages:
   - checkov
+  - pre-commit
 
 # Claude Code, from npm. Auth = CLAUDE_CODE_OAUTH_TOKEN (SOPS), headless box.
 claude_code_package: "@anthropic-ai/claude-code"
