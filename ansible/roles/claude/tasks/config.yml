@@ -9,4 +9,5 @@
     version: main
     update: false
   environment:
-    GH_TOKEN: "{{ claude_github_pat }}"
+    CW_CLAUDE_APP_ID: "{{ claude_github_app_id }}"
+    CW_CLAUDE_APP_KEY: "{{ claude_github_app_key_path }}"

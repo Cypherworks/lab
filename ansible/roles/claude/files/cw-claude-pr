@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# cw-claude-pr — open a PR on the current repo with the required hygiene:
+# a validated type + area label (priority optional), a reviewer + assignee when
+# one is configured, a linked issue when given, and always as a DRAFT so nothing
+# half-built gets merged (mark it ready with `gh pr ready` when it's done). The
+# Bash hook redirects a raw `gh pr create` here, so this hygiene is unavoidable.
+#
+# Generic mechanism: no site data. The reviewer/assignee login comes from the
+# environment (CW_CLAUDE_REVIEWER), set by the consuming deploy repo. Labels are
+# validated against the current repo's real labels, so a typo fails loudly.
+#
+# Usage:
+#   cw-claude-pr --type <label> --area <label> [--priority <label>] \
+#                [--closes N | --refs N] --title "..." [--body "..."] [--base B]
+set -uo pipefail
+
+log() { echo "cw-claude-pr: $*" >&2; }
+die() { log "$*"; exit 1; }
+
+# Pure: is <label> an exact line in the newline-separated <available> set?
+label_ok() { # <label> <available>
+  printf '%s\n' "$2" | grep -qxF -- "$1"
+}
+
+# Pure: the issue-link line to append to the body (Closes/Refs), or empty.
+issue_ref_line() { # <closes> <refs>
+  if [ -n "$1" ]; then printf 'Closes #%s' "$1"
+  elif [ -n "$2" ]; then printf 'Refs #%s' "$2"
+  fi
+}
+
+# Pure: does the repo define any area:* labels? (in the newline-separated set)
+repo_has_area_labels() { # <available> -> yes|no
+  if printf '%s\n' "$1" | grep -q '^area:'; then echo yes; else echo no; fi
+}
+
+main() {
+  local type="" area="" priority="" closes="" refs="" title="" body="" base="main"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type) type="$2"; shift 2 ;;
+      --area) area="$2"; shift 2 ;;
+      --priority) priority="$2"; shift 2 ;;
+      --closes) closes="$2"; shift 2 ;;
+      --refs) refs="$2"; shift 2 ;;
+      --title) title="$2"; shift 2 ;;
+      --body) body="$2"; shift 2 ;;
+      --base) base="$2"; shift 2 ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+
+  [ -n "$type" ] || die "--type is required"
+  [ -n "$title" ] || die "--title is required"
+  [ -z "$closes" ] || [ -z "$refs" ] || die "use only one of --closes / --refs"
+
+  local labels
+  labels=$(gh label list --limit 100 --json name --jq '.[].name') \
+    || die "could not list the repo's labels"
+  label_ok "$type" "$labels" || die "type label not found in this repo: $type"
+  # --area is required only where the repo defines area:* labels.
+  if [ "$(repo_has_area_labels "$labels")" = yes ] && [ -z "$area" ]; then
+    die "--area is required (this repo defines area:* labels)"
+  fi
+  [ -z "$area" ] || label_ok "$area" "$labels" || die "area label not found in this repo: $area"
+  [ -z "$priority" ] || label_ok "$priority" "$labels" || die "priority label not found: $priority"
+
+  local ref_line full_body
+  ref_line=$(issue_ref_line "$closes" "$refs")
+  full_body="$body"
+  [ -z "$ref_line" ] || full_body="${body}${body:+$'\n\n'}${ref_line}"
+
+  local args=(--draft --base "$base" --title "$title" --body "$full_body"
+              --label "$type")
+  [ -z "$area" ] || args+=(--label "$area")
+  [ -z "$priority" ] || args+=(--label "$priority")
+  if [ -n "${CW_CLAUDE_REVIEWER:-}" ]; then
+    args+=(--reviewer "$CW_CLAUDE_REVIEWER" --assignee "$CW_CLAUDE_REVIEWER")
+  fi
+  gh pr create "${args[@]}"
+}
+
+# Do not run main when the file is sourced (the unit test sources it).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
