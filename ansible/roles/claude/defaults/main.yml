@@ -47,10 +47,12 @@ claude_repos:
   - { name: lab-deploy, url: "https://github.com/Cypherworks/lab-deploy.git" }
 
 # Secrets, from group_vars/claude.sops.yml. Empty = credential wiring skipped.
-claude_github_pat: ""
 claude_oauth_token: ""
-# SSH signing key for commits; register the public half on GitHub as signing.
-claude_git_signing_key: ""
+# cw-claude GitHub App: the box's whole GitHub identity (replaces PAT + key).
+claude_github_app_id: ""
+claude_github_app_private_key: ""
+# Where the app private key is written on the box (0600), for cw-claude-token.
+claude_github_app_key_path: "{{ claude_home }}/.config/cw-claude/app.pem"
 
 # --- claude-config: cloned as ~/.claude (rules, hooks). Empty skips. ---
 claude_config_repo: ""

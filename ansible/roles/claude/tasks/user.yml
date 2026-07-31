@@ -33,7 +33,28 @@
     mode: "0644"
 
 # --- credentials, from group_vars/claude.sops.yml ----------------------------
-- name: Render the workbench environment (gh, git, and Claude Code tokens)
+- name: Create the cw-claude config directory (holds the App private key)
+  become: true
+  ansible.builtin.file:
+    path: "{{ claude_github_app_key_path | dirname }}"
+    state: directory
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0700"
+  when: claude_github_app_private_key | length > 0
+
+- name: Install the cw-claude GitHub App private key
+  become: true
+  ansible.builtin.copy:
+    dest: "{{ claude_github_app_key_path }}"
+    content: "{{ claude_github_app_private_key }}"
+    owner: "{{ claude_user }}"
+    group: "{{ claude_user }}"
+    mode: "0600"
+  no_log: true
+  when: claude_github_app_private_key | length > 0
+
+- name: Render the workbench environment (App token env + Claude Code token)
   become: true
   ansible.builtin.template:
     src: workbench.env.j2
@@ -41,7 +62,7 @@
     owner: "{{ claude_user }}"
     group: "{{ claude_user }}"
     mode: "0600"
-  when: claude_github_pat | length > 0 or claude_oauth_token | length > 0
+  when: (claude_github_app_id | length > 0 and claude_github_app_private_key | length > 0) or claude_oauth_token | length > 0
 
 # .profile not .bashrc: .bashrc's non-interactive guard would skip the token.
 - name: Source the workbench environment from the claude user's login shell
@@ -65,43 +86,7 @@
     mode: "0600"
     force: false
 
-- name: Ensure the claude user's .ssh directory exists
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.file:
-    path: "{{ claude_home }}/.ssh"
-    state: directory
-    mode: "0700"
-
-# Trailing newline required; OpenSSH rejects a key without it (libcrypto).
-- name: Install the commit-signing key
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.copy:
-    dest: "{{ claude_home }}/.ssh/id_claude_signing"
-    content: "{{ claude_git_signing_key | trim }}\n"
-    mode: "0600"
-  when: claude_git_signing_key | length > 0
-
-- name: Derive the signing public key
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.command:
-    cmd: "ssh-keygen -y -f {{ claude_home }}/.ssh/id_claude_signing"
-  register: claude_signing_pub
-  changed_when: false
-  when: claude_git_signing_key | length > 0
-
-- name: Write the signing public key
-  become: true
-  become_user: "{{ claude_user }}"
-  ansible.builtin.copy:
-    dest: "{{ claude_home }}/.ssh/id_claude_signing.pub"
-    content: "{{ claude_signing_pub.stdout }}\n"
-    mode: "0644"
-  when: claude_git_signing_key | length > 0
-
-- name: Configure git for the claude user (identity, commit signing, GitHub auth via gh)
+- name: Configure git for the claude user (identity + GitHub auth via the App)
   become: true
   become_user: "{{ claude_user }}"
   ansible.builtin.template:
@@ -118,8 +103,9 @@
     version: main
     update: false
   environment:
-    GH_TOKEN: "{{ claude_github_pat }}"
+    CW_CLAUDE_APP_ID: "{{ claude_github_app_id }}"
+    CW_CLAUDE_APP_KEY: "{{ claude_github_app_key_path }}"
   loop: "{{ claude_repos }}"
   loop_control:
     label: "{{ item.name }}"
-  when: claude_github_pat | length > 0
+  when: claude_github_app_id | length > 0 and claude_github_app_private_key | length > 0

@@ -109,6 +109,19 @@
     group: root
     mode: "0755"
 
+- name: Install the cw-claude GitHub App helper scripts
+  become: true
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - cw-claude-token
+    - cw-claude-credential
+    - cw-claude-push
+
 - name: Set up the claude workbench user, credentials, and repos
   ansible.builtin.include_tasks: user.yml
 

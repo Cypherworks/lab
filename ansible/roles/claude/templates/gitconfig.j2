@@ -1,16 +1,7 @@
 [user]
   name = {{ claude_git_user_name }}
   email = {{ claude_git_user_email }}
-{% if claude_git_signing_key | length > 0 %}
-  signingkey = {{ claude_home }}/.ssh/id_claude_signing.pub
-[gpg]
-  format = ssh
-[commit]
-  gpgsign = true
-[tag]
-  gpgsign = true
-{% endif %}
 [credential "https://github.com"]
-  helper = !gh auth git-credential
+  helper = !cw-claude-credential
 [init]
   defaultBranch = main
