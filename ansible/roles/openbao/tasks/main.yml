@@ -6,13 +6,14 @@
   become: true
   ansible.builtin.get_url:
     url: "{{ openbao_deb_url }}"
-    dest: "/tmp/openbao_{{ openbao_version }}.deb"
+    dest: "/tmp/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+    checksum: "sha256:{{ openbao_release_base }}/checksums-linux.txt"
     mode: "0644"
 
 - name: Install OpenBao
   become: true
   ansible.builtin.apt:
-    deb: "/tmp/openbao_{{ openbao_version }}.deb"
+    deb: "/tmp/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
 
 # Hold it so unattended-upgrades can never change or autoremove the root-of-trust package
 # (the incus outage showed what an unexpected package change does). Manually-installed

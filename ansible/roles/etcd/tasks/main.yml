@@ -20,6 +20,7 @@
   ansible.builtin.get_url:
     url: "{{ etcd_url }}"
     dest: "/tmp/{{ etcd_archive }}"
+    checksum: "sha256:{{ etcd_release_base }}/v{{ etcd_version }}/SHA256SUMS"
     mode: "0644"
 
 - name: Extract etcd binaries

@@ -34,11 +34,19 @@
     state: present
     update_cache: true
 
-# Go from the upstream tarball (distro's trails CI); `creates` = idempotent.
+# Go tarball, checksum-verified; creates keeps the extract idempotent.
+- name: Download Go {{ claude_go_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://go.dev/dl/go{{ claude_go_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/go{{ claude_go_version }}.linux-amd64.tar.gz"
+    checksum: "sha256:https://go.dev/dl/go{{ claude_go_version }}.linux-amd64.tar.gz.sha256"
+    mode: "0644"
+
 - name: Install Go {{ claude_go_version }}
   become: true
   ansible.builtin.unarchive:
-    src: "https://go.dev/dl/go{{ claude_go_version }}.linux-amd64.tar.gz"
+    src: "/tmp/go{{ claude_go_version }}.linux-amd64.tar.gz"
     dest: /usr/local
     remote_src: true
     creates: /usr/local/go/bin/go
@@ -53,19 +61,35 @@
     mode: "0644"
 
 # Terraform + actionlint ship as release archives; extract just the binary.
+- name: Download Terraform {{ claude_terraform_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/terraform/{{ claude_terraform_version }}/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
+    dest: "/tmp/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
+    checksum: "sha256:https://releases.hashicorp.com/terraform/{{ claude_terraform_version }}/terraform_{{ claude_terraform_version }}_SHA256SUMS"
+    mode: "0644"
+
 - name: Install Terraform {{ claude_terraform_version }}
   become: true
   ansible.builtin.unarchive:
-    src: "https://releases.hashicorp.com/terraform/{{ claude_terraform_version }}/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
+    src: "/tmp/terraform_{{ claude_terraform_version }}_linux_amd64.zip"
     dest: /usr/local/bin
     remote_src: true
     include: [terraform]
     creates: /usr/local/bin/terraform
 
+- name: Download actionlint {{ claude_actionlint_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/rhysd/actionlint/releases/download/v{{ claude_actionlint_version }}/actionlint_{{ claude_actionlint_version }}_linux_amd64.tar.gz"
+    dest: "/tmp/actionlint_{{ claude_actionlint_version }}_linux_amd64.tar.gz"
+    checksum: "sha256:https://github.com/rhysd/actionlint/releases/download/v{{ claude_actionlint_version }}/actionlint_{{ claude_actionlint_version }}_checksums.txt"
+    mode: "0644"
+
 - name: Install actionlint {{ claude_actionlint_version }}
   become: true
   ansible.builtin.unarchive:
-    src: "https://github.com/rhysd/actionlint/releases/download/v{{ claude_actionlint_version }}/actionlint_{{ claude_actionlint_version }}_linux_amd64.tar.gz"
+    src: "/tmp/actionlint_{{ claude_actionlint_version }}_linux_amd64.tar.gz"
     dest: /usr/local/bin
     remote_src: true
     include: [actionlint]
