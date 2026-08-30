@@ -1,10 +1,12 @@
 # infra_runner
 
-Builds the always-on **converge/infra runner** — the estate's single privileged
-executor for `terraform apply` and Ansible converge (lab-deploy D29,
-[`execution-model.md`](../../../lab-deploy/docs/execution-model.md)) — on a stock
-`images:debian/13/cloud` host. It also serves as the native x86_64 control host
-for the VCSA deploy, since the mac OVF Tool can't stream the appliance disks.
+Builds the estate's **infra runner** (lab-deploy D29): an x86_64 Linux control
+host an operator connects to and runs the estate's Terraform and Ansible plays
+from by hand, on a stock `images:debian/13/cloud` host. Not a GitHub Actions
+self-hosted runner and not a converge-on-merge executor — a system you SSH into
+and run plays on, the Linux in-lab counterpart to the admin MacBook. It is also
+the native control host for the VCSA deploy, since the mac OVF Tool can't stream
+the appliance disks.
 
 Part of the `lab` mechanism library: a generic, parameterised role. Supply site
 data (the age key at run time, AWS credentials, which repos to clone) from your
@@ -20,16 +22,15 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 3. sops, from the getsops release `.deb`, verified against the release checksums.
 4. The AWS CLI, isolated on `PATH` via pipx.
 5. Enables `sshd` (the cloud image ships only the client).
+6. Clones both repos side-by-side for `roles_path` and installs the galaxy
+   collections/roles, using the clone identity from `repos.yml` (the shipped
+   `cw-claude-token`/`cw-claude-credential` scripts, reused from the `claude`
+   role by reference). The age key is not delivered — supplied at run time (D29).
 
-## Not yet here (follow-up slices)
+## Not yet here
 
-- Ansible collections (`ansible-galaxy install -r requirements.yml`) and the
-  play-specific Python libs (`pyvmomi` for `community.vmware`) and `lego` (the
-  `vcsa` cert step) — these depend on the cloned repos, below.
-- The two repos cloned side-by-side for `roles_path`, and the run-time GitHub
-  identity, which overlap the `claude` role's App-credential and clone machinery;
-  whether to share that or duplicate it is a deliberate follow-up decision.
-- Self-hosted runner registration and the merge/schedule workflows (phase b/c).
+- The play-specific `pyvmomi` (for `community.vmware`) and `lego` (the `vcsa`
+  cert step) — add when the vCenter play is first run from here.
 
 ## Role variables
 
@@ -45,12 +46,12 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 - The getsops release asset names (`sops-v<ver>.amd64.deb`, the checksums file):
   confirm they match the release before relying on the download.
 - `pyvmomi` on Debian 13 for the system Python that Ansible uses (apt
-  `python3-pyvmomi` vs pip under PEP 668) — resolve when the collections slice lands.
+  `python3-pyvmomi` vs pip under PEP 668) — resolve when the vCenter play runs here.
 
 ## Example
 
 ```yaml
-- name: Converge/infra runner
+- name: Infra runner
   hosts: infra_runner
   become: true
   roles:
