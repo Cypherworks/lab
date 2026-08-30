@@ -1,0 +1,60 @@
+# Managed by the authentik_app role. vCenter Server OIDC SSO, mirrors the proxmox
+# pattern, admin-only. vcenter-admins gates the app (default-deny) and rides in the
+# groups claim, which vCenter maps to a role via Global Permissions. Client
+# id/secret via !Env (SOPS). The app slug (vcenter) sets the issuer vCenter's
+# identity provider points at.
+version: 1
+metadata:
+  name: lab - vcenter oidc
+entries:
+  # Admin group: vCenter reads it from the groups claim and maps it to a role.
+  - model: authentik_core.group
+    id: group-vcenter-admins
+    identifiers:
+      name: vcenter-admins
+    attrs:
+      name: vcenter-admins
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-vcenter
+    identifiers:
+      name: vCenter
+    attrs:
+      name: vCenter
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env VCENTER_OIDC_CLIENT_ID
+      client_secret: !Env VCENTER_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+{% for uri in vcenter_oidc_redirect_uris %}
+        - url: "{{ uri }}"
+          matching_mode: strict
+{% endfor %}
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+
+  - model: authentik_core.application
+    id: app-vcenter
+    identifiers:
+      slug: vcenter
+    attrs:
+      name: vCenter
+      slug: vcenter
+      provider: !KeyOf provider-vcenter
+      policy_engine_mode: any
+
+  # Default-deny: only vcenter-admins may authenticate to the app.
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-vcenter
+      group: !KeyOf group-vcenter-admins
+      order: 0
+    attrs:
+      enabled: true

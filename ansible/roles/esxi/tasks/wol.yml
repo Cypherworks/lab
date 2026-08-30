@@ -1,0 +1,34 @@
+---
+# Arm magic-packet wake on the mgmt uplink and make it survive reboots. ESXi
+# has no API for NIC WoL, so this is esxcli/ethtool over SSH: check the NIC
+# supports it, arm it now, add a re-arm line to local.sh, persist config to
+# disk. All raw (ESXi has no Python for modules); guards keep it idempotent.
+- name: Read the uplink WoL capability
+  ansible.builtin.raw: "esxcli network nic get -n {{ esxi_wol_vmnic }}"
+  register: esxi_wol_caps
+  changed_when: false
+
+- name: Require the uplink to support Wake-on-LAN
+  ansible.builtin.assert:
+    that: "'supports wakeon: true' in (esxi_wol_caps.stdout | lower)"
+    fail_msg: >-
+      {{ esxi_wol_vmnic }} reports no WoL support: the ESXi Realtek if_re
+      driver has none. Use a WoL-capable NIC, or set esxi_wol_enabled false
+      to skip WoL on this host.
+
+- name: Arm magic-packet wake now
+  ansible.builtin.raw: "ethtool -s {{ esxi_wol_vmnic }} wol g"
+  changed_when: true
+
+- name: Check whether local.sh already re-arms WoL
+  ansible.builtin.raw: "grep -q 'wol g' /etc/rc.local.d/local.sh"
+  register: esxi_wol_persisted
+  changed_when: false
+  failed_when: false
+
+- name: Add the re-arm line to local.sh and persist it
+  ansible.builtin.raw: >-
+    sed -i '/^exit 0/i ethtool -s {{ esxi_wol_vmnic }} wol g'
+    /etc/rc.local.d/local.sh && /sbin/auto-backup.sh
+  when: esxi_wol_persisted.rc != 0
+  changed_when: true

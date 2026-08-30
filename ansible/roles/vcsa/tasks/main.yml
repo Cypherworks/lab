@@ -1,0 +1,15 @@
+---
+# Deploy VCSA onto the ESXi host, then give it a CA-signed machine SSL cert.
+# Runs on the control host (localhost, macOS). Discovers the installer from the
+# mounted ISO and lego from PATH. See the README for the connection model and
+# the pieces to confirm against the ISO / a live vCenter.
+- name: Discover the lego binary when not pinned
+  ansible.builtin.include_tasks: lego.yml
+  when: vcsa_lego_bin | length == 0
+
+- name: Deploy the vCenter Server Appliance
+  ansible.builtin.include_tasks: deploy.yml
+
+- name: Replace the vCenter machine SSL certificate
+  ansible.builtin.include_tasks: cert.yml
+  when: vcsa_lego_bin | length > 0

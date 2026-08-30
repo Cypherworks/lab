@@ -1,0 +1,103 @@
+---
+# Mount the ISO, render the install template, run vcsa-deploy, then unmount.
+# Guarded on vCenter already being up: vcsa-deploy is not idempotent, so a
+# converged host skips the whole block and never mounts. The precheck
+# (vcsa-deploy's own schema + environment validation) runs first, so a bad
+# template or unreachable ESXi fails before anything is created.
+- name: Check whether vCenter is already deployed
+  # checkov:skip=CKV_ANSIBLE_1: vCenter serves a self-signed cert here
+  ansible.builtin.uri:
+    url: "https://{{ vcsa_ip }}/"
+    validate_certs: false
+    status_code: [-1, 200, 300, 301, 302, 401, 403]
+    timeout: 10
+  register: vcsa_reachable
+  changed_when: false
+  failed_when: false
+
+- name: Deploy VCSA (mount ISO, precheck, install)
+  when: (vcsa_reachable.status | default(-1) | int) < 200
+  block:
+    - name: Create the vcsa-deploy working directory
+      ansible.builtin.file:
+        path: "{{ vcsa_workdir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Mount the ISO and discover the installer
+      ansible.builtin.include_tasks: installer.yml
+
+    - name: Build the install spec
+      ansible.builtin.set_fact:
+        vcsa_install_spec:
+          __version: "{{ vcsa_template_version }}"
+          __comments: "Managed by the vcsa role."
+          new_vcsa:
+            esxi:
+              hostname: "{{ vcsa_esxi_host }}"
+              username: "{{ vcsa_esxi_user }}"
+              password: "{{ vcsa_esxi_password }}"
+              deployment_network: "{{ vcsa_esxi_network }}"
+              datastore: "{{ vcsa_esxi_datastore }}"
+            appliance:
+              thin_disk_mode: "{{ vcsa_thin_disk | bool }}"
+              deployment_option: "{{ vcsa_deployment_option }}"
+              name: "{{ vcsa_name }}"
+            network:
+              ip_family: ipv4
+              mode: static
+              system_name: "{{ vcsa_system_name }}"
+              ip: "{{ vcsa_ip }}"
+              prefix: "{{ vcsa_prefix }}"
+              gateway: "{{ vcsa_gateway }}"
+              dns_servers: "{{ vcsa_dns_servers }}"
+            os:
+              password: "{{ vcsa_os_password }}"
+              ntp_servers: "{{ vcsa_ntp_servers }}"
+              ssh_enable: "{{ vcsa_ssh_enable | bool }}"
+            sso:
+              password: "{{ vcsa_sso_password }}"
+              domain_name: "{{ vcsa_sso_domain }}"
+          ceip:
+            settings:
+              ceip_enabled: "{{ vcsa_ceip_enabled | bool }}"
+      no_log: true
+
+    - name: Write the install template
+      ansible.builtin.copy:
+        content: "{{ vcsa_install_spec | to_nice_json }}"
+        dest: "{{ vcsa_workdir }}/install.json"
+        mode: "0600"
+      no_log: true
+    - name: Precheck the VCSA deployment
+      ansible.builtin.command:
+        argv:
+          - "{{ vcsa_deploy_bin }}"
+          - install
+          - --accept-eula
+          - --acknowledge-ceip
+          - --no-ssl-certificate-verification
+          - --precheck-only
+          - "{{ vcsa_workdir }}/install.json"
+      changed_when: false
+
+    - name: Install VCSA
+      ansible.builtin.command:
+        argv:
+          - "{{ vcsa_deploy_bin }}"
+          - install
+          - --accept-eula
+          - --acknowledge-ceip
+          - --no-ssl-certificate-verification
+          - "{{ vcsa_workdir }}/install.json"
+      changed_when: true
+  always:
+    - name: Unmount the ISO
+      ansible.builtin.command:
+        argv:
+          - hdiutil
+          - detach
+          - "{{ vcsa_iso_mount }}"
+      when: vcsa_iso_mount is defined
+      changed_when: true
+      failed_when: false

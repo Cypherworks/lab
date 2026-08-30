@@ -1,0 +1,62 @@
+---
+# Discover the local VMFS disk when the deploy didn't pin one, then create the
+# local VMFS + the NAS NFS datastore over the host API. Idempotent: the module
+# is present/absent and no-ops when the datastore already exists.
+- name: Discover the local VMFS disk when not set
+  when: esxi_vmfs_device | length == 0
+  block:
+    - name: List local non-boot disks
+      ansible.builtin.raw: >-
+        esxcli storage core device list | awk
+        '/^[^ ]/{if(d!="" && l && !b) print d; d=$0; l=0; b=0}
+         /Is Local: true/{l=1} /Is Boot Device: true/{b=1}
+         END{if(d!="" && l && !b) print d}'
+      register: esxi_disk_list
+      changed_when: false
+
+    - name: Collect the candidate device ids
+      ansible.builtin.set_fact:
+        esxi_disk_candidates: >-
+          {{ esxi_disk_list.stdout_lines | map('trim')
+             | select('match', '^(naa|t10|eui|mpx)') | list }}
+
+    - name: Require exactly one candidate local disk (fail closed)
+      ansible.builtin.assert:
+        that: esxi_disk_candidates | length == 1
+        fail_msg: >-
+          Expected one local non-boot disk, found
+          {{ esxi_disk_candidates | length }}: {{ esxi_disk_candidates }}.
+          Set esxi_vmfs_device explicitly.
+
+    - name: Use the discovered disk as the VMFS device
+      ansible.builtin.set_fact:
+        esxi_vmfs_device: "{{ esxi_disk_candidates | first }}"
+
+- name: Manage the ESXi datastores
+  delegate_to: localhost
+  module_defaults:
+    community.vmware.vmware_host_datastore:
+      hostname: "{{ esxi_api_host }}"
+      username: "{{ esxi_api_user }}"
+      password: "{{ esxi_api_password }}"
+      esxi_hostname: "{{ esxi_host_name }}"
+      validate_certs: "{{ esxi_validate_certs }}"
+  block:
+    - name: Create the local VMFS datastore
+      community.vmware.vmware_host_datastore:
+        datastore_name: "{{ esxi_vmfs_datastore }}"
+        datastore_type: vmfs
+        vmfs_device_name: "{{ esxi_vmfs_device }}"
+        vmfs_version: "{{ esxi_vmfs_version }}"
+        state: present
+      when: esxi_vmfs_device | length > 0
+
+    - name: Mount the NAS NFS datastore
+      community.vmware.vmware_host_datastore:
+        datastore_name: "{{ esxi_nas_datastore }}"
+        datastore_type: nfs
+        nfs_server: "{{ esxi_nas_server }}"
+        nfs_path: "{{ esxi_nas_path }}"
+        nfs_ro: "{{ esxi_nas_readonly }}"
+        state: present
+      when: esxi_nas_server | length > 0

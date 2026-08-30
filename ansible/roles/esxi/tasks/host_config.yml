@@ -1,0 +1,32 @@
+---
+# Set the host FQDN and disable IPv6 over SSH (esxcli). Both persist but only
+# take effect on reboot, so the caller reboots when either changed. Idempotent:
+# guarded on the current esxcli state. SSH must already be enabled on the host
+# (DCUI on first install) — see the role README.
+- name: Read the current FQDN
+  ansible.builtin.raw: esxcli system hostname get
+  register: esxi_current_fqdn
+  changed_when: false
+
+- name: Set the host FQDN
+  ansible.builtin.raw: "esxcli system hostname set --fqdn={{ esxi_host_name }}"
+  when: esxi_host_name not in esxi_current_fqdn.stdout
+  register: esxi_fqdn_set
+  changed_when: true
+
+- name: Read the IPv6 state
+  ansible.builtin.raw: esxcli network ip get
+  register: esxi_ip_state
+  changed_when: false
+
+- name: Disable IPv6
+  ansible.builtin.raw: esxcli network ip set --ipv6-enabled=false
+  when:
+    - esxi_disable_ipv6 | bool
+    - "'ipv6enabled: false' not in (esxi_ip_state.stdout | lower)"
+  register: esxi_ipv6_disabled
+  changed_when: true
+
+- name: Note whether a reboot is needed to apply the changes
+  ansible.builtin.set_fact:
+    esxi_reboot_required: "{{ (esxi_fqdn_set is changed) or (esxi_ipv6_disabled is changed) }}"

@@ -1,0 +1,22 @@
+---
+# Reboot the host and wait for it to come back. Included only when a host
+# setting changed (hostname/IPv6), which needs a reboot to take effect. raw
+# can't run async, so issue reboot synchronously and tolerate the dropped
+# connection as the host goes down; the wait runs from localhost after.
+- name: Reboot the host
+  ansible.builtin.raw: reboot
+  changed_when: true
+  failed_when: false
+  ignore_unreachable: true
+
+- name: Wait for the host API to come back
+  delegate_to: localhost
+  ansible.builtin.wait_for:
+    host: "{{ esxi_api_host }}"
+    port: 443
+    state: started
+    delay: 60
+    timeout: 900
+
+- name: Reset the SSH connection after the reboot
+  ansible.builtin.meta: reset_connection

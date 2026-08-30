@@ -120,3 +120,7 @@ openbao_oidc_redirect_uris: []
 proxmox_oidc_client_id: ""
 proxmox_oidc_client_secret: ""
 proxmox_oidc_redirect_uris: []
+# vCenter OIDC: id/secret via !Env (SOPS); shared with the vcenter_oidc spec.
+vcenter_oidc_client_id: ""
+vcenter_oidc_client_secret: ""
+vcenter_oidc_redirect_uris: []

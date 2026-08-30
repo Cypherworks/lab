@@ -1,0 +1,32 @@
+---
+# Standalone ESXi 8 host on a stock install, reachable over SSH as root (SSH
+# must be enabled first — DCUI on a fresh install) and over the API. Sets the
+# hostname and IPv6 first (a reboot applies them), then the SSH policy,
+# datastores, and Wake-on-LAN. Run with facts off — see the role README.
+- name: Configure the host name and IPv6
+  ansible.builtin.include_tasks: host_config.yml
+
+- name: Reboot to apply the host settings
+  ansible.builtin.include_tasks: reboot.yml
+  when: esxi_reboot_required | default(false) | bool
+
+- name: Enable and persist the SSH service
+  delegate_to: localhost
+  community.vmware.vmware_host_service_manager:
+    hostname: "{{ esxi_api_host }}"
+    username: "{{ esxi_api_user }}"
+    password: "{{ esxi_api_password }}"
+    esxi_hostname: "{{ esxi_host_name }}"
+    validate_certs: "{{ esxi_validate_certs }}"
+    service_name: TSM-SSH
+    state: present
+    service_policy: "on"
+
+- name: Provision the datastores (local VMFS + NAS NFS)
+  ansible.builtin.include_tasks: datastores.yml
+
+- name: Arm Wake-on-LAN on the mgmt uplink
+  ansible.builtin.include_tasks: wol.yml
+  when:
+    - esxi_wol_enabled | bool
+    - esxi_wol_vmnic | length > 0
