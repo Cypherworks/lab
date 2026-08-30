@@ -1,0 +1,60 @@
+---
+# Deploys a vCenter Server Appliance (VCSA 8) onto a standalone ESXi host via
+# the ISO's vcsa-deploy CLI, then replaces its machine SSL cert with a
+# CA-signed one. Runs on the control host (localhost), not the ESXi host.
+# Generic mechanism; site data comes from the deploy. ESXi host = esxi role.
+
+# The installer ISO, mounted read-only at deploy (macOS hdiutil for now).
+vcsa_iso: ""               # path to the VMware-VCSA-*.iso on the control host
+# Installer bits discovered from the mounted ISO when empty (override to pin).
+vcsa_deploy_bin: ""        # empty = <mount>/vcsa-cli-installer/mac/vcsa-deploy
+vcsa_template_version: ""  # empty = __version from the ISO's install template
+# Where the rendered install template and vcsa-deploy logs are written.
+vcsa_workdir: /var/tmp/vcsa-deploy
+
+# Target ESXi host for the appliance VM (its self-signed cert is skipped).
+vcsa_esxi_host: ""         # ESXi host IP/FQDN
+vcsa_esxi_user: root
+vcsa_esxi_password: ""     # SOPS
+vcsa_esxi_datastore: ""    # datastore the appliance lands on (e.g. local-nvme)
+vcsa_esxi_network: "VM Network"  # port group the appliance NIC attaches to
+
+# Appliance sizing + identity. tiny is the smallest single-node footprint.
+vcsa_name: vcenter
+vcsa_deployment_option: tiny
+vcsa_thin_disk: true
+
+# Appliance network — static, from ip-plan. system_name is the cert FQDN.
+vcsa_system_name: ""       # vcenter FQDN
+vcsa_ip: ""
+vcsa_prefix: "24"
+vcsa_gateway: ""
+vcsa_dns_servers: []
+vcsa_ntp_servers: []
+
+# Appliance OS (root) + SSO. ssh_enable turns on the appliance shell.
+vcsa_os_password: ""       # appliance root password (SOPS)
+vcsa_ssh_enable: true
+vcsa_sso_password: ""      # administrator@<sso_domain> password (SOPS)
+vcsa_sso_domain: vsphere.local
+vcsa_ceip_enabled: false
+
+# Machine SSL cert: CSR via API (key stays in vCenter), lego signs, PUT back.
+vcsa_lego_bin: ""          # empty = discover on PATH (which lego); still empty skips cert
+vcsa_lego_dns_provider: route53
+vcsa_lego_env: {}          # env for lego (DNS provider creds); from the deploy
+vcsa_le_email: ""          # ACME account email
+vcsa_le_server: ""         # ACME directory URL; empty = lego default (LE prod)
+vcsa_lego_workdir: "{{ vcsa_workdir }}/lego"
+# CSR subject the API generates; common_name/SAN default to the FQDN.
+vcsa_cert_common_name: "{{ vcsa_system_name }}"
+vcsa_cert_sans: "{{ [vcsa_system_name] }}"
+vcsa_cert_key_size: 2048
+vcsa_cert_org: ""
+vcsa_cert_org_unit: ""
+vcsa_cert_country: ""
+vcsa_cert_state: ""
+vcsa_cert_locality: ""
+# Re-issue only near expiry or when not yet from this CA (no-op convergence).
+vcsa_cert_renew_before_days: 30
+vcsa_cert_issuer_match: "Let's Encrypt"

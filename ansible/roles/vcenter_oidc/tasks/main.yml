@@ -1,0 +1,43 @@
+---
+# Create the OIDC identity provider when one named vcenter_oidc_name is absent.
+# POST is not idempotent (a duplicate name errors), so GET first and skip when
+# present. Changing a provider (e.g. secret rotation) means recreating it.
+- name: Create a vCenter API session
+  # checkov:skip=CKV_ANSIBLE_1: vCenter cert may be self-signed at bootstrap
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_oidc_ip }}/api/session"
+    method: POST
+    force_basic_auth: true
+    url_username: "{{ vcenter_oidc_sso_user }}"
+    url_password: "{{ vcenter_oidc_sso_password }}"
+    validate_certs: false
+    status_code: [200, 201]
+  register: vcenter_oidc_session
+  no_log: true
+
+- name: List the existing identity providers
+  # checkov:skip=CKV_ANSIBLE_1: vCenter cert may be self-signed at bootstrap
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_oidc_ip }}/api/vcenter/identity/providers"
+    method: GET
+    headers:
+      vmware-api-session-id: "{{ vcenter_oidc_session.json }}"
+    validate_certs: false
+    status_code: [200]
+  register: vcenter_oidc_existing
+
+- name: Create the OIDC identity provider
+  # checkov:skip=CKV_ANSIBLE_1: vCenter cert may be self-signed at bootstrap
+  ansible.builtin.uri:
+    url: "https://{{ vcenter_oidc_ip }}/api/vcenter/identity/providers"
+    method: POST
+    headers:
+      vmware-api-session-id: "{{ vcenter_oidc_session.json }}"
+    body_format: json
+    body: "{{ vcenter_oidc_spec }}"
+    validate_certs: false
+    status_code: [200, 201]
+  no_log: true
+  when: >-
+    vcenter_oidc_name not in
+    (vcenter_oidc_existing.json | default([]) | map(attribute='name') | list)

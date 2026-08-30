@@ -1,0 +1,114 @@
+---
+# Give vCenter a CA-signed machine SSL cert. The API generates the CSR (so the
+# key never leaves vCenter); lego signs it over DNS-01; we PUT back the cert +
+# CA chain. Gated on the live cert's issuer + expiry so a converged run is a
+# no-op and doesn't burn ACME rate limits. Endpoints verified; confirm the
+# tls-csr response field on the box (README).
+- name: Read the live vCenter certificate
+  community.crypto.get_certificate:
+    host: "{{ vcsa_ip }}"
+    port: 443
+  register: vcsa_live_cert
+  failed_when: false
+
+- name: Decide whether the certificate needs (re)issuing
+  ansible.builtin.set_fact:
+    vcsa_cert_needed: >-
+      {{ (vcsa_live_cert.not_after is not defined)
+         or (vcsa_cert_issuer_match | length > 0
+             and vcsa_cert_issuer_match not in
+                 (vcsa_live_cert.issuer | default({}) | dict2items
+                  | map(attribute='value') | join(' ')))
+         or (((vcsa_live_cert.not_after | to_datetime('%Y%m%d%H%M%SZ'))
+              - now(utc=true)).days | int < vcsa_cert_renew_before_days | int) }}
+
+- name: Issue and install the machine SSL certificate
+  when: vcsa_cert_needed | bool
+  block:
+    - name: Create the lego working directory
+      ansible.builtin.file:
+        path: "{{ vcsa_lego_workdir }}/certificates"
+        state: directory
+        mode: "0700"
+
+    - name: Create a vCenter API session
+      # checkov:skip=CKV_ANSIBLE_1: replacing vCenter's self-signed cert
+      ansible.builtin.uri:
+        url: "https://{{ vcsa_ip }}/api/session"
+        method: POST
+        force_basic_auth: true
+        url_username: "administrator@{{ vcsa_sso_domain }}"
+        url_password: "{{ vcsa_sso_password }}"
+        validate_certs: false
+        status_code: [200, 201]
+      register: vcsa_session
+      no_log: true
+
+    - name: Build the CSR request (drop empty subject fields)
+      ansible.builtin.set_fact:
+        vcsa_csr_body: >-
+          {{ {
+               'common_name': vcsa_cert_common_name,
+               'key_size': vcsa_cert_key_size | int,
+               'subject_alt_name': vcsa_cert_sans,
+               'organization': vcsa_cert_org,
+               'organization_unit': vcsa_cert_org_unit,
+               'country': vcsa_cert_country,
+               'state_or_province': vcsa_cert_state,
+               'locality': vcsa_cert_locality,
+             } | dict2items | rejectattr('value', 'equalto', '')
+               | items2dict }}
+
+    - name: Generate a machine SSL CSR (key stays in vCenter)
+      # checkov:skip=CKV_ANSIBLE_1: replacing vCenter's self-signed cert
+      ansible.builtin.uri:
+        url: "https://{{ vcsa_ip }}/api/vcenter/certificate-management/vcenter/tls-csr"
+        method: POST
+        headers:
+          vmware-api-session-id: "{{ vcsa_session.json }}"
+        body_format: json
+        body: "{{ vcsa_csr_body }}"
+        validate_certs: false
+        status_code: [200, 201]
+      register: vcsa_csr
+
+    - name: Save the CSR for signing
+      ansible.builtin.copy:
+        content: "{{ vcsa_csr.json.csr }}"
+        dest: "{{ vcsa_lego_workdir }}/vcenter.csr"
+        mode: "0600"
+
+    - name: Sign the CSR with lego over DNS-01
+      ansible.builtin.command:
+        argv: >-
+          {{ [vcsa_lego_bin, '--accept-tos', '--email', vcsa_le_email,
+              '--path', vcsa_lego_workdir, '--dns', vcsa_lego_dns_provider]
+             + (['--server', vcsa_le_server] if vcsa_le_server | length > 0 else [])
+             + ['run', '--csr', vcsa_lego_workdir + '/vcenter.csr'] }}
+      environment: "{{ vcsa_lego_env }}"
+      changed_when: true
+
+    - name: Read the signed leaf certificate
+      ansible.builtin.slurp:
+        src: "{{ vcsa_lego_workdir }}/certificates/{{ vcsa_system_name }}.crt"
+      register: vcsa_leaf
+
+    - name: Read the issuer (CA) chain
+      ansible.builtin.slurp:
+        src: "{{ vcsa_lego_workdir }}/certificates/{{ vcsa_system_name }}.issuer.crt"
+      register: vcsa_chain
+
+    - name: Set the vCenter machine SSL certificate
+      # checkov:skip=CKV_ANSIBLE_1: replacing vCenter's self-signed cert
+      ansible.builtin.uri:
+        url: "https://{{ vcsa_ip }}/api/vcenter/certificate-management/vcenter/tls"
+        method: PUT
+        headers:
+          vmware-api-session-id: "{{ vcsa_session.json }}"
+        body_format: json
+        body:
+          cert: "{{ vcsa_leaf.content | b64decode }}"
+          root_cert: "{{ vcsa_chain.content | b64decode }}"
+        validate_certs: false
+        status_code: 204
+      no_log: true

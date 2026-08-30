@@ -70,7 +70,7 @@
     - nas
     - grafana
     - openbao
-    - proxmox
+    - vcenter
     - ldap
     - user
     - forward_auth

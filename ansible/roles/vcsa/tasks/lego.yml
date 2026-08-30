@@ -1,0 +1,15 @@
+---
+# Discover the lego binary on the control host's PATH when the deploy didn't
+# pin one. Not found leaves vcsa_lego_bin empty and the caller skips the cert
+# step (same as pinning it empty). lego must be on the ansible run PATH, which
+# is not a login shell — a Homebrew lego may need its dir adding to PATH.
+- name: Discover the lego binary on PATH
+  ansible.builtin.command: which lego
+  register: vcsa_lego_which
+  changed_when: false
+  failed_when: false
+
+- name: Use the discovered lego binary
+  ansible.builtin.set_fact:
+    vcsa_lego_bin: "{{ vcsa_lego_which.stdout | trim }}"
+  when: vcsa_lego_which.rc == 0

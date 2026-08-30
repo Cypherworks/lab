@@ -1,0 +1,16 @@
+---
+# vCenter identity provider federation to an external OIDC IdP (Authentik), via
+# the vSphere Automation API. Runs on the control host. Generic mechanism: the
+# provider spec is opaque site data (the CreateSpec shape is version/tenant
+# specific, so confirm it against the live API). Idempotent by provider name.
+
+vcenter_oidc_ip: ""        # vCenter IP/host for the API session
+vcenter_oidc_sso_domain: vsphere.local
+vcenter_oidc_sso_user: "administrator@{{ vcenter_oidc_sso_domain }}"
+vcenter_oidc_sso_password: ""   # SOPS
+
+# Display name of the provider; matched to skip creation when it exists.
+vcenter_oidc_name: ""
+
+# Full CreateSpec POSTed to identity/providers; opaque, set in the deploy.
+vcenter_oidc_spec: {}

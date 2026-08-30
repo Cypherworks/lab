@@ -1,0 +1,30 @@
+---
+# Standalone ESXi 8 host config on a stock install (does not install ESXi).
+# Generic mechanism; site data comes from the deploy. Hostname, IPv6, WoL,
+# and disk discovery go over SSH (must be enabled); datastores + the SSH
+# service policy go over the host API. vCenter is the vcsa role.
+
+# Host API connection (community.vmware modules). Site data.
+esxi_api_host: ""          # address the API modules connect to (the host IP)
+esxi_host_name: ""         # the name ESXi knows itself by (its FQDN)
+esxi_api_user: root
+esxi_api_password: ""      # root password (SOPS)
+esxi_validate_certs: false # first run still has the host's self-signed cert
+
+# Disable IPv6 (reboot-applied; the role reboots when host settings change).
+esxi_disable_ipv6: true
+
+# Local VMFS datastore on a wiped disk. Empty device = skip.
+esxi_vmfs_device: ""       # canonical name; empty = auto-discover lone local disk
+esxi_vmfs_datastore: local-nvme
+esxi_vmfs_version: 6
+
+# NAS NFS datastore (Synology export). Empty server = skip.
+esxi_nas_datastore: nas
+esxi_nas_server: ""
+esxi_nas_path: ""          # e.g. /volume1/ESXi_Data
+esxi_nas_readonly: false
+
+# Wake-on-LAN: arm the mgmt uplink so a magic packet wakes the host from S5.
+esxi_wol_enabled: true
+esxi_wol_vmnic: ""         # mgmt uplink e.g. vmnic0; see esxcli network nic list
