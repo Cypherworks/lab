@@ -31,3 +31,15 @@ infra_runner_sops_version: "3.9.4"
 # Python CLIs isolated on PATH via pipx (claude pattern); awscli reads homelab.
 infra_runner_pipx_packages:
   - awscli
+
+# Dedicated user owning the repos; roles_path needs them cloned side-by-side.
+infra_runner_user: runner
+infra_runner_home: /home/runner
+infra_runner_repos:
+  - { name: lab, url: "https://github.com/Cypherworks/lab.git" }
+  - { name: lab-deploy, url: "https://github.com/Cypherworks/lab-deploy.git" }
+
+# cw-claude App (clone identity), from group_vars/infra_runner.sops.yml.
+infra_runner_github_app_id: ""
+infra_runner_github_app_private_key: ""
+infra_runner_github_app_key_path: "{{ infra_runner_home }}/.config/cw-claude/app.pem"

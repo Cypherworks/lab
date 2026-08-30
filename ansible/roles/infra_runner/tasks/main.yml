@@ -62,3 +62,6 @@
   environment:
     PIPX_HOME: /opt/pipx
     PIPX_BIN_DIR: /usr/local/bin
+
+- name: Provision the run identity, repos, and collections
+  ansible.builtin.include_tasks: repos.yml
