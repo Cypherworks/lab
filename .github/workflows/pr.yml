@@ -37,7 +37,7 @@ jobs:
       - name: Install ansible-lint + the collections the roles use
         run: |
           pip install ansible-lint
-          ansible-galaxy collection install community.general community.docker ansible.posix community.postgresql community.vmware community.crypto
+          ansible-galaxy collection install community.general community.docker ansible.posix community.postgresql 'community.vmware:>=5.6.0,<6.0.0' community.crypto
       - run: ansible-lint
 
   shellcheck:

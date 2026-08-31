@@ -1,0 +1,19 @@
+---
+# vcenter_cluster — create a Datacenter and a Cluster (HA/DRS/vSAN off) in
+# vCenter and add the ESXi host to that cluster, so the host is managed under a
+# DC/Cluster for client-environment parity when testing Packer/TF (lab-deploy
+# D28). Generic mechanism; site data from the deploy. Runs on the control host
+# against the vCenter API (needs pyvmomi).
+
+vcenter_cluster_hostname: ""      # vCenter host/IP
+vcenter_cluster_username: "administrator@vsphere.local"
+vcenter_cluster_password: ""      # SSO admin password (SOPS)
+vcenter_cluster_validate_certs: false
+
+vcenter_cluster_datacenter: ""    # Datacenter to create
+vcenter_cluster_name: ""          # Cluster to create (services stay off)
+
+# The standalone ESXi host to add to the cluster.
+vcenter_cluster_esxi_hostname: ""
+vcenter_cluster_esxi_username: root
+vcenter_cluster_esxi_password: ""  # ESXi root password (SOPS)
