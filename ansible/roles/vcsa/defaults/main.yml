@@ -53,3 +53,5 @@ vcsa_cert_key_size: 2048
 # Re-issue only near expiry or when not yet from this CA (no-op convergence).
 vcsa_cert_renew_before_days: 30
 vcsa_cert_issuer_match: "Let's Encrypt"
+# Self-signed root anchoring the LE chain; lego omits it, read from CA store.
+vcsa_cert_root_ca: /etc/ssl/certs/ISRG_Root_X1.pem

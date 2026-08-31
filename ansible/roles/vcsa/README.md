@@ -31,8 +31,9 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 2. Replaces the machine SSL cert (when `vcsa_lego_bin` is set): generates the key
    and a CN/SAN-only CSR on the control host (VMCA's own CSR carries an email
    field that Let's Encrypt rejects), signs it with `lego` over DNS-01, and PUTs
-   the key, cert, and CA chain back. Re-issues only when the live cert is near
-   expiry or not yet from the expected CA, so convergence runs are a no-op.
+   the leaf in `cert` and the full CA chain (intermediates plus the self-signed
+   root from `vcsa_cert_root_ca`) in `root_cert`. Re-issues only when the live
+   cert is near expiry or not yet from the expected CA, so convergence is a no-op.
 
 ## Verify on the box (8-U3-specific, not trusted from memory)
 
@@ -46,6 +47,12 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
   template; the precheck is the backstop.
 - `lego --csr` writes `<system_name>.crt` and `<system_name>.issuer.crt` under
   `certificates/`; confirm the filenames match `vcsa_system_name`.
+- vCenter's `tls` set builds the path only from `root_cert`, and it must end in
+  a self-signed root. lego's chain omits the root, so `root_cert` is the issuer
+  chain plus `vcsa_cert_root_ca` (the ISRG Root X1 from the runner's CA store).
+  `cert` is the leaf alone. Verified against 8.0 U3: a fullchain in `cert` gives
+  `No issuer certificate ... found`, and no self-signed root gives
+  `trustAnchors parameter must be non-empty`.
 
 ## Key variables
 
