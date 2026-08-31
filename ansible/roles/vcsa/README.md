@@ -28,10 +28,11 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 1. Renders the `embedded_vCSA_on_ESXi` install spec from the variables and runs
    `vcsa-deploy install` (precheck first). Skipped when vCenter already answers on
    443, since `vcsa-deploy` is not idempotent.
-2. Replaces the machine SSL cert (when `vcsa_lego_bin` is set): generates a CSR
-   through the API so the private key stays in vCenter, signs it with `lego` over
-   DNS-01, and PUTs the cert + CA chain back. Re-issues only when the live cert is
-   near expiry or not yet from the expected CA, so convergence runs are a no-op.
+2. Replaces the machine SSL cert (when `vcsa_lego_bin` is set): generates the key
+   and a CN/SAN-only CSR on the control host (VMCA's own CSR carries an email
+   field that Let's Encrypt rejects), signs it with `lego` over DNS-01, and PUTs
+   the key, cert, and CA chain back. Re-issues only when the live cert is near
+   expiry or not yet from the expected CA, so convergence runs are a no-op.
 
 ## Verify on the box (8-U3-specific, not trusted from memory)
 
@@ -43,8 +44,6 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 - `vcsa_template_version` (read as the template's `__version`) **must** match the
   template vcsa-deploy expects. Diff the rendered `install.json` against the shipped
   template; the precheck is the backstop.
-- The `tls-csr` response field the CSR is read from (`vcsa_csr.json.csr`) — confirm
-  the exact JSON shape the API returns.
 - `lego --csr` writes `<system_name>.crt` and `<system_name>.issuer.crt` under
   `certificates/`; confirm the filenames match `vcsa_system_name`.
 
