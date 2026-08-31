@@ -44,7 +44,8 @@
       register: vcsa_session
       no_log: true
 
-    - name: Build the CSR request (drop empty subject fields)
+    # tls-csr needs the full subject present; send every field, empty or not.
+    - name: Build the CSR request
       ansible.builtin.set_fact:
         vcsa_csr_body: >-
           {{ {
@@ -56,8 +57,7 @@
                'country': vcsa_cert_country,
                'state_or_province': vcsa_cert_state,
                'locality': vcsa_cert_locality,
-             } | dict2items | rejectattr('value', 'equalto', '')
-               | items2dict }}
+             } }}
 
     - name: Generate a machine SSL CSR (key stays in vCenter)
       # checkov:skip=CKV_ANSIBLE_1: replacing vCenter's self-signed cert
