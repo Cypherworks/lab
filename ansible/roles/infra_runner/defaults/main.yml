@@ -1,0 +1,55 @@
+---
+# The converge/infra runner's run toolchain (see lab-deploy D29): what a host
+# needs to run the estate's Terraform and Ansible plays natively. Generic
+# mechanism; site data (the age key at run time, AWS creds, which repos to
+# clone) comes from the deploy. Runs on images:debian/13/cloud (amd64), the
+# image the claude workbench proves this apt/checksum toolchain on. Binary
+# versions are level with the CI images; confirm sops is current on the build.
+
+# Distro packages (proven on the image by claude); age is sops's key backend.
+infra_runner_apt_packages:
+  - openssh-server
+  - git
+  - jq
+  - curl
+  - ca-certificates
+  - unzip
+  - xorriso
+  - sshpass
+  - python3
+  - python3-pip
+  - pipx
+  - age
+  - ansible
+  - ansible-lint
+  - yamllint
+
+# Terraform release zip, checksum-verified; level with the claude workbench.
+infra_runner_terraform_version: "1.11.4"
+
+# sops: the raw getsops release binary, checksum-verified. Confirm current.
+infra_runner_sops_version: "3.9.4"
+
+# Python CLIs isolated on PATH via pipx (claude pattern); awscli reads homelab.
+infra_runner_pipx_packages:
+  - awscli
+
+# System-python libs Ansible uses: mitogen (fast strategy) + pyvmomi (vmware).
+infra_runner_pip_packages:
+  - mitogen==0.3.52
+  - pyvmomi
+
+# lego (the vcsa cert step): the release tarball binary, checksum-verified.
+infra_runner_lego_version: "5.4.0"
+
+# Dedicated user owning the repos; roles_path needs them cloned side-by-side.
+infra_runner_user: runner
+infra_runner_home: /home/runner
+infra_runner_repos:
+  - { name: lab, url: "https://github.com/Cypherworks/lab.git" }
+  - { name: lab-deploy, url: "https://github.com/Cypherworks/lab-deploy.git" }
+
+# cw-claude App (clone identity), from group_vars/infra_runner.sops.yml.
+infra_runner_github_app_id: ""
+infra_runner_github_app_private_key: ""
+infra_runner_github_app_key_path: "{{ infra_runner_home }}/.config/cw-claude/app.pem"

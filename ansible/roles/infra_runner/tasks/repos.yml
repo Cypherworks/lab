@@ -1,0 +1,86 @@
+---
+# Provision the run identity and the repos, reusing the shipped cw-claude App
+# scripts from the claude role (option 1: no shared role, no rewrite). The age
+# key is NOT delivered here — the operator supplies it at run time (D29). A
+# dedicated user owns the repos; roles_path needs them cloned side-by-side.
+- name: Create the runner user
+  become: true
+  ansible.builtin.user:
+    name: "{{ infra_runner_user }}"
+    home: "{{ infra_runner_home }}"
+    shell: /bin/bash
+    create_home: true
+    comment: Converge/infra runner
+
+# Reuse the shipped clone scripts from the claude role; single source, no copy.
+- name: Install the cw-claude clone scripts from the claude role
+  become: true
+  ansible.builtin.copy:
+    src: "{{ role_path }}/../claude/files/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - cw-claude-token
+    - cw-claude-credential
+
+- name: Create the cw-claude config directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ infra_runner_github_app_key_path | dirname }}"
+    state: directory
+    owner: "{{ infra_runner_user }}"
+    group: "{{ infra_runner_user }}"
+    mode: "0700"
+  when: infra_runner_github_app_private_key | length > 0
+
+- name: Install the cw-claude GitHub App private key
+  become: true
+  ansible.builtin.copy:
+    dest: "{{ infra_runner_github_app_key_path }}"
+    content: "{{ infra_runner_github_app_private_key }}"
+    owner: "{{ infra_runner_user }}"
+    group: "{{ infra_runner_user }}"
+    mode: "0600"
+  no_log: true
+  when: infra_runner_github_app_private_key | length > 0
+
+- name: Configure git for the runner user (App credential helper)
+  become: true
+  become_user: "{{ infra_runner_user }}"
+  ansible.builtin.copy:
+    dest: "{{ infra_runner_home }}/.gitconfig"
+    content: |
+      [user]
+        name = cw-claude[bot]
+        email = 311366169+cw-claude[bot]@users.noreply.github.com
+      [credential "https://github.com"]
+        helper = !cw-claude-credential
+    mode: "0644"
+
+- name: Clone the repos side-by-side for roles_path
+  become: true
+  become_user: "{{ infra_runner_user }}"
+  ansible.builtin.git:
+    repo: "{{ item.url }}"
+    dest: "{{ infra_runner_home }}/git/cw/{{ item.name }}"
+    version: main
+    update: false
+  environment:
+    CW_CLAUDE_APP_ID: "{{ infra_runner_github_app_id }}"
+    CW_CLAUDE_APP_KEY: "{{ infra_runner_github_app_key_path }}"
+  loop: "{{ infra_runner_repos }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: infra_runner_github_app_id | length > 0 and infra_runner_github_app_private_key | length > 0
+
+# Collections + roles land in ./collections and ./roles (per the deploy's cfg).
+- name: Install the Ansible collections and roles
+  become: true
+  become_user: "{{ infra_runner_user }}"
+  ansible.builtin.command:
+    cmd: ansible-galaxy install -r requirements.yml
+    chdir: "{{ infra_runner_home }}/git/cw/lab-deploy/ansible"
+    creates: "{{ infra_runner_home }}/git/cw/lab-deploy/ansible/collections/ansible_collections"
+  when: infra_runner_github_app_id | length > 0 and infra_runner_github_app_private_key | length > 0

@@ -1,0 +1,95 @@
+---
+# Install the converge runner's run toolchain on a stock debian/13/cloud host:
+# the distro packages, Terraform, and sops, plus the AWS CLI. Ansible, its
+# collections, the repos, and the run-time identity are wired in follow-up
+# tasks (see the role README). Binaries are checksum-verified against the
+# vendor's published sums, never a hardcoded hash.
+- name: Install the run toolchain
+  become: true
+  ansible.builtin.apt:
+    name: "{{ infra_runner_apt_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Reached over SSH; the cloud image ships only the client.
+- name: Enable and start sshd
+  become: true
+  ansible.builtin.systemd_service:
+    name: ssh
+    enabled: true
+    state: started
+
+# Terraform ships as a release zip; extract just the binary, checksum-verified.
+- name: Download Terraform {{ infra_runner_terraform_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/terraform/{{ infra_runner_terraform_version }}/terraform_{{ infra_runner_terraform_version }}_linux_amd64.zip"
+    dest: "/tmp/terraform_{{ infra_runner_terraform_version }}_linux_amd64.zip"
+    checksum: "sha256:https://releases.hashicorp.com/terraform/{{ infra_runner_terraform_version }}/terraform_{{ infra_runner_terraform_version }}_SHA256SUMS"
+    mode: "0644"
+
+- name: Install Terraform {{ infra_runner_terraform_version }}
+  become: true
+  ansible.builtin.unarchive:
+    src: "/tmp/terraform_{{ infra_runner_terraform_version }}_linux_amd64.zip"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [terraform]
+    creates: /usr/local/bin/terraform
+
+# sops ships a raw binary (no .deb); download checksummed, drop on PATH.
+- name: Download sops {{ infra_runner_sops_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/getsops/sops/releases/download/v{{ infra_runner_sops_version }}/sops-v{{ infra_runner_sops_version }}.linux.amd64"
+    dest: "/tmp/sops-v{{ infra_runner_sops_version }}.linux.amd64"
+    checksum: "sha256:https://github.com/getsops/sops/releases/download/v{{ infra_runner_sops_version }}/sops-v{{ infra_runner_sops_version }}.checksums.txt"
+    mode: "0644"
+
+- name: Install sops {{ infra_runner_sops_version }}
+  become: true
+  ansible.builtin.copy:
+    src: "/tmp/sops-v{{ infra_runner_sops_version }}.linux.amd64"
+    dest: /usr/local/bin/sops
+    remote_src: true
+    mode: "0755"
+
+# Python CLIs isolated on PATH; pipx bin dir /usr/local/bin is already on PATH.
+- name: Install the pipx CLIs for all users
+  become: true
+  ansible.builtin.command:
+    cmd: "pipx install {{ item }}"
+    creates: "/opt/pipx/venvs/{{ item }}"
+  loop: "{{ infra_runner_pipx_packages }}"
+  environment:
+    PIPX_HOME: /opt/pipx
+    PIPX_BIN_DIR: /usr/local/bin
+
+# PEP 668 system python; --break-system-packages for Ansible's interpreter.
+- name: Install the Python run libraries for Ansible's interpreter
+  become: true
+  ansible.builtin.pip:
+    name: "{{ infra_runner_pip_packages }}"
+    extra_args: "--break-system-packages"
+
+# lego ships a release tarball; extract the binary to PATH, checksum-verified.
+- name: Download lego {{ infra_runner_lego_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/go-acme/lego/releases/download/v{{ infra_runner_lego_version }}/lego_v{{ infra_runner_lego_version }}_linux_amd64.tar.gz"
+    dest: "/tmp/lego_v{{ infra_runner_lego_version }}_linux_amd64.tar.gz"
+    checksum: "sha256:https://github.com/go-acme/lego/releases/download/v{{ infra_runner_lego_version }}/lego_{{ infra_runner_lego_version }}_checksums.txt"
+    mode: "0644"
+
+- name: Install lego {{ infra_runner_lego_version }}
+  become: true
+  ansible.builtin.unarchive:
+    src: "/tmp/lego_v{{ infra_runner_lego_version }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [lego]
+    creates: /usr/local/bin/lego
+
+- name: Provision the run identity, repos, and collections
+  ansible.builtin.include_tasks: repos.yml
