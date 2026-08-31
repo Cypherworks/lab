@@ -69,15 +69,30 @@
       environment: "{{ vcsa_lego_env }}"
       changed_when: true
 
-    - name: Read the signed leaf certificate
+    # lego writes a fullchain .crt; vCenter wants the leaf alone in `cert`.
+    - name: Extract the leaf certificate from the chain
+      ansible.builtin.command:
+        cmd: >-
+          openssl x509
+          -in {{ vcsa_lego_workdir }}/certificates/{{ vcsa_system_name }}.crt
+          -out {{ vcsa_lego_workdir }}/leaf.pem
+      changed_when: true
+
+    - name: Read the leaf certificate
       ansible.builtin.slurp:
-        src: "{{ vcsa_lego_workdir }}/certificates/{{ vcsa_system_name }}.crt"
+        src: "{{ vcsa_lego_workdir }}/leaf.pem"
       register: vcsa_leaf
 
     - name: Read the issuer (CA) chain
       ansible.builtin.slurp:
         src: "{{ vcsa_lego_workdir }}/certificates/{{ vcsa_system_name }}.issuer.crt"
       register: vcsa_chain
+
+    # vCenter's root_cert must end in a self-signed root; lego omits it.
+    - name: Read the trust anchor (self-signed root CA)
+      ansible.builtin.slurp:
+        src: "{{ vcsa_cert_root_ca }}"
+      register: vcsa_root_ca
 
     - name: Read the private key
       ansible.builtin.slurp:
@@ -96,7 +111,7 @@
         body:
           cert: "{{ vcsa_leaf.content | b64decode }}"
           key: "{{ vcsa_key.content | b64decode }}"
-          root_cert: "{{ vcsa_chain.content | b64decode }}"
+          root_cert: "{{ (vcsa_chain.content | b64decode) + '\n' + (vcsa_root_ca.content | b64decode) }}"
         validate_certs: false
         status_code: 204
       no_log: true
