@@ -80,12 +80,13 @@
         mode: "0600"
 
     - name: Sign the CSR with lego over DNS-01
+      # lego v5 moved these from global to `run` command flags.
       ansible.builtin.command:
         argv: >-
-          {{ [vcsa_lego_bin, '--accept-tos', '--email', vcsa_le_email,
+          {{ [vcsa_lego_bin, 'run', '--accept-tos', '--email', vcsa_le_email,
               '--path', vcsa_lego_workdir, '--dns', vcsa_lego_dns_provider]
              + (['--server', vcsa_le_server] if vcsa_le_server | length > 0 else [])
-             + ['run', '--csr', vcsa_lego_workdir + '/vcenter.csr'] }}
+             + ['--csr', vcsa_lego_workdir + '/vcenter.csr'] }}
       environment: "{{ vcsa_lego_env }}"
       changed_when: true
 
