@@ -8,14 +8,15 @@ host is the [`esxi`](../esxi) role; identity federation is [`vcenter_oidc`](../v
 ## Where it runs
 
 On the **control host** (a `localhost` / `connection: local` play), not on the ESXi
-host or vCenter. **macOS only for now**: the role mounts the ISO with `hdiutil` and
-uses the `mac/` installer. A Linux control host needs a loop-mount + `lin64/` branch
-(not built). It needs:
+host or vCenter. OS-aware: on macOS the role mounts the ISO with `hdiutil` and uses
+the `mac/` installer; on Linux it extracts the ISO with `xorriso` to the workdir and
+uses the `lin64/` installer (an unprivileged container can't loop-mount, so it can't
+mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 
-- `vcsa_iso` pointing at the installer ISO on the control host. The role mounts it
-  read-only at deploy, derives `vcsa_deploy_bin` (`vcsa-cli-installer/mac/vcsa-deploy`)
-  and `vcsa_template_version` (the template's `__version`) from it, and unmounts after.
-  Both derived vars can be overridden to pin them.
+- `vcsa_iso` pointing at the installer ISO on the control host. The role derives
+  `vcsa_deploy_bin` (`vcsa-cli-installer/<mac|lin64>/vcsa-deploy`) and
+  `vcsa_template_version` (the template's `__version`) from it. On macOS it unmounts
+  after; on Linux the extract stays in the workdir. Both vars can be overridden to pin.
 - Network reach to the ESXi host (to deploy) and to the vCenter IP (to cert it).
 - For the cert step: the `lego` binary (auto-discovered on `PATH`; the ansible run is
   not a login shell, so a Homebrew `lego` may need its dir on `PATH`) and its
