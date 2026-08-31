@@ -15,6 +15,7 @@ infra_runner_apt_packages:
   - ca-certificates
   - unzip
   - xorriso
+  - sshpass
   - python3
   - python3-pip
   - pipx
