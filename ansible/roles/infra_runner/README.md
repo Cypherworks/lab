@@ -19,7 +19,7 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 
 1. The distro packages (`ansible`, `git`, `age`, python, pipx, …) via apt.
 2. Terraform, from the HashiCorp release zip, verified against `SHA256SUMS`.
-3. sops, from the getsops release `.deb`, verified against the release checksums.
+3. sops, the raw getsops release binary, verified against the release checksums.
 4. The AWS CLI, isolated on `PATH` via pipx.
 5. Enables `sshd` (the cloud image ships only the client).
 6. Clones both repos side-by-side for `roles_path` and installs the galaxy
@@ -43,8 +43,6 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 
 ## Verify on the build
 
-- The getsops release asset names (`sops-v<ver>.amd64.deb`, the checksums file):
-  confirm they match the release before relying on the download.
 - `pyvmomi` on Debian 13 for the system Python that Ansible uses (apt
   `python3-pyvmomi` vs pip under PEP 668) — resolve when the vCenter play runs here.
 

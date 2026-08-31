@@ -25,7 +25,7 @@ infra_runner_apt_packages:
 # Terraform release zip, checksum-verified; level with the claude workbench.
 infra_runner_terraform_version: "1.11.4"
 
-# sops: the .deb from the getsops release, checksum-verified. Confirm current.
+# sops: the raw getsops release binary, checksum-verified. Confirm current.
 infra_runner_sops_version: "3.9.4"
 
 # Python CLIs isolated on PATH via pipx (claude pattern); awscli reads homelab.
