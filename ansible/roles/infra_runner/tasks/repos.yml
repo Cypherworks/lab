@@ -59,6 +59,30 @@
         helper = !cw-claude-credential
     mode: "0644"
 
+# So interactive git/gh as the runner user finds the App creds.
+- name: Write the cw-claude App env for the runner's shell
+  become: true
+  ansible.builtin.copy:
+    dest: "{{ infra_runner_github_app_key_path | dirname }}/env"
+    content: |
+      export CW_CLAUDE_APP_ID="{{ infra_runner_github_app_id }}"
+      export CW_CLAUDE_APP_KEY="{{ infra_runner_github_app_key_path }}"
+      export GH_TOKEN="$(cw-claude-token)"
+    owner: "{{ infra_runner_user }}"
+    group: "{{ infra_runner_user }}"
+    mode: "0644"
+  when: infra_runner_github_app_id | length > 0
+
+- name: Source the cw-claude env from the runner's login shell
+  become: true
+  become_user: "{{ infra_runner_user }}"
+  ansible.builtin.lineinfile:
+    path: "{{ infra_runner_home }}/.profile"
+    line: "[ -r ~/.config/cw-claude/env ] && . ~/.config/cw-claude/env"
+    create: true
+    mode: "0644"
+  when: infra_runner_github_app_id | length > 0
+
 - name: Clone the repos side-by-side for roles_path
   become: true
   become_user: "{{ infra_runner_user }}"
