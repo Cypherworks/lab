@@ -1,36 +1,51 @@
 ---
-# Mount the VCSA ISO read-only (macOS hdiutil) and derive the macOS installer
-# path + the install-template schema version from it, each only when the deploy
-# didn't pin one. The caller unmounts in an always block. macOS-only for now:
-# hdiutil and the mac/ installer variant; a Linux control host needs its own
-# mount + lin64/ branch (not built). Confirm the ISO layout on the box.
+# Make the installer + OVA available and derive the vcsa-deploy path and the
+# install-template __version, each only when the deploy didn't pin them.
+# OS-aware control host: macOS mounts with hdiutil (mac/ installer); Linux
+# extracts with xorriso to the workdir (lin64/), as an unprivileged container
+# can't loop-mount. The caller releases it in an always block. Confirm the ISO
+# layout on the box.
 - name: Require the ISO path to deploy vCenter
   ansible.builtin.assert:
     that: vcsa_iso | length > 0
     fail_msg: "vcsa_iso must point at the VCSA installer ISO to deploy vCenter."
 
-- name: Mount the VCSA ISO (read-only, no Finder)
+- name: Detect the control host OS
+  ansible.builtin.command: uname -s
+  register: vcsa_uname
+  changed_when: false
+
+- name: Mount the VCSA ISO with hdiutil (macOS)
   ansible.builtin.command:
-    argv:
-      - hdiutil
-      - attach
-      - -nobrowse
-      - -readonly
-      - -plist
-      - "{{ vcsa_iso }}"
+    argv: [hdiutil, attach, -nobrowse, -readonly, -plist, "{{ vcsa_iso }}"]
   register: vcsa_iso_attach
   changed_when: true
+  when: vcsa_uname.stdout == "Darwin"
 
-- name: Capture the ISO mount point
+- name: Use the hdiutil mount point as the ISO root (macOS)
   ansible.builtin.set_fact:
-    vcsa_iso_mount: >-
+    vcsa_iso_root: >-
       {{ vcsa_iso_attach.stdout
          | regex_search('<key>mount-point</key>\s*<string>([^<]+)</string>', '\1')
          | first }}
+    vcsa_installer_os: mac
+  when: vcsa_uname.stdout == "Darwin"
 
-- name: Locate the macOS vcsa-deploy in the ISO
+- name: Extract the VCSA ISO with xorriso (Linux)
+  ansible.builtin.command:
+    argv: [xorriso, -osirrox, "on", -indev, "{{ vcsa_iso }}", -extract, /, "{{ vcsa_workdir }}/iso"]
+    creates: "{{ vcsa_workdir }}/iso/vcsa-cli-installer"
+  when: vcsa_uname.stdout == "Linux"
+
+- name: Use the extract dir as the ISO root (Linux)
   ansible.builtin.set_fact:
-    vcsa_deploy_bin: "{{ vcsa_iso_mount }}/vcsa-cli-installer/mac/vcsa-deploy"
+    vcsa_iso_root: "{{ vcsa_workdir }}/iso"
+    vcsa_installer_os: lin64
+  when: vcsa_uname.stdout == "Linux"
+
+- name: Locate vcsa-deploy in the ISO
+  ansible.builtin.set_fact:
+    vcsa_deploy_bin: "{{ vcsa_iso_root }}/vcsa-cli-installer/{{ vcsa_installer_os }}/vcsa-deploy"
   when: vcsa_deploy_bin | length == 0
 
 - name: Assert the installer binary is present
@@ -41,5 +56,5 @@
 
 - name: Read the install template's schema version
   ansible.builtin.set_fact:
-    vcsa_template_version: "{{ (lookup('file', vcsa_iso_mount + '/vcsa-cli-installer/templates/install/embedded_vCSA_on_ESXi.json') | from_json)['__version'] }}"
+    vcsa_template_version: "{{ (lookup('file', vcsa_iso_root + '/vcsa-cli-installer/templates/install/embedded_vCSA_on_ESXi.json') | from_json)['__version'] }}"
   when: vcsa_template_version | length == 0

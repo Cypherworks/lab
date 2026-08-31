@@ -92,12 +92,14 @@
           - "{{ vcsa_workdir }}/install.json"
       changed_when: true
   always:
-    - name: Unmount the ISO
+    - name: Unmount the ISO (macOS; the Linux extract stays in the workdir)
       ansible.builtin.command:
         argv:
           - hdiutil
           - detach
-          - "{{ vcsa_iso_mount }}"
-      when: vcsa_iso_mount is defined
+          - "{{ vcsa_iso_root }}"
+      when:
+        - vcsa_uname.stdout | default('') == "Darwin"
+        - vcsa_iso_root is defined
       changed_when: true
       failed_when: false
