@@ -46,16 +46,10 @@ vcsa_lego_env: {}          # env for lego (DNS provider creds); from the deploy
 vcsa_le_email: ""          # ACME account email
 vcsa_le_server: ""         # ACME directory URL; empty = lego default (LE prod)
 vcsa_lego_workdir: "{{ vcsa_workdir }}/lego"
-# CSR subject; CN/SAN default to FQDN. Placeholders — override in the deploy.
+# CSR subject: CN and SAN default to the FQDN; LE ignores any other field.
 vcsa_cert_common_name: "{{ vcsa_system_name }}"
 vcsa_cert_sans: "{{ [vcsa_system_name] }}"
 vcsa_cert_key_size: 2048
-vcsa_cert_org: "Example Org"
-vcsa_cert_org_unit: "IT"
-vcsa_cert_country: "US"
-vcsa_cert_state: "Example State"
-vcsa_cert_locality: "Example City"
-vcsa_cert_email: "{{ vcsa_le_email }}"  # tls-csr requires it; default the ACME email
 # Re-issue only near expiry or when not yet from this CA (no-op convergence).
 vcsa_cert_renew_before_days: 30
 vcsa_cert_issuer_match: "Let's Encrypt"
