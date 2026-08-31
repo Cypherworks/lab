@@ -57,6 +57,7 @@
                'country': vcsa_cert_country,
                'state_or_province': vcsa_cert_state,
                'locality': vcsa_cert_locality,
+               'email_address': vcsa_cert_email,
              } }}
 
     - name: Generate a machine SSL CSR (key stays in vCenter)

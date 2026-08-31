@@ -55,6 +55,7 @@ vcsa_cert_org_unit: ""
 vcsa_cert_country: ""
 vcsa_cert_state: ""
 vcsa_cert_locality: ""
+vcsa_cert_email: "{{ vcsa_le_email }}"  # tls-csr requires it; default the ACME email
 # Re-issue only near expiry or when not yet from this CA (no-op convergence).
 vcsa_cert_renew_before_days: 30
 vcsa_cert_issuer_match: "Let's Encrypt"
