@@ -21,16 +21,15 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 2. Terraform, from the HashiCorp release zip, verified against `SHA256SUMS`.
 3. sops, the raw getsops release binary, verified against the release checksums.
 4. The AWS CLI, isolated on `PATH` via pipx.
-5. Enables `sshd` (the cloud image ships only the client).
-6. Clones both repos side-by-side for `roles_path` and installs the galaxy
+5. mitogen (the fast Ansible strategy) and `pyvmomi` (for `community.vmware`)
+   into the system Python with `--break-system-packages` (PEP 668), so they
+   import under the interpreter Ansible uses.
+6. lego (the `vcsa` cert step), the release tarball binary, on `PATH`.
+7. Enables `sshd` (the cloud image ships only the client).
+8. Clones both repos side-by-side for `roles_path` and installs the galaxy
    collections/roles, using the clone identity from `repos.yml` (the shipped
    `cw-claude-token`/`cw-claude-credential` scripts, reused from the `claude`
    role by reference). The age key is not delivered — supplied at run time (D29).
-
-## Not yet here
-
-- The play-specific `pyvmomi` (for `community.vmware`) and `lego` (the `vcsa`
-  cert step) — add when the vCenter play is first run from here.
 
 ## Role variables
 
@@ -38,13 +37,10 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 | --- | --- | --- |
 | `infra_runner_apt_packages` | see defaults | Distro toolchain (proven on the image by `claude`). |
 | `infra_runner_terraform_version` | `1.11.4` | Terraform release, level with the workbench. |
-| `infra_runner_sops_version` | `3.9.4` | getsops release; confirm current on the build. |
+| `infra_runner_sops_version` | `3.9.4` | getsops release binary; confirm current. |
 | `infra_runner_pipx_packages` | `[awscli]` | Python CLIs installed isolated on `PATH`. |
-
-## Verify on the build
-
-- `pyvmomi` on Debian 13 for the system Python that Ansible uses (apt
-  `python3-pyvmomi` vs pip under PEP 668) — resolve when the vCenter play runs here.
+| `infra_runner_pip_packages` | mitogen, pyvmomi | System-python libs Ansible imports. |
+| `infra_runner_lego_version` | `5.4.0` | lego release for the `vcsa` cert step. |
 
 ## Example
 

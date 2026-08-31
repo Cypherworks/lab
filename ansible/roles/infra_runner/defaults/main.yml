@@ -32,6 +32,14 @@ infra_runner_sops_version: "3.9.4"
 infra_runner_pipx_packages:
   - awscli
 
+# System-python libs Ansible uses: mitogen (fast strategy) + pyvmomi (vmware).
+infra_runner_pip_packages:
+  - mitogen==0.3.52
+  - pyvmomi
+
+# lego (the vcsa cert step): the release tarball binary, checksum-verified.
+infra_runner_lego_version: "5.4.0"
+
 # Dedicated user owning the repos; roles_path needs them cloned side-by-side.
 infra_runner_user: runner
 infra_runner_home: /home/runner

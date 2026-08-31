@@ -66,5 +66,30 @@
     PIPX_HOME: /opt/pipx
     PIPX_BIN_DIR: /usr/local/bin
 
+# PEP 668 system python; --break-system-packages for Ansible's interpreter.
+- name: Install the Python run libraries for Ansible's interpreter
+  become: true
+  ansible.builtin.pip:
+    name: "{{ infra_runner_pip_packages }}"
+    extra_args: "--break-system-packages"
+
+# lego ships a release tarball; extract the binary to PATH, checksum-verified.
+- name: Download lego {{ infra_runner_lego_version }}
+  become: true
+  ansible.builtin.get_url:
+    url: "https://github.com/go-acme/lego/releases/download/v{{ infra_runner_lego_version }}/lego_v{{ infra_runner_lego_version }}_linux_amd64.tar.gz"
+    dest: "/tmp/lego_v{{ infra_runner_lego_version }}_linux_amd64.tar.gz"
+    checksum: "sha256:https://github.com/go-acme/lego/releases/download/v{{ infra_runner_lego_version }}/lego_{{ infra_runner_lego_version }}_checksums.txt"
+    mode: "0644"
+
+- name: Install lego {{ infra_runner_lego_version }}
+  become: true
+  ansible.builtin.unarchive:
+    src: "/tmp/lego_v{{ infra_runner_lego_version }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [lego]
+    creates: /usr/local/bin/lego
+
 - name: Provision the run identity, repos, and collections
   ansible.builtin.include_tasks: repos.yml
