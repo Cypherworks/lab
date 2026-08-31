@@ -1,0 +1,43 @@
+---
+# Create the DC + cluster and add the ESXi host, against the vCenter API on the
+# control host. Idempotent (create-if-absent). A fresh vmware_cluster leaves
+# HA/DRS/vSAN off, which is what we want (D28); this only needs the cluster to
+# exist so Packer/TF test code exercises the DC/Cluster paths.
+- name: Configure the vCenter datacenter, cluster, and host
+  delegate_to: localhost
+  module_defaults:
+    community.vmware.vmware_datacenter:
+      hostname: "{{ vcenter_cluster_hostname }}"
+      username: "{{ vcenter_cluster_username }}"
+      password: "{{ vcenter_cluster_password }}"
+      validate_certs: "{{ vcenter_cluster_validate_certs }}"
+    community.vmware.vmware_cluster:
+      hostname: "{{ vcenter_cluster_hostname }}"
+      username: "{{ vcenter_cluster_username }}"
+      password: "{{ vcenter_cluster_password }}"
+      validate_certs: "{{ vcenter_cluster_validate_certs }}"
+    community.vmware.vmware_host:
+      hostname: "{{ vcenter_cluster_hostname }}"
+      username: "{{ vcenter_cluster_username }}"
+      password: "{{ vcenter_cluster_password }}"
+      validate_certs: "{{ vcenter_cluster_validate_certs }}"
+  block:
+    - name: Create the datacenter
+      community.vmware.vmware_datacenter:
+        datacenter_name: "{{ vcenter_cluster_datacenter }}"
+        state: present
+
+    - name: Create the cluster (HA/DRS/vSAN off by default)
+      community.vmware.vmware_cluster:
+        datacenter: "{{ vcenter_cluster_datacenter }}"
+        cluster_name: "{{ vcenter_cluster_name }}"
+
+    - name: Add the ESXi host to the cluster
+      community.vmware.vmware_host:
+        datacenter: "{{ vcenter_cluster_datacenter }}"
+        cluster: "{{ vcenter_cluster_name }}"
+        esxi_hostname: "{{ vcenter_cluster_esxi_hostname }}"
+        esxi_username: "{{ vcenter_cluster_esxi_username }}"
+        esxi_password: "{{ vcenter_cluster_esxi_password }}"
+        fetch_ssl_thumbprint: true
+        state: present
