@@ -1,0 +1,14 @@
+---
+# The test image lacks what the docker role's deb822_repository task needs:
+# python3-debian for the module, ca-certificates to fetch Docker's signing key.
+- name: Prepare
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Install the docker role's prerequisites
+      ansible.builtin.apt:
+        name:
+          - python3-debian
+          - ca-certificates
+        state: present
+        update_cache: true
