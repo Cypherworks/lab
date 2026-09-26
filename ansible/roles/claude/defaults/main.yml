@@ -32,10 +32,7 @@ claude_pipx_packages:
   - pre-commit
 
 # Claude Code, from npm. Auth = CLAUDE_CODE_OAUTH_TOKEN (SOPS), headless box.
-# Pinned: the claude user can't self-update the root-owned global install, so
-# bump this to upgrade.
 claude_code_package: "@anthropic-ai/claude-code"
-claude_code_version: "2.1.283"
 
 # --- workbench user: owns the repos, secrets, and Claude Code state ---
 claude_user: claude

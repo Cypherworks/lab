@@ -10,7 +10,7 @@ Full design: `lab-deploy` [`docs/claude-workbench.md`](https://github.com/Cypher
 
 - Debian 13 / Ubuntu host (the cloud image ships only the SSH client, so the role installs `openssh-server`).
 - Collection `community.general` (npm module); `ansible.builtin` otherwise. Privilege escalation (`become`) to root.
-- Outbound HTTPS to go.dev, dl.google.com, releases.hashicorp.com, github.com, cli.github.com, and npm.
+- Outbound HTTPS to go.dev, releases.hashicorp.com, github.com, cli.github.com, and npm.
 - An installed GitHub App and its private key, delivered via SOPS, for the bot identity.
 
 ## Usage
@@ -27,7 +27,6 @@ Become the workbench user (`sudo -iu claude`), then start or re-attach a persist
 | `claude_apt_packages` | see defaults | Distro packages, including `openssh-server`, git, tmux, jq, build-essential, python3/pipx, node/npm, ansible, ansible-lint, yamllint, shellcheck. |
 | `claude_pipx_packages` | `[checkov, pre-commit]` | Tools not packaged for Debian; pipx installs them isolated into `/usr/local/bin`. |
 | `claude_code_package` | `@anthropic-ai/claude-code` | Claude Code npm package (global install). |
-| `claude_code_version` | `2.1.283` | Claude Code version. The `claude` user can't self-update the root-owned install, so bump this to upgrade. |
 | `claude_user` | `claude` | The workbench user that owns the repos, secrets, and Claude Code state. |
 | `claude_home` | `/home/claude` | Workbench user home (`0700`). |
 | `claude_operator_group` | `ssh-users` | LDAP group granted passwordless `sudo -iu claude`. |
@@ -41,7 +40,7 @@ Become the workbench user (`sudo -iu claude`), then start or re-attach a persist
 | `claude_github_reviewer` | `""` | PR reviewer + assignee login for `cw-claude-pr` (empty = don't set a reviewer). |
 | `claude_config_repo` | `""` | A private repo cloned as `~/.claude` (operator rules, hooks, settings). Empty skips the config sync. |
 
-`claude_github_app_id`, `claude_github_app_private_key`, and `claude_oauth_token` are secrets from SOPS. Pin the three toolchain version variables to a current release before apply and keep them level with the CI images; bump `claude_code_version` to upgrade Claude Code. Leaving the secrets empty installs the toolchain but skips the credential wiring.
+`claude_github_app_id`, `claude_github_app_private_key`, and `claude_oauth_token` are secrets from SOPS. Pin the three version variables to a current release before apply and keep them level with the CI images. Leaving the secrets empty installs the toolchain but skips the credential wiring.
 
 ## Dependencies
 
@@ -49,7 +48,7 @@ None as Ansible role deps. The identity/login stack (`sssd`, `ssh_ca_trust`) is 
 
 ## What it does
 
-Toolchain (as root): installs `claude_apt_packages` and enables `sshd`; adds the GitHub CLI apt repo and installs `gh`; installs Go, Terraform, and actionlint from upstream release archives (idempotent via `creates`) and pipx-installs `checkov` and `pre-commit`; installs Claude Code `claude_code_version` from npm, a base `/etc/tmux.conf`, and the `claude-session` helper; and installs the cw-claude helper scripts (below) into `/usr/local/bin`.
+Toolchain (as root): installs `claude_apt_packages` and enables `sshd`; adds the GitHub CLI apt repo and installs `gh`; installs Go, Terraform, and actionlint from upstream release archives (idempotent via `creates`) and pipx-installs `checkov` and `pre-commit`; installs Claude Code from npm, a base `/etc/tmux.conf`, and the `claude-session` helper; and installs the cw-claude helper scripts (below) into `/usr/local/bin`.
 
 Workbench user (`user.yml`): creates the `claude` user, a sudoers drop-in granting `%{{ claude_operator_group }}` passwordless `sudo -iu claude`, and a `claude` launch alias; delivers the GitHub App key to `claude_github_app_key_path` (`0600`, `no_log`); renders `~/.workbench-env` (`0600`) exporting `CW_CLAUDE_APP_ID`, `CW_CLAUDE_APP_KEY`, `CW_CLAUDE_REVIEWER`, `CLAUDE_CODE_OAUTH_TOKEN`, and `GH_TOKEN="$(cw-claude-token)"`; sets the git identity and the `!cw-claude-credential` credential helper; clones `claude_repos` into `~/git/cw` and runs `pre-commit install` in each; and seeds `~/.claude.json` so headless Claude Code skips onboarding.
 
