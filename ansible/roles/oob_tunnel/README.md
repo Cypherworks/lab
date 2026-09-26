@@ -61,6 +61,7 @@ Set `oob_tunnel_mode`:
 | Variable | Default | Purpose |
 |---|---|---|
 | `oob_tunnel_mode` | `""` | `client` or `relay`. |
+| `oob_tunnel_enabled` | `false` | The switch (see above): runs the client tunnel / provisions the relay user when true, tears them down when false. |
 | `oob_tunnel_relay_host` | `""` | Public host the client dials. |
 | `oob_tunnel_relay_ssh_port` | `22` | The relay's sshd port. |
 | `oob_tunnel_relay_user` | `oob` | Forwarding-only account on the relay. |

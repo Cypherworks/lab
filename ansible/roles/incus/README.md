@@ -43,18 +43,18 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 ## Dependencies
 
-None (no `meta/main.yml`). Requires the `community.general` and `community.docker`-independent collections noted above; storage tooling is installed by the role.
+None (no `meta/main.yml`). Requires the `community.general` collection noted above; storage tooling is installed by the role.
 
 ## What it does
 
 1. Adds the Zabbly apt repository and key, pins Incus to the Zabbly origin (so apt and unattended-upgrades can never resolve it to the Ubuntu archive's incus), installs the storage tooling, then installs Incus, removes the `incus-ui-canonical` web UI if present, and holds `incus_hold_packages` against unattended-upgrades.
 2. Adds `ansible_user` to `incus-admin` so it can drive Incus without root.
-3. Renders `/etc/netplan/70-incus.yaml` with a `<uplink>.<vlan>` link and bridge per entry in `incus_networks`, then flushes handlers so the bridges are up before any profile references them.
+3. Renders `/etc/netplan/70-incus.yaml` with a `<uplink>.<vlan>` link and bridge per entry in `incus_networks`, then flushes handlers so the bridges are up before any profile references them, and creates any missing `<uplink>.<vlan>` netdev and bridge attachment with `ip link` (networkd only hot-creates VLAN netdevs at boot).
 4. Carves the dedicated storage LV.
 5. On the bootstrap member (or a standalone host), initialises Incus from preseed; when clustering, binds the API to the member's real IP and runs `incus cluster enable`.
 6. Creates a profile per lab VLAN with a bridged NIC on that VLAN's bridge.
-7. On a joining member, mints a single-use token on the bootstrap host (via `delegate_to`) and joins with `incus admin init --preseed`.
-8. On the bootstrap member, loads the anti-affinity placement scriptlet (`instances.placement.scriptlet`).
+7. On the bootstrap member, loads the anti-affinity placement scriptlet (`instances.placement.scriptlet`), writing only when it differs, or unsets it when `incus_placement_scriptlet_enabled` is false.
+8. On a joining member, mints a single-use token on the bootstrap host (via `delegate_to`) and joins with `incus admin init --preseed`.
 9. Installs the weekly btrfs scrub service + timer, which reads and verifies every block in the storage pool against its checksum (`incus_scrub_enabled`).
 10. Installs the cold-boot gate (script, service, and Incus service drop-in) that holds the daemon at boot until the lab gateway answers, so it doesn't form the cluster or autostart instances into a dead network (`incus_boot_gate_enabled`).
 11. When `incus_metrics_cert_pem` is set, binds the Prometheus metrics listener on each member and trusts the scraper's client cert cluster-wide (metrics-only).

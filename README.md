@@ -14,7 +14,7 @@ The code was written for a defence/government-oriented home lab and follows secu
 ## Layout
 
 ```
-ansible/roles/     34 roles — OS baseline, DNS, ingress, HA data tier, virtualisation, identity, secrets, observability, CI/dev workbench, backup, Pi hardware
+ansible/roles/     39 roles — OS baseline, DNS, ingress, HA data tier, virtualisation, identity, secrets, observability, CI/dev workbench, backup, Pi hardware
 terraform/modules/ 5 UniFi network modules — networks, firewall, switch ports, port forwards, WLANs
 scripts/           host imaging and operational helpers
 ```
@@ -42,7 +42,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 | [`blocky`](ansible/roles/blocky) | DNS frontend with blocklists and local records, forwarding to a local recursive resolver. |
 | [`unbound`](ansible/roles/unbound) | Recursive validating resolver on loopback, behind blocky. |
 | [`keepalived`](ansible/roles/keepalived) | VRRP floating IP across DNS nodes with a real DNS-query health check. |
-| [`caddy`](ansible/roles/caddy) | Manage the Caddy reverse-proxy configuration and trusted internal CAs. |
+| [`caddy`](ansible/roles/caddy) | Manage the Caddy reverse-proxy configuration and trusted internal CAs; refuses requests whose Host doesn't match the TLS SNI (`strict_sni_host`). |
 | [`sni_router`](ansible/roles/sni_router) | L4 SNI passthrough router (nginx stream) that terminates no TLS. |
 | [`headscale`](ansible/roles/headscale) | Headscale control server from a pinned upstream package, with optional OIDC. |
 
@@ -59,8 +59,12 @@ Each role has its own README with variables, dependencies, and an example. Roles
 
 | Role | Purpose |
 |------|---------|
-| [`incus`](ansible/roles/incus) | Incus with web UI, per-VLAN bridges, dedicated storage, and optional clustering. |
+| [`incus`](ansible/roles/incus) | Incus (CLI and API, no web UI) with per-VLAN bridges, dedicated storage, and optional clustering. |
 | [`proxmox`](ansible/roles/proxmox) | Configure a standalone Proxmox VE host (PVE 9.x / Debian 13) on top of a stock install. |
+| [`esxi`](ansible/roles/esxi) | Configure a standalone ESXi 8 host on top of a stock install. |
+| [`vcsa`](ansible/roles/vcsa) | Deploy a vCenter Server Appliance (VCSA 8) onto a standalone ESXi host and replace its self-issued machine SSL certificate with a CA-signed one. |
+| [`vcenter_cluster`](ansible/roles/vcenter_cluster) | Create a vCenter Datacenter and Cluster (HA/DRS/vSAN off) and add the standalone ESXi host to it. |
+| [`vcenter_oidc`](ansible/roles/vcenter_oidc) | vCenter identity provider federation against an external OIDC provider (Authentik). |
 | [`openbao`](ansible/roles/openbao) | OpenBao secrets manager — PKI, AWS-KMS auto-unseal, OIDC, SSH CA, S3 snapshots. |
 | [`authentik_app`](ansible/roles/authentik_app) | Authentik app tier against an external HA database, with blueprint integrations and an LDAP outpost. |
 
@@ -87,7 +91,8 @@ Each role has its own README with variables, dependencies, and an example. Roles
 | Role | Purpose |
 |------|---------|
 | [`claude`](ansible/roles/claude) | AI-assisted development workbench: the CI toolchain (Go, Node, Terraform, Ansible, linters, gh), Claude Code, tmux, and the cw-claude GitHub App helper scripts. |
-| [`github_runner`](ansible/roles/github_runner) | Self-hosted, ephemeral GitHub Actions runner as a container on a Docker host; registers against a single repository or a whole organisation. |
+| [`github_runner`](ansible/roles/github_runner) | Self-hosted, ephemeral GitHub Actions runner as a container on a Docker host; registers against a single repository or a whole organisation, optionally into a runner group. |
+| [`infra_runner`](ansible/roles/infra_runner) | x86_64 Linux control host an operator SSHes into to run Terraform and Ansible plays by hand; also the native host for the VCSA deploy. |
 
 ### Backup
 
@@ -121,10 +126,11 @@ All modules require Terraform `>= 1.10` and provider `filipowm/unifi` `1.0.0`.
 | Script | Purpose |
 |--------|---------|
 | [`flash-pi.sh`](scripts/flash-pi.sh) | Write an Ubuntu arm64 image to SD/USB and inject headless cloud-init for a Raspberry Pi. macOS only. |
-| [`flash-x86.sh`](scripts/flash-x86.sh) | Build one generic automated Ubuntu 24.04 autoinstall USB/ISO for all x86 hosts. macOS only. |
+| [`flash-x86.sh`](scripts/flash-x86.sh) | Build an Ubuntu 24.04 autoinstall USB/ISO: one generic unattended image for the headless x86 nodes, or the `sheepdip` profile for the air-gapped scanning station. macOS only. |
 | [`provision-poller.sh`](scripts/provision-poller.sh) | Wait for freshly-flashed hosts to answer SSH and run a smoke check. |
 | [`bao-ssh-sign.sh`](scripts/bao-ssh-sign.sh) | Sign an SSH public key with the OpenBao SSH CA for short-lived, identity-locked access. |
 | [`check-sops-encrypted.sh`](scripts/check-sops-encrypted.sh) | Pre-commit guard that fails if a file that should be SOPS-encrypted is staged in plaintext. |
+| [`check-sni-host-binding.sh`](scripts/check-sni-host-binding.sh) | Probe an HTTPS ingress from outside and fail unless a Host that doesn't match the TLS SNI gets 421. |
 
 ## Using this in your own environment
 
@@ -137,7 +143,7 @@ These roles and modules are consumed by a separate private repository that holds
 roles_path = roles:../lab/ansible/roles
 ```
 
-Supply every value marked as site data or a secret in the role READMEs from your own inventory and SOPS-encrypted vars. The roles target Ubuntu (22.04/24.04) and Debian 13 hosts and use the `community.general`, `ansible.posix`, `community.docker`, and `community.postgresql` collections.
+Supply every value marked as site data or a secret in the role READMEs from your own inventory and SOPS-encrypted vars. The roles target Ubuntu (22.04/24.04) and Debian 13 hosts (the `esxi`, `vcsa` and `vcenter_*` roles target ESXi and vCenter instead) and use the `community.general`, `ansible.posix`, `community.docker`, `community.postgresql`, `community.vmware`, and `community.crypto` collections.
 
 **Terraform.** Reference modules by Git source, pinned to a specific commit or tag:
 

@@ -18,16 +18,17 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 `claude` workbench proves on the same image:
 
 1. The distro packages (`ansible`, `git`, `age`, python, pipx, …) via apt.
-2. Terraform, from the HashiCorp release zip, verified against `SHA256SUMS`.
-3. sops, the raw getsops release binary, verified against the release checksums.
-4. The AWS CLI, isolated on `PATH` via pipx.
-5. mitogen (the fast Ansible strategy) and `pyvmomi` (for `community.vmware`)
+2. Enables `sshd` (the cloud image ships only the client).
+3. Terraform, from the HashiCorp release zip, verified against `SHA256SUMS`.
+4. sops, the raw getsops release binary, verified against the release checksums.
+5. The AWS CLI, isolated on `PATH` via pipx.
+6. mitogen (the fast Ansible strategy) and `pyvmomi` (for `community.vmware`)
    into the system Python with `--break-system-packages` (PEP 668), so they
    import under the interpreter Ansible uses.
-6. lego (the `vcsa` cert step), the release tarball binary, on `PATH`.
-7. Enables `sshd` (the cloud image ships only the client).
-8. Clones both repos side-by-side for `roles_path` and installs the galaxy
-   collections/roles, using the clone identity from `repos.yml` (the shipped
+7. lego (the `vcsa` cert step), the release tarball binary, on `PATH`.
+8. Creates the `infra_runner_user`, clones both repos side-by-side under
+   `~/git/cw` for `roles_path` and installs the galaxy collections/roles, using
+   the clone identity from `repos.yml` (the shipped
    `cw-claude-token`/`cw-claude-credential` scripts, reused from the `claude`
    role by reference). The age key is not delivered — supplied at run time (D29).
 
@@ -39,8 +40,14 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 | `infra_runner_terraform_version` | `1.11.4` | Terraform release, level with the workbench. |
 | `infra_runner_sops_version` | `3.9.4` | getsops release binary; confirm current. |
 | `infra_runner_pipx_packages` | `[awscli]` | Python CLIs installed isolated on `PATH`. |
-| `infra_runner_pip_packages` | mitogen, pyvmomi | System-python libs Ansible imports. |
+| `infra_runner_pip_packages` | `mitogen==0.3.52`, `pyvmomi` | System-python libs Ansible imports. |
 | `infra_runner_lego_version` | `5.4.0` | lego release for the `vcsa` cert step. |
+| `infra_runner_user` | `runner` | User that owns the repos and runs the plays. |
+| `infra_runner_home` | `/home/runner` | That user's home; repos land in `~/git/cw`. |
+| `infra_runner_repos` | lab, lab-deploy | Repos cloned side-by-side (only when the App id and key are set). |
+| `infra_runner_github_app_id` | `""` | cw-claude App id for the clone identity. |
+| `infra_runner_github_app_private_key` | `""` | **Secret (SOPS).** App private key (PEM). |
+| `infra_runner_github_app_key_path` | `~/.config/cw-claude/app.pem` | Where the App key is written (`0600`). |
 
 ## Example
 

@@ -31,9 +31,11 @@ and SOPS, not from the role.
 | `vcenter_cluster_hostname` | `""` | vCenter host/IP for the API. |
 | `vcenter_cluster_username` | `administrator@vsphere.local` | SSO admin. |
 | `vcenter_cluster_password` | `""` | SSO admin password (SOPS). |
+| `vcenter_cluster_validate_certs` | `false` | Verify the vCenter API certificate. |
 | `vcenter_cluster_datacenter` | `""` | Datacenter to create. |
 | `vcenter_cluster_name` | `""` | Cluster to create (services stay off). |
 | `vcenter_cluster_esxi_hostname` | `""` | The ESXi host to add. |
+| `vcenter_cluster_esxi_username` | `root` | ESXi user for adding the host. |
 | `vcenter_cluster_esxi_password` | `""` | ESXi root password (SOPS). |
 
 ## Example
