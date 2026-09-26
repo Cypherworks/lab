@@ -15,7 +15,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `speedtest_compose_dir` | `/opt/speedtest` | Host directory for the compose file, `.env`, and the SQLite `/config` volume. |
+| `speedtest_compose_dir` | `/opt/speedtest` | Host directory for the compose file and `.env`. The SQLite `/config` data lives in the named Docker volume `speedtestdata`, not here. |
 | `speedtest_image` | `lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls159` | Pinned container image. Confirm the registry tag exists before apply. |
 | `speedtest_http_port` | `8080` | Host port mapped to the container's HTTP (`:80`); Caddy reverse-proxies to this. |
 | `speedtest_app_url` | `""` | Public URL Caddy serves the app on; used to build absolute links. Set by the deploy. |

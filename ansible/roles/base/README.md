@@ -29,7 +29,7 @@ Required from inventory, no default (network config is only templated when `lab_
 - `timezone` — passed to the `timezone` module.
 - `internal_subdomain` — consumed by the `lab_search` default.
 - `ansible_user` — the account that ops keys are authorised for.
-- `lab_interface_match` (optional) — if defined, adds a netplan `match: name:` block for stable NIC matching.
+- `lab_interface_match` (optional) — if defined, adds a netplan `match: name:` block plus `set-name: <lab_interface>` for stable NIC matching.
 
 No secrets are consumed by this role.
 

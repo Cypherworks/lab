@@ -5,7 +5,7 @@
 #   node — the headless x86 Incus cluster nodes (ThinkCentres). Fully unattended: DHCP,
 #     the ansible user + baked SSH key, fresh per-install host keys. Per-host identity
 #     comes from a DHCP reservation (terraform/unifi) + the base role, so one USB does
-#     every node. Needs --pubkey. (node-ryzen runs Proxmox from its own installer.)
+#     every node. Needs --pubkey. (node-ryzen runs ESXi from its own installer.)
 #
 #   sheepdip — the air-gapped scanning station (Dell XPS 15). storage + identity are
 #     INTERACTIVE, so the LUKS-encrypt + passphrase and login user are set by hand on the

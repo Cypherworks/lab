@@ -1,6 +1,6 @@
 # unattended_upgrades
 
-Configures `unattended-upgrades` to apply security-pocket updates nightly and reboot in a quiet window when required.
+Configures `unattended-upgrades` to apply security-pocket updates nightly and, when enabled, reboot in a quiet window when required.
 
 Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a generic, parameterised role. Supply site data (IPs, secrets, hostnames) from your inventory and SOPS, not from the role.
 

@@ -20,8 +20,8 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 - Network reach to the ESXi host (to deploy) and to the vCenter IP (to cert it).
 - For the cert step: the `lego` binary (auto-discovered on `PATH`; the ansible run is
   not a login shell, so a Homebrew `lego` may need its dir on `PATH`) and its
-  DNS-provider credentials (`vcsa_lego_env`), plus `community.crypto` for the
-  live-cert expiry check.
+  DNS-provider credentials (`vcsa_lego_env`), plus `community.crypto` (and the
+  Python `cryptography` library it needs) for the live-cert check and the key/CSR.
 
 ## What it does
 
@@ -31,7 +31,7 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 2. Replaces the machine SSL cert (when `vcsa_lego_bin` is set): generates the key
    and a CN/SAN-only CSR on the control host (VMCA's own CSR carries an email
    field that Let's Encrypt rejects), signs it with `lego` over DNS-01, and PUTs
-   the leaf in `cert` and the full CA chain (intermediates plus the self-signed
+   the leaf in `cert`, the private key in `key`, and the full CA chain (intermediates plus the self-signed
    root from `vcsa_cert_root_ca`) in `root_cert`. Re-issues only when the live
    cert is near expiry or not yet from the expected CA, so convergence is a no-op.
 
@@ -40,8 +40,8 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 - The ISO layout the discovery assumes: `hdiutil attach -plist` emits a
   `mount-point` for the ISO9660 volume (the mount-point regex reads it), the mac
   installer is at `vcsa-cli-installer/mac/vcsa-deploy`, and the install template is
-  `vcsa-cli-installer/templates/install/embedded_vCSA_on_ESXi.json`. A failed deploy
-  leaves the ISO mounted until the next successful run's `always` unmount.
+  `vcsa-cli-installer/templates/install/embedded_vCSA_on_ESXi.json`. The macOS
+  unmount runs in an `always` block, so a failed deploy still detaches the ISO.
 - `vcsa_template_version` (read as the template's `__version`) **must** match the
   template vcsa-deploy expects. Diff the rendered `install.json` against the shipped
   template; the precheck is the backstop.
@@ -59,8 +59,9 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `vcsa_iso` | `""` | Path to the installer ISO on the control host. |
-| `vcsa_deploy_bin` | `""` | Empty auto-discovers `mac/vcsa-deploy` from the ISO. |
+| `vcsa_deploy_bin` | `""` | Empty auto-discovers `<mac\|lin64>/vcsa-deploy` from the ISO. |
 | `vcsa_template_version` | `""` | Empty reads `__version` from the ISO template. |
+| `vcsa_workdir` | `/var/tmp/vcsa-deploy` | Rendered `install.json`, the Linux ISO extract, and the lego workdir. |
 | `vcsa_esxi_host` / `_password` | `""` | Target ESXi host + root password (SOPS). |
 | `vcsa_esxi_datastore` | `""` | Datastore the appliance lands on. |
 | `vcsa_deployment_option` | `tiny` | Appliance size (smallest single-node). |
@@ -68,7 +69,10 @@ mount the ISO — `xorriso` needs `~11 GB` free for the OVA). It needs:
 | `vcsa_gateway` / `vcsa_dns_servers` | `""` / `[]` | Appliance network. |
 | `vcsa_os_password` / `vcsa_sso_password` | `""` | Appliance root + SSO admin (SOPS). |
 | `vcsa_lego_bin` | `""` | `lego` binary; empty auto-discovers on `PATH`, else skips cert. |
+| `vcsa_lego_dns_provider` | `route53` | lego DNS-01 provider. |
 | `vcsa_lego_env` | `{}` | Env for `lego` (DNS-provider creds). |
 | `vcsa_le_email` | `""` | ACME account email. |
+| `vcsa_le_server` | `""` | ACME directory URL; empty uses lego's default (LE production). |
 | `vcsa_cert_renew_before_days` | `30` | Re-issue when fewer days remain. |
 | `vcsa_cert_issuer_match` | `Let's Encrypt` | Skip when the live issuer matches. |
+| `vcsa_cert_root_ca` | `/etc/ssl/certs/ISRG_Root_X1.pem` | Self-signed root appended to `root_cert`. |

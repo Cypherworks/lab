@@ -12,6 +12,10 @@
 #               the request (the role templates the cert principal to your identity).
 #   [pubkey]    public key to sign (default: ~/.ssh/id_ed25519.pub).
 #
+# Optional env: BAO_SSH_MOUNT (default ssh-client-signer), BAO_SSH_ROLE
+# (default user), BAO_SSH_RENEW_AFTER_MIN (default 55). It exits early,
+# without re-signing, while the cert file is younger than that many minutes.
+#
 # Writes the cert next to the key as <key>-cert.pub, which ssh loads automatically —
 # so afterwards `ssh <you>@<host>` just works until the cert expires (1h).
 #

@@ -13,13 +13,13 @@ group_vars). Host login (SSSD) and metrics (`node_exporter`) are separate roles.
    as PVE `lvmthin` storage. Skipped when the device is empty.
 4. NAS storage: mounts a Synology NFS export as PVE storage. Skipped when the
    server is empty.
-5. Authentik OIDC: an `openid` realm pointed at the Authentik proxmox app, with
-   the groups claim synced onto a pre-created admin group that gets an
-   Administrator ACL. Skipped when the issuer URL is empty.
-6. Wake-on-LAN arming: installs a `wol-arm.service` (from `wol-arm.service.j2`)
+5. Wake-on-LAN arming: installs a `wol-arm.service` (from `wol-arm.service.j2`)
    that runs `ethtool -s <iface> wol g` at boot, so the host can be woken by a
    magic packet after powering off between builds. Skipped when `proxmox_wol_mac`
    is empty.
+6. Authentik OIDC: an `openid` realm pointed at the Authentik proxmox app, with
+   the groups claim synced onto a pre-created admin group that gets an
+   Administrator ACL. Skipped when the issuer URL is empty.
 
 ## Assumptions
 

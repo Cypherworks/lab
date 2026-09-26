@@ -25,7 +25,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `unifi_mongo_shell` | `mongosh` | Mongo client used to create the DB user. `mongo:6.0+` ships `mongosh`; older tags ship the legacy `mongo` shell. |
 | `unifi_ports` | `["8443:8443", "8080:8080", "3478:3478/udp", "10001:10001/udp"]` | Host port publishings for the UI/device comms (8443), device inform (8080), STUN (3478), and device discovery (10001). |
 
-`unifi_mongo_password` has no default and MUST be supplied from SOPS. `unifi_docker_cli` is an optional override (see Notes).
+`unifi_mongo_password` has no default and MUST be supplied from SOPS. `unifi_docker_cli` is an optional override (see Notes). The controller container's `TZ` comes from the inventory's `timezone` variable (default `Europe/London`).
 
 ## Dependencies
 

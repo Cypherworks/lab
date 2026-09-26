@@ -20,7 +20,7 @@ No inventory data or secrets are required.
 
 ## Dependencies
 
-None declared in metadata. This role is itself a shared mechanism that service roles (monitoring, speedtest, vaultwarden, authentik_app) depend on, so the Docker install lives in one place rather than being copied into each.
+None declared in metadata. This role is itself a shared mechanism that service roles (monitoring, speedtest, vaultwarden, authentik_app, github_runner, wol) depend on via `meta`, so the Docker install lives in one place rather than being copied into each.
 
 ## What it does
 
