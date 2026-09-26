@@ -33,6 +33,7 @@ The one exception is `github_runner_mount_docker_socket` (see below).
 | `github_runner_labels` | `self-hosted,nas` | `runs-on` targeting labels. |
 | `github_runner_scope` | `repo` | Register scope: `repo`, `org`, or `ent`. |
 | `github_runner_org` | `""` | Org name when scope is `org`. |
+| `github_runner_group` | `""` | Runner group to join (`RUNNER_GROUP`). Empty leaves it unset, so the runner joins the Default group. |
 | `github_runner_data_dir` | `/opt/github-runner` | Compose + work root. |
 | `github_runner_ephemeral` | `true` | De-register after each job. |
 | `github_runner_pull` | `always` | Re-pull the image each run so a deprecated runner version self-heals. |

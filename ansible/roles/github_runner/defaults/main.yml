@@ -24,6 +24,9 @@ github_runner_repo_url: ""
 github_runner_scope: repo
 # Org name for org scope (RUNNER_SCOPE=org); needs an org-admin PAT.
 github_runner_org: ""
+# Runner group to join (RUNNER_GROUP). Empty renders nothing: the image joins
+# the Default group.
+github_runner_group: ""
 
 # Ephemeral: de-register after each job so no state leaks between runs.
 github_runner_ephemeral: true

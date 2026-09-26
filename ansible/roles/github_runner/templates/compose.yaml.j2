@@ -17,6 +17,9 @@ services:
 {% else %}
       REPO_URL: "{{ github_runner_repo_url }}"
 {% endif %}
+{% if github_runner_group %}
+      RUNNER_GROUP: "{{ github_runner_group }}"
+{% endif %}
       ACCESS_TOKEN: "{{ github_runner_access_token }}"
       RUNNER_NAME: "{{ github_runner_name }}"
       LABELS: "{{ github_runner_labels }}"

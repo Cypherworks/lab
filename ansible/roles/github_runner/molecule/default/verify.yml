@@ -1,13 +1,15 @@
 ---
-# Checks the socket mount twice: in the rendered compose file, and on the
-# running runner container, so a template that renders right but never reaches
-# the container still fails.
+# Checks the socket mount and the runner group twice: in the rendered compose
+# file, and on the running runner container, so a template that renders right
+# but never reaches the container still fails.
 - name: Verify
   hosts: all
   gather_facts: false
   vars:
     docker_socket_mount: /var/run/docker.sock:/var/run/docker.sock
     expect_socket: "{{ inventory_hostname == 'runner-socket' }}"
+    expect_group: "{{ inventory_hostname == 'runner-socket' }}"
+    runner_group_env: RUNNER_GROUP=molecule-group
   tasks:
     - name: Read the rendered compose file
       ansible.builtin.slurp:
@@ -33,3 +35,23 @@
           {{ inventory_hostname }}: expected the Docker socket mount
           {{ 'present' if expect_socket | bool else 'absent' }};
           compose volumes {{ _volumes }}, container mount targets {{ _mount_targets }}.
+
+    - name: Inspect the runner container's environment
+      ansible.builtin.command:
+        cmd: docker inspect --format '{{ "{{" }} json .Config.Env {{ "}}" }}' {{ inventory_hostname }}-ci
+      register: _container_env
+      changed_when: false
+
+    - name: Assert RUNNER_GROUP is set only when a group is configured
+      vars:
+        _environment: "{{ (_compose_file.content | b64decode | from_yaml).services.runner.environment }}"
+        _group_env: "{{ _container_env.stdout | from_json | select('match', 'RUNNER_GROUP=') | list }}"
+      ansible.builtin.assert:
+        that:
+          - ('RUNNER_GROUP' in _environment) == (expect_group | bool)
+          - _group_env == ([runner_group_env] if expect_group | bool else [])
+        fail_msg: >-
+          {{ inventory_hostname }}: expected
+          {{ runner_group_env if expect_group | bool else 'no RUNNER_GROUP' }};
+          compose environment keys {{ _environment.keys() | list }},
+          container RUNNER_GROUP entries {{ _group_env }}.
