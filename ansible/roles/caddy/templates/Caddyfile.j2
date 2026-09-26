@@ -1,6 +1,12 @@
 {# Managed by the caddy role. One wildcard site; routes by Host header. #}
 {
 	email {{ caddy_acme_email }}
+	{# Answer 421 when Host != the TLS SNI. The site is one wildcard routed by
+	   Host, so an L4 passthrough that forwards a single SNI would otherwise
+	   reach every vhost by Host header. #}
+	servers {
+		strict_sni_host on
+	}
 {% if caddy_l4_proxies %}
 	{# Raw TCP (layer4) passthrough — no TLS termination, so mutual-TLS and the
 	   client's server-cert pin survive end to end. Health-checked LB fails a dead
