@@ -1,7 +1,7 @@
 ---
 # Two instances converge the full role (docker dependency included) and verify
-# the Docker socket mount: runner-default takes the role defaults,
-# runner-socket opts in. Each instance is a privileged systemd container with
+# the Docker socket mount and the runner group: runner-default takes the role
+# defaults, runner-socket opts in to both. Each instance is a privileged systemd container with
 # its own dockerd, so the role's compose stack runs inside it, never on the CI
 # host. /var/lib/docker is a tmpfs so the inner dockerd isn't overlay on
 # overlay and leaves nothing behind on the CI host after destroy. The pause
@@ -54,6 +54,7 @@ provisioner:
     host_vars:
       runner-socket:
         github_runner_mount_docker_socket: true
+        github_runner_group: molecule-group
 
 verifier:
   name: ansible
