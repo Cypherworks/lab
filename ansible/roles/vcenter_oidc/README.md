@@ -47,7 +47,7 @@ vcenter_oidc_spec:
 - The `CreateSpec` field names and whether the sub-object is `oauth2` or `oidc`, and
   the exact `claim_map` structure for group mapping. Read a manually-configured
   provider back from `GET /api/vcenter/identity/providers/{provider}` to see the shape.
-- The redirect URI to register in Authentik (`vcenter_oidc_redirect_uris`):
+- The redirect URI to register in Authentik (`vcenter_oidc_redirect_uris`, an `authentik_app` variable):
   `https://<vcenter-fqdn>/federation/t/CUSTOMER/auth/response/oauth2` — confirm the
   `CUSTOMER` tenant name for this vCenter.
 - The provider-list field the idempotency check matches on (`name`).
@@ -57,6 +57,8 @@ vcenter_oidc_spec:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `vcenter_oidc_ip` | `""` | vCenter IP/host for the API session. |
-| `vcenter_oidc_sso_password` | `""` | `administrator@vsphere.local` password (SOPS). |
+| `vcenter_oidc_sso_domain` | `vsphere.local` | SSO domain. |
+| `vcenter_oidc_sso_user` | `administrator@{{ vcenter_oidc_sso_domain }}` | SSO admin for the API session. |
+| `vcenter_oidc_sso_password` | `""` | SSO admin password (SOPS). |
 | `vcenter_oidc_name` | `""` | Provider name; idempotency key. |
 | `vcenter_oidc_spec` | `{}` | The `CreateSpec` body POSTed to the API. |

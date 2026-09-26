@@ -30,7 +30,7 @@ None.
 1. Installs `nginx` and `libnginx-mod-stream`.
 2. Renders `/etc/nginx/nginx.conf` (`0644`) from `nginx.conf.j2`, validated with `nginx -t -c %s` before it is written. The config is stream-only: a `map $ssl_preread_server_name $sni_upstream` built from `sni_routes` (with `default` pointing at `sni_default_upstream`), and one `server` that listens on `sni_listen_port` with `ssl_preread on`, `proxy_pass $sni_upstream` and `proxy_timeout {{ sni_proxy_timeout }}`.
 3. Removes `/etc/nginx/sites-enabled/default` (this box serves no HTTP).
-4. Probes `sni_listen_port` and enables nginx, restarting it when the config changed or nothing is listening on that port, otherwise just ensuring it is started.
+4. Probes `sni_listen_port` and enables nginx, restarting it when the config changed, the default site was just removed, or nothing is listening on that port, otherwise just ensuring it is started.
 5. `wait_for`s the port so a bring-up failure lands here rather than on a downstream role that dials through the router.
 
 Handlers: none — the running service is reconciled to the on-disk config directly in tasks (see Notes).

@@ -13,9 +13,14 @@ The one exception is `github_runner_mount_docker_socket` (see below).
 
 ## What it does
 
-1. Creates the data + work directories on the host.
-2. Renders `compose.yaml` from the pinned image and registration settings.
-3. Brings the stack up with `docker_compose_v2` (idempotent).
+1. Asserts the image pin, the access token, and the registration target (repo URL
+   for `repo` scope, org name for `org` scope) are set, failing early otherwise.
+2. Creates the data + work directories on the host.
+3. Renders `compose.yaml` (mode `0600`, it holds the PAT) from the image and
+   registration settings.
+4. Brings the stack up with `docker_compose_v2` (idempotent).
+
+Docker Engine and Compose come from the `docker` role (`meta/main.yml` dependency).
 
 ## Required variables
 
@@ -24,6 +29,7 @@ The one exception is `github_runner_mount_docker_socket` (see below).
 | `github_runner_image` | Pinned `myoung34/github-runner` tag. |
 | `github_runner_access_token` | Fine-grained PAT, from SOPS (repo admin for repo scope; org self-hosted-runner admin for org scope). |
 | `github_runner_repo_url` | Repo URL to register against (repo scope only). |
+| `github_runner_org` | Org name to register against (org scope only). |
 
 ## Key defaults
 
@@ -32,7 +38,6 @@ The one exception is `github_runner_mount_docker_socket` (see below).
 | `github_runner_name` | `<host>-ci` | Runner + container name. |
 | `github_runner_labels` | `self-hosted,nas` | `runs-on` targeting labels. |
 | `github_runner_scope` | `repo` | Register scope: `repo`, `org`, or `ent`. |
-| `github_runner_org` | `""` | Org name when scope is `org`. |
 | `github_runner_group` | `""` | Runner group to join (`RUNNER_GROUP`). Empty leaves it unset, so the runner joins the Default group. |
 | `github_runner_data_dir` | `/opt/github-runner` | Compose + work root. |
 | `github_runner_ephemeral` | `true` | De-register after each job. |
@@ -73,3 +78,11 @@ The PAT is fine-grained. For **repo** scope, scope it to the one repository with
 **Administration: Read and write**. For **org** scope, use an **organization**
 PAT with self-hosted-runner management. Either is used to fetch a runner
 registration token. Store it in SOPS and pass it as `github_runner_access_token`.
+
+## Testing
+
+`molecule/default` converges the role (with its `docker` dependency) in two
+privileged Debian 13 containers: `runner-default` on the role defaults and
+`runner-socket` with the socket mount and `github_runner_group` set. The verifier
+checks the socket mount and `RUNNER_GROUP` in both the rendered compose file and
+the running container.

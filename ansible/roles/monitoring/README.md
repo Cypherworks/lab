@@ -60,7 +60,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_incus_metrics_key` | `""` | Metrics scraper client key (PEM); mounted as a docker secret. |
 | `monitoring_headscale_target` | `""` | Headscale control-plane `/metrics` over the overlay (`tailnet-ip:9090`). |
 | `monitoring_hass_target` | `""` | Home Assistant Prometheus scrape via Caddy (`host:443`). |
-| `monitoring_hass_token` | `""` | HASS long-lived token (SOPS); injected via container env and expanded by vmsingle, never written to the on-disk scrape config. |
+| `monitoring_hass_token` | `""` | HASS long-lived token (SOPS); rendered to a `0600` file mounted into vmsingle as a docker secret and read via `credentials_file`, never written into the scrape config. |
 
 ### Alert thresholds
 
@@ -162,4 +162,4 @@ vmsingle is used instead of Prometheus for lighter storage and better compaction
 
 Grafana OIDC uses Authentik's global (not per-application) endpoints. Group-to-role mapping is done through `monitoring_grafana_role_path`.
 
-The go2rtc RTSP source URLs and the HASS scrape token are secrets that carry access tokens. They are injected via the container environment and expanded at config-load time, so they are never written in plaintext to the on-disk config. go2rtc publishes only its HTTP port; WebRTC (UDP/TCP 8555) is left for on-LAN use and is not published here. Enabling go2rtc Basic auth would make the browser prompt for credentials inside the Grafana iframe and break the embed; the auth boundary is Caddy TLS, lab-only reachability, and Grafana's Authentik OIDC.
+The go2rtc RTSP source URLs and the HASS scrape token are secrets that carry access tokens. The RTSP URLs are injected via the container environment and expanded at config-load time; the HASS token is a `0600` docker secret that the scrape job reads via `credentials_file`. Neither is written in plaintext into the on-disk config. go2rtc publishes only its HTTP port; WebRTC (UDP/TCP 8555) is left for on-LAN use and is not published here. Enabling go2rtc Basic auth would make the browser prompt for credentials inside the Grafana iframe and break the embed; the auth boundary is Caddy TLS, lab-only reachability, and Grafana's Authentik OIDC.

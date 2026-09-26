@@ -7,7 +7,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 ## Requirements
 
 - Ubuntu host (the apt repo is configured against `pkgs.tailscale.com/stable/ubuntu`).
-- Core `ansible.builtin` modules only: `deb822_repository`, `apt`, `systemd_service`, `command`.
+- Core `ansible.builtin` modules only: `deb822_repository`, `apt`, `systemd_service`, `command`, `set_fact`.
 - Privilege escalation (`become`) to root.
 - A reachable Headscale/Tailscale control server and a valid pre-auth key.
 
@@ -15,14 +15,14 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `tailscale_login_server` | `https://headscale.example.com` | Control-server URL. Site-specific default; adopters override it. |
+| `tailscale_login_server` | `https://headscale.example.com` | Control-server URL. The default is a placeholder; set your control server. |
 | `tailscale_authkey` | `""` | Short-lived pre-auth key minted on Headscale. **Secret — from SOPS**; never defaulted to a real value. |
 | `tailscale_authkey_command` | `""` | Optional command run at join time to mint a key, used instead of `tailscale_authkey`. For a host that is itself the control server and can issue its own keys. Its last stdout line is taken as the key. |
 | `tailscale_accept_routes` | `true` | Whether to accept the lab supernet advertised by the HA subnet routers (`--accept-routes`). |
 | `tailscale_hostname` | `"{{ inventory_hostname }}"` | Hostname registered on the tailnet. |
 | `tailscale_up_timeout` | `"30s"` | `--timeout` for `tailscale up`, so an unreachable control plane fails the task instead of blocking the run. |
 
-Supply the key from SOPS via `tailscale_authkey`, or from `tailscale_authkey_command` for a host that mints its own (leave the other empty). `tailscale_login_server` defaults to the Cypherworks control server and should be overridden for any other deployment.
+Supply the key from SOPS via `tailscale_authkey`, or from `tailscale_authkey_command` for a host that mints its own (leave the other empty). `tailscale_login_server` defaults to the placeholder `https://headscale.example.com` and must be overridden.
 
 ## Dependencies
 
