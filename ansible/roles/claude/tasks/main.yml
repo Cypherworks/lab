@@ -40,7 +40,7 @@
   ansible.builtin.get_url:
     url: "https://go.dev/dl/go{{ claude_go_version }}.linux-amd64.tar.gz"
     dest: "/tmp/go{{ claude_go_version }}.linux-amd64.tar.gz"
-    checksum: "sha256:https://go.dev/dl/go{{ claude_go_version }}.linux-amd64.tar.gz.sha256"
+    checksum: "sha256:https://dl.google.com/go/go{{ claude_go_version }}.linux-amd64.tar.gz.sha256"
     mode: "0644"
 
 - name: Install Go {{ claude_go_version }}
@@ -106,10 +106,11 @@
     PIPX_HOME: /opt/pipx
     PIPX_BIN_DIR: /usr/local/bin
 
-- name: Install Claude Code (npm, global)
+- name: Install Claude Code (npm, global) {{ claude_code_version }}
   become: true
   community.general.npm:
     name: "{{ claude_code_package }}"
+    version: "{{ claude_code_version }}"
     global: true
     state: present
 
