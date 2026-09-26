@@ -63,7 +63,7 @@ The workbench commits as a bot, not a person. A GitHub App can't register an SSH
 - **`cw-claude-credential`** — a git credential helper serving that token for `github.com` only.
 - **`gh`** — a wrapper on the PATH ahead of the apt `gh` that exports a fresh `GH_TOKEN` from `cw-claude-token` before delegating to the real gh, so a long session never carries an expired token.
 - **`cw-claude-push`** — recreates the local branch as one Verified commit authored by `cw-claude[bot]` via the `createCommitOnBranch` GraphQL mutation, then resyncs the local branch. Use it instead of `git push`.
-- **`cw-claude-pr`** — opens a draft PR with validated `--type`/`--area`/`--priority` labels, optional `--closes`/`--refs` links, and the reviewer/assignee from `CW_CLAUDE_REVIEWER`.
+- **`cw-claude-pr`** — opens a draft PR with validated `--type`/`--area`/`--priority` labels, optional `--closes`/`--refs` links, an optional `--base` branch (default `main`), and the reviewer/assignee from `CW_CLAUDE_REVIEWER`.
 
 ## Notes
 

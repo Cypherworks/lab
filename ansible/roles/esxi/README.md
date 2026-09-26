@@ -25,7 +25,7 @@ This role is not a normal SSH-by-IP role. It mixes two connections:
   `esxi_api_user` / `esxi_api_password`, so they work even before SSH is up.
 - **SSH** (raw): hostname, IPv6, disk discovery, and Wake-on-LAN run on the host over
   SSH via `ansible.builtin.raw` (ESXi carries no Python for the normal modules, and
-  has no API for these). These run before the API tasks, so **SSH must already be
+  has no API for these). Hostname and IPv6 run before any API task, so **SSH must already be
   enabled** on the host (see Assumptions); the API `TSM-SSH` task only persists it.
 
 Run the play with `gather_facts: false` (ESXi is not a fact-gatherable target) and an
@@ -56,8 +56,9 @@ on first contact). The API tasks ignore the play connection via `delegate_to`.
 - Disk discovery parses `esxcli storage core device list` for `Is Local: true` /
   `Is Boot Device: true`; confirm those labels and that the target disk is the only
   local non-boot disk (else set `esxi_vmfs_device`).
-- The reboot fires `reboot` with `poll: 0` and waits on port 443; confirm `raw`
-  async behaves on the box.
+- The reboot runs `reboot` synchronously over `raw` (which can't run async),
+  tolerates the dropped connection, then waits from localhost for port 443
+  (60 s delay, 900 s timeout) and resets the SSH connection.
 
 ## Key variables
 
@@ -65,11 +66,15 @@ on first contact). The API tasks ignore the play connection via `delegate_to`.
 | --- | --- | --- |
 | `esxi_api_host` | `""` | Address the API modules connect to (the host IP). |
 | `esxi_host_name` | `""` | The name ESXi knows itself by (its FQDN). |
+| `esxi_api_user` | `root` | API user. |
 | `esxi_api_password` | `""` | Root password (SOPS). |
 | `esxi_validate_certs` | `false` | Verify the host cert (self-signed on first run). |
 | `esxi_disable_ipv6` | `true` | Disable IPv6 (reboot-applied). |
 | `esxi_vmfs_device` | `""` | Canonical disk name; empty auto-discovers the disk. |
 | `esxi_vmfs_datastore` | `local-nvme` | Datastore name for the local VMFS. |
+| `esxi_vmfs_version` | `6` | VMFS version for the local datastore. |
 | `esxi_nas_server` / `esxi_nas_path` | `""` | NFS server + export; empty skips. |
+| `esxi_nas_datastore` | `nas` | Datastore name for the NFS mount. |
+| `esxi_nas_readonly` | `false` | Mount the NFS datastore read-only. |
 | `esxi_wol_enabled` | `true` | Arm Wake-on-LAN. |
 | `esxi_wol_vmnic` | `""` | Mgmt uplink to arm (e.g. `vmnic0`); empty skips. |

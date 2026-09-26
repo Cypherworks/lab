@@ -98,7 +98,7 @@ Pin `ref` to a specific commit SHA or tag, never a moving branch.
 
 ## Notes
 
-The USG Pro-4 on a self-hosted controller uses legacy rulesets (`LAN_IN`, `LAN_LOCAL`, `GUEST_IN`, `WAN_IN`, etc.) ordered by `rule_index`. For an inter-VLAN default-deny posture, place high-index drop rules after the explicit allows.
+The USG Pro-4 on a self-hosted controller uses legacy rulesets (`LAN_IN`, `LAN_LOCAL`, `GUEST_IN`, `WAN_IN`, etc.) ordered by `rule_index`. For an inter-VLAN default-deny posture, place high-index drop rules after the explicit allows. The index band is significant: 2xxx rules sit before the controller's predefined rules and 4xxx after them. The USG has predefined `LAN_LOCAL` accepts for its own management, so a `LAN_LOCAL` drop only takes effect in the 2xxx band; at 4xxx it applies but never matches.
 
 Rules reference groups by key, not ID: the module resolves `src_group_keys` / `dst_group_keys` against the groups it created, so group and rule ordering is handled internally.
 

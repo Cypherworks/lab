@@ -58,12 +58,12 @@ The reconcile (PKI, listener cert, OIDC, SSH CA, snapshots) authenticates with a
 | `openbao_provisioner_token_ttl` | `15m` | TTL of the short-lived reconcile token. |
 | `openbao_provisioner_token_max_ttl` | `30m` | Max TTL of the reconcile token. |
 | `openbao_provisioner_policy_rules` | *path-scoped HCL* | The provisioner policy: create/read/update on the mount/auth/audit/policy/pki/ssh/oidc/approle/identity paths the reconcile writes. `sudo` only on `sys/mounts`, `sys/auth`, and `sys/audit` (OpenBao requires it there); no delete, no seal/raw/token-root. |
-| `openbao_aws_cli_env` | *derived from the seal creds* | Internal env map (access key/secret/region) the auto-init and snapshot steps pass to the `aws` CLI for SSM/S3 I/O; do not set directly. |
+| `openbao_aws_cli_env` | *derived from the seal creds* | Internal env map (access key/secret/region) the auto-init steps pass to the `aws` CLI for SSM I/O; do not set directly. (The snapshot job reads its own uploader creds from `aws.env`.) |
 | `openbao_mgmt_token` | `""` | Computed at run time (the AppRole login token, else the root token); do not set. |
 
 ### Audit device
 
-A file audit device logs every request/response (as hashed records) on the root-of-trust. On by default and reconciled before the secret engines, so their own setup is audited too. The log is a local file (OpenBao blocks requests if its only audit device can't write) and is rotated by logrotate.
+A file audit device logs every request/response (as hashed records) on the root-of-trust. On by default and declared in `openbao.hcl` (an `audit "file"` stanza OpenBao enables at boot), so it is live before the secret-engine reconcile and their own setup is audited too. The log is a local file (OpenBao blocks requests if its only audit device can't write) and is rotated by logrotate.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -142,16 +142,17 @@ None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the
 
 ## What it does
 
-1. Installs the pinned OpenBao `.deb`; the package creates the `openbao` user, the systemd unit, `/etc/openbao/`, and a self-signed bootstrap TLS cert.
+1. Downloads the pinned OpenBao `.deb` (checked against the release's `checksums-linux.txt`), installs it and holds the package; the package creates the `openbao` user, the systemd unit, `/etc/openbao/`, and a self-signed bootstrap TLS cert.
 2. Renders the auto-unseal credentials as the systemd `EnvironmentFile` (`/etc/openbao/openbao.env`) and the config (`/etc/openbao/openbao.hcl`) — AWS creds never touch the config file.
-3. Enables and starts the service. It comes up **sealed and uninitialised**. With `openbao_auto_init: true` the role then initialises it (recovery-key mode), stores the recovery keys in SSM under the recovery CMK, stashes the `provisioner` AppRole creds in SSM, and revokes root — no human step. Otherwise, run `bao operator init` once by hand and capture the recovery keys + root token into the break-glass kit and SOPS. Either way, the KMS seal auto-unseals on every restart afterwards.
+3. Creates the audit log directory, installs a systemd drop-in that sets `StartLimitIntervalSec=0` (so a transient KMS/DNS failure at boot can't leave it sealed) and asserts it is in effect, then enables and starts the service. It comes up **sealed and uninitialised**. With `openbao_auto_init: true` the role then initialises it (recovery-key mode), stores the recovery keys in SSM under the recovery CMK, stashes the `provisioner` AppRole creds in SSM, and revokes root — no human step. Otherwise, run `bao operator init` once by hand and capture the recovery keys + root token into the break-glass kit and SOPS. Either way, the KMS seal auto-unseals on every restart afterwards.
 4. Resolves the management token — logs in with the `provisioner` AppRole if its creds are set, else falls back to `openbao_root_token` — then asserts the provisioner AppRole + policy (idempotent; written with root on first bootstrap, self-maintaining thereafter).
-5. With a management token available, verifies the file audit device is live and configures logrotate for its log (`audit.yml`).
+5. With a management token available, flushes any pending restart, verifies the file audit device is live and configures logrotate for its log (`audit.yml`).
 6. Reconciles the PKI (mount, tune, root CA once, URLs, issuing roles).
 7. Optionally swaps the bootstrap listener cert for one issued by the internal CA (guarded on a `.ca-issued` marker), so Caddy can verify the upstream against the CA.
 8. Optionally configures OIDC login (ACL policies, auth method, config, roles).
-9. Optionally configures the SSH CA (engine, CA keypair once, signing roles; `principals_from_oidc` roles look up the OIDC accessor).
-10. Optionally configures daily raft snapshots: a snapshot-only AppRole (secret_id generated once, guarded on its creds file), the uploader creds, the snapshot script, and a systemd service + timer.
+9. Optionally configures daily raft snapshots: a snapshot-only AppRole (secret_id generated once, guarded on its creds file), the uploader creds, the snapshot script, and a systemd service + timer.
+10. Optionally configures the SSH CA (engine, CA keypair once, signing roles; `principals_from_oidc` roles look up the OIDC accessor).
+11. On a first auto-init run only, revokes the bootstrap root token.
 
 ## Example
 
@@ -183,7 +184,7 @@ None (no `meta/main.yml`). The reconcile steps call the `bao` CLI shipped by the
 
 ## Notes
 
-- The whole PKI/listener-cert/OIDC/SSH/snapshot reconcile is gated on a management token being resolvable (the provisioner AppRole or `openbao_root_token`). Both empty until after the manual `bao operator init`, so the reconcile stays skipped until then.
+- The whole PKI/listener-cert/OIDC/SSH/snapshot reconcile is gated on a management token being resolvable (the provisioner AppRole or `openbao_root_token`). Without auto-init both stay empty until after the manual `bao operator init`, so the reconcile stays skipped until then; with `openbao_auto_init: true` the first run uses the in-memory bootstrap root token.
 - The `provisioner` AppRole is the non-root identity the reconcile runs as. Its policy is path-scoped — enough to provision, with `sudo` only on `sys/mounts/*`, `sys/auth/*`, and `sys/audit`/`sys/audit/*` (OpenBao requires it to mount engines, enable auth methods, and enable audit devices), and no delete, no seal/raw/step-down, no token-root. So once its creds are stored, the standing root token can be revoked (regenerate it later via `bao operator generate-root` + recovery keys).
 - The root CA and the SSH CA are generated exactly once and never regenerated (guarded), so re-runs and post-restore runs preserve trust continuity across a rebuild. Regenerating either would invalidate all existing trust.
 - The listener cert is issued once and guarded on `.ca-issued`; delete the marker (or the future renewal timer) to rotate before expiry.

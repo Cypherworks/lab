@@ -41,7 +41,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `authentik_ldap_outpost_host` | `""` | Public Authentik URL the outpost dials back on (site data). |
 | `ldap_outpost_token` | `""` | Outpost service-account token / `AUTHENTIK_TOKEN` (from SOPS). |
 | `ldap_search_password` | `""` | App-password for the `ldap-search` bind account (SSSD bind credential; from SOPS). |
-| `ldaps_cert` | `""` | LDAPS server cert (PEM) for the outpost's 6636 listener (from SOPS); empty = self-signed. |
+| `ldaps_cert` | `""` | LDAPS server cert (PEM) for the outpost's 6636 listener (published on host port 636) (from SOPS); empty = self-signed. |
 | `ldaps_key` | `""` | LDAPS server key (PEM) (from SOPS). |
 | `authentik_ldaps_pki_role` | `""` | OpenBao PKI role that issues the LDAPS cert; empty skips live issuance. |
 | `authentik_ldaps_pki_mount` | `pki` | OpenBao PKI mount the cert is issued from. |
@@ -66,7 +66,10 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `openbao_oidc_redirect_uris` | `[]` | OpenBao UI + CLI callbacks; must match the openbao role's `allowed_redirect_uris` (site data). |
 | `proxmox_oidc_client_id` | `""` | Proxmox VE OIDC client id (from SOPS; blueprint reads via `!Env`). |
 | `proxmox_oidc_client_secret` | `""` | Proxmox VE OIDC client secret (from SOPS). |
-| `proxmox_oidc_redirect_uris` | `[]` | Proxmox VE UI base URL callbacks (site data). |
+| `proxmox_oidc_redirect_uris` | `[]` | Proxmox VE UI base URL callbacks (site data). The `proxmox` blueprint is no longer in the render loop, so these only reach the `.env`. |
+| `vcenter_oidc_client_id` | `""` | vCenter OIDC client id (from SOPS; blueprint reads via `!Env`; shared with the `vcenter_oidc` spec). |
+| `vcenter_oidc_client_secret` | `""` | vCenter OIDC client secret (from SOPS). |
+| `vcenter_oidc_redirect_uris` | `[]` | vCenter OIDC callbacks (site data). |
 
 ## Dependencies
 
@@ -77,7 +80,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 1. Creates the compose, blueprints, and media directories.
 2. Copies branding assets into `<media>/public`.
 3. When `authentik_ldaps_pki_role` is set, issues the LDAPS outpost cert from OpenBao PKI (`ldaps_cert.yml`) before the blueprint and compose consume it.
-4. Renders the eleven integration blueprints into `authentik_blueprints_dir`: `headscale`, `core`, `recovery`, `invitation`, `nas`, `grafana`, `openbao`, `proxmox`, `ldap`, `user`, `forward_auth`.
+4. Renders the eleven integration blueprints into `authentik_blueprints_dir`: `headscale`, `core`, `recovery`, `invitation`, `nas`, `grafana`, `openbao`, `vcenter`, `ldap`, `user`, `forward_auth`.
 5. Renders the `.env` and compose file.
 6. Starts the stack (server + worker) with `docker_compose_v2`, pulling missing images.
 7. When LDAPS issuance is enabled, bounces the outpost until it serves the CA-issued cert (SAN = this node's IP).

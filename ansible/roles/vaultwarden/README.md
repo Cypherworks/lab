@@ -15,7 +15,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `vaultwarden_compose_dir` | `/opt/vaultwarden` | Host directory for the compose file, env file, and the SQLite `/data` volume. |
+| `vaultwarden_compose_dir` | `/opt/vaultwarden` | Host directory for the compose file and `vaultwarden.env`. The SQLite `/data` data lives in the named Docker volume `vaultwardendata`, not here. |
 | `vaultwarden_image` | `vaultwarden/server:1.37.1` | Pinned container image. Confirm the registry tag exists before apply. |
 | `vaultwarden_http_port` | `8080` | Host port mapped to the container's HTTP (`:80`); Caddy reverse-proxies to this and carries the websocket upgrade for live sync. |
 | `vaultwarden_domain` | `""` | Public URL Caddy serves it on. Required for WebAuthn/2FA, attachments, and links. Set by the deploy. |

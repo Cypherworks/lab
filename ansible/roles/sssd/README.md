@@ -57,8 +57,8 @@ Config/CA changes notify the `Restart sssd` handler, which restarts (not reloads
 PAM path (only when `sssd_enable_pam_auth | bool`):
 
 6. Ensures `libpam-sss` and `libpam-modules` are installed.
-7. Checks whether `pam_mkhomedir.so` is already active in `/etc/pam.d/common-session`, and only then runs `pam-auth-update --enable <profiles>` (guarded for idempotency).
-8. Writes `/etc/sudoers.d/ssh-sudoers` granting `%<sssd_sudo_group> ALL=(ALL:ALL) ALL`, validated with `visudo -cf` before install, and only when `sssd_sudo_group` is non-empty. The template also adds `auth_provider`/`access_provider`/`ldap_access_filter` to `sssd.conf` and the `pam` service.
+7. Checks whether `pam_mkhomedir.so` is already active in `/etc/pam.d/common-session`, and runs `pam-auth-update --enable <profiles>` only when it is not (guarded for idempotency).
+8. Writes `/etc/sudoers.d/<sssd_sudo_group>` (mode `0440`) granting `%<sssd_sudo_group> ALL=(ALL:ALL) NOPASSWD: ALL`, validated with `visudo -cf` before install, and only when `sssd_sudo_group` is non-empty. The template also adds `auth_provider`/`access_provider`/`ldap_access_filter` to `sssd.conf` and the `pam` service.
 
 ## Example
 
