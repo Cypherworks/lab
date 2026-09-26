@@ -25,3 +25,6 @@ services:
       RUNNER_WORKDIR: /tmp/runner/work
     volumes:
       - {{ github_runner_data_dir }}/work:/tmp/runner/work
+{% if github_runner_mount_docker_socket %}
+      - /var/run/docker.sock:/var/run/docker.sock
+{% endif %}

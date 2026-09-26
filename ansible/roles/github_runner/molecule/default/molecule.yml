@@ -1,0 +1,59 @@
+---
+# Two instances converge the full role (docker dependency included) and verify
+# the Docker socket mount: runner-default takes the role defaults,
+# runner-socket opts in. Each instance is a privileged systemd container with
+# its own dockerd, so the role's compose stack runs inside it, never on the CI
+# host. /var/lib/docker is a tmpfs so the inner dockerd isn't overlay on
+# overlay and leaves nothing behind on the CI host after destroy. The pause
+# image stays up without registering anywhere, so the stack runs offline with
+# a dummy token; pull "missing" keeps the idempotence pass from seeing a
+# re-pull.
+driver:
+  name: docker
+
+platforms:
+  - name: runner-default
+    image: geerlingguy/docker-debian13-ansible:latest
+    pre_build_image: true
+    override_command: false
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      - /var/lib/docker
+  - name: runner-socket
+    image: geerlingguy/docker-debian13-ansible:latest
+    pre_build_image: true
+    override_command: false
+    privileged: true
+    cgroupns_mode: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    tmpfs:
+      - /var/lib/docker
+
+# The role is used by path from the lab checkout, not installed from Galaxy.
+prerun: false
+
+# The top-level ansible section needs Molecule 25.9.0 or later.
+
+ansible:
+  env:
+    ANSIBLE_ROLES_PATH: ${MOLECULE_PROJECT_DIRECTORY}/..
+
+provisioner:
+  name: ansible
+  inventory:
+    group_vars:
+      all:
+        github_runner_image: registry.k8s.io/pause:3.10.2
+        github_runner_pull: missing
+        github_runner_access_token: molecule-dummy-token
+        github_runner_repo_url: https://github.com/example/example
+    host_vars:
+      runner-socket:
+        github_runner_mount_docker_socket: true
+
+verifier:
+  name: ansible
