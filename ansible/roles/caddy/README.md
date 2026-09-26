@@ -36,7 +36,7 @@ None.
 ## What it does
 
 1. Installs each entry of `caddy_trusted_ca_certs` to `/usr/local/share/ca-certificates/<name>.crt` (`0644`). A change notifies both `Update CA trust` and `Restart Caddy`.
-2. Renders the Caddyfile to `caddy_config_path` (`0644`) from `Caddyfile.j2`: one `*.{{ caddy_domain }}` site with a Route53 DNS-01 wildcard cert, a `handle` block per route, and a default `respond "lab ingress" 200`. When `caddy_l4_proxies` is set, a global `layer4` block renders each raw-TCP passthrough (no TLS termination, so mutual-TLS backends and cert-pinning clients survive end to end). Notifies `Reload Caddy`.
+2. Renders the Caddyfile to `caddy_config_path` (`0644`) from `Caddyfile.j2`: one `*.{{ caddy_domain }}` site with a Route53 DNS-01 wildcard cert, a `handle` block per route, and a default `respond "lab ingress" 200`. The global `servers` block sets `strict_sni_host on`, so a request whose Host differs from its TLS SNI gets 421 Misdirected Request. When `caddy_l4_proxies` is set, a global `layer4` block renders each raw-TCP passthrough (no TLS termination, so mutual-TLS backends and cert-pinning clients survive end to end). Notifies `Reload Caddy`.
 3. Runs `caddy validate --adapter caddyfile` against the rendered file (`changed_when: false`). This gates the change: a bad config fails the play before any handler runs, so Caddy keeps serving the previous config.
 
 Handlers, ordered deliberately:
@@ -70,3 +70,4 @@ Handlers, ordered deliberately:
 - This role does not install or update Caddy. If the deployed binary lacks the Route53 DNS module, the wildcard cert block fails at runtime even though `caddy validate` passes.
 - Trust changes require the full restart (brief connection drop). Ordinary route changes reload gracefully with no dropped connections.
 - Prefer trusting an internal CA via `caddy_trusted_ca_certs` over `tls_skip_verify`, so upstream identity is actually verified.
+- `strict_sni_host` is what makes an L4 SNI passthrough in front of this role safe. Without it the single wildcard site routes on Host alone, so a passthrough that forwards one SNI exposes every route. Verify a live path with `scripts/check-sni-host-binding.sh --ip <relay> --sni <forwarded-name> <other-host>...`. Browsers that reuse one HTTP/2 connection across hostnames on the same wildcard cert get a 421, which HTTP allows them to retry on a fresh connection.
