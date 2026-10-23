@@ -1,0 +1,23 @@
+---
+# Create or adopt each port group on the existing vDS, against the vCenter API
+# on the control host. Idempotent: present-state, no-op when it matches.
+- name: Manage the distributed port groups
+  delegate_to: localhost
+  community.vmware.vmware_dvs_portgroup:
+    hostname: "{{ vcenter_network_hostname }}"
+    username: "{{ vcenter_network_username }}"
+    password: "{{ vcenter_network_password }}"
+    validate_certs: "{{ vcenter_network_validate_certs }}"
+    switch_name: "{{ vcenter_network_dvswitch }}"
+    portgroup_name: "{{ item.name }}"
+    vlan_id: "{{ item.vlan_id }}"
+    port_binding: "{{ item.port_binding | default(vcenter_network_port_binding) }}"
+    network_policy:
+      inherited: false
+      promiscuous: "{{ vcenter_network_promiscuous }}"
+      forged_transmits: "{{ vcenter_network_forged_transmits }}"
+      mac_changes: "{{ vcenter_network_mac_changes }}"
+    state: present
+  loop: "{{ vcenter_network_portgroups }}"
+  loop_control:
+    label: "{{ item.name }}"
