@@ -1,0 +1,21 @@
+---
+# vcenter_network — manage VM port groups on an existing vSphere Distributed
+# Switch. The switch itself (uplinks, host membership, vmk migration) is out
+# of scope and must already exist. Generic mechanism; site data from the
+# deploy. Runs on the control host against the vCenter API (needs pyvmomi).
+
+vcenter_network_hostname: ""      # vCenter host/IP
+vcenter_network_username: "administrator@vsphere.local"
+vcenter_network_password: ""      # SSO admin password (SOPS)
+vcenter_network_validate_certs: false
+
+vcenter_network_dvswitch: ""      # existing vDS the port groups live on
+
+# [{name, vlan_id, port_binding?}]; binding falls back to the default below.
+vcenter_network_portgroups: []
+vcenter_network_port_binding: static  # or ephemeral (no vCenter to attach)
+
+# Security policy applied to every port group: all closed, not inherited.
+vcenter_network_promiscuous: false
+vcenter_network_forged_transmits: false
+vcenter_network_mac_changes: false
