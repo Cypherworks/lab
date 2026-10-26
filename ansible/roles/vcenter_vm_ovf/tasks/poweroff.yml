@@ -1,0 +1,13 @@
+---
+# Power the VM off and leave it in place (a rebuild keeps the old one until
+# the new one is verified).
+- name: Power the VM off
+  delegate_to: localhost
+  community.vmware.vmware_guest_powerstate:
+    hostname: "{{ vcenter_vm_ovf_hostname }}"
+    username: "{{ vcenter_vm_ovf_username }}"
+    password: "{{ vcenter_vm_ovf_password }}"
+    validate_certs: "{{ vcenter_vm_ovf_validate_certs }}"
+    datacenter: "{{ vcenter_vm_ovf_datacenter }}"
+    name: "{{ vcenter_vm_ovf_name }}"
+    state: powered-off

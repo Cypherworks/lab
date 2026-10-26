@@ -1,0 +1,30 @@
+---
+# Rebuilds, old server: stop it so the files are consistent, then pull its
+# whole config dir (zones, records, settings) to the control host. Technitium
+# upgrades its own files on start, as an in-place upgrade over /etc/dns does.
+- name: Stop Technitium DNS for a consistent copy
+  ansible.builtin.systemd_service:
+    name: technitium-dns
+    state: stopped
+
+# A single dir archives as <name>/..., the layout restore_config.yml expects.
+- name: Archive the config directory
+  community.general.archive:
+    path: "{{ technitium_dns_config_dir }}"
+    dest: /root/technitium-dns-config.tar.gz
+    format: gz
+    mode: "0600"
+
+- name: Create the archive directory on the control host
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ technitium_dns_archive_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Pull the archive to the control host
+  ansible.builtin.fetch:
+    src: /root/technitium-dns-config.tar.gz
+    dest: "{{ technitium_dns_archive_dir }}/{{ inventory_hostname }}-config.tar.gz"
+    flat: true

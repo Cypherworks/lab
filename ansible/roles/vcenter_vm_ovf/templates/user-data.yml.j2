@@ -1,0 +1,13 @@
+#cloud-config
+{# Managed by Ansible (vcenter_vm_ovf). First-boot seed only. #}
+hostname: {{ vcenter_vm_ovf_guest_hostname }}
+ssh_pwauth: false
+users:
+  - name: {{ vcenter_vm_ovf_user }}
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+{% for key in vcenter_vm_ovf_ssh_authorized_keys %}
+      - {{ key | to_json }}
+{% endfor %}

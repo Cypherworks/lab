@@ -1,0 +1,13 @@
+---
+# Restart only a running service, so an install-only pass (a rebuild's
+# prepare step) never starts it before the firewall is up.
+- name: Read the service states
+  ansible.builtin.service_facts:
+  listen: Restart Technitium DNS
+
+- name: Restart Technitium DNS if it is running
+  ansible.builtin.systemd_service:
+    name: technitium-dns
+    state: restarted
+  when: ansible_facts.services['technitium-dns.service'].state | default('') == 'running'
+  listen: Restart Technitium DNS

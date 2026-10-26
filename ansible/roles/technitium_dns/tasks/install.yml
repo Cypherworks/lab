@@ -1,0 +1,100 @@
+---
+# Runtime, service user, the pinned release and its unit. Doesn't start the
+# service: configure.yml does, after the firewall is up.
+- name: Check the required settings
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_admin_password | length >= 16
+      - technitium_dns_archive_sha256 | length == 64
+    fail_msg: technitium_dns needs a 16+ character admin password and a pinned sha256.
+
+- name: Install the ASP.NET Core runtime
+  ansible.builtin.apt:
+    name: "{{ technitium_dns_runtime_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Check the dotnet host the unit runs
+  ansible.builtin.stat:
+    path: "{{ technitium_dns_dotnet }}"
+  register: _dotnet
+
+- name: Fail if dotnet isn't where the unit expects it
+  ansible.builtin.assert:
+    that: _dotnet.stat.exists
+    fail_msg: "{{ technitium_dns_dotnet }} not found after installing {{ technitium_dns_runtime_package }}; set technitium_dns_dotnet."
+
+- name: Create the service user
+  ansible.builtin.user:
+    name: "{{ technitium_dns_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ technitium_dns_config_dir }}"
+    create_home: false
+
+- name: Create the install, config and log directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ technitium_dns_install_dir }}", owner: root, mode: "0755" }
+    - { path: "{{ technitium_dns_config_dir }}", owner: "{{ technitium_dns_user }}", mode: "0750" }
+    - { path: "{{ technitium_dns_log_dir }}", owner: "{{ technitium_dns_user }}", mode: "0750" }
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Fetch the pinned release on the control host
+  delegate_to: localhost
+  become: false
+  run_once: true
+  block:
+    - name: Create the release cache directory
+      ansible.builtin.file:
+        path: "{{ technitium_dns_cache_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Download the release and check its sha256
+      ansible.builtin.get_url:
+        url: "{{ technitium_dns_archive_url }}"
+        dest: "{{ technitium_dns_cache_dir }}/DnsServerPortable-{{ technitium_dns_version }}.tar.gz"
+        checksum: "sha256:{{ technitium_dns_archive_sha256 }}"
+        mode: "0600"
+
+- name: Read the installed release
+  ansible.builtin.slurp:
+    src: "{{ technitium_dns_install_dir }}/.release"
+  register: _installed
+  failed_when: false
+
+- name: Install the release when it differs
+  when: (_installed.content | default('') | b64decode | trim) != technitium_dns_version
+  block:
+    - name: Unpack the release over the install directory
+      ansible.builtin.unarchive:
+        src: "{{ technitium_dns_cache_dir }}/DnsServerPortable-{{ technitium_dns_version }}.tar.gz"
+        dest: "{{ technitium_dns_install_dir }}"
+        owner: root
+        group: root
+      notify: Restart Technitium DNS
+
+    - name: Record the installed release
+      ansible.builtin.copy:
+        content: "{{ technitium_dns_version }}\n"
+        dest: "{{ technitium_dns_install_dir }}/.release"
+        mode: "0644"
+
+- name: Install the systemd unit
+  ansible.builtin.template:
+    src: technitium-dns.service.j2
+    dest: /etc/systemd/system/technitium-dns.service
+    mode: "0644"
+  notify: Restart Technitium DNS
+
+- name: Load the unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true

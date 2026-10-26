@@ -24,6 +24,9 @@ lab_search: "{{ internal_subdomain }}"
 # Each entry: name, id, addresses, and an optional link (defaults to lab_interface).
 lab_vlans: []
 
+# false: write the netplan file but don't apply it (it takes effect at boot).
+lab_netplan_apply: true
+
 # SSH public keys authorised for the ansible user (config, not secret). Supplied
 # by the consuming inventory via ops_ssh_authorized_keys.
 ops_ssh_authorized_keys: []
