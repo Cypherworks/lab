@@ -124,7 +124,7 @@
       community.vmware.vmware_guest_info:
         name: "{{ vcenter_vm_ovf_name }}"
       register: _vm_info
-      until: (_vm_info.instance.ipv4 | default('')) | length > 0
+      until: (_vm_info.instance.ipv4 | default('', true)) | length > 0
       retries: "{{ vcenter_vm_ovf_ip_retries }}"
       delay: "{{ vcenter_vm_ovf_ip_delay }}"
 
