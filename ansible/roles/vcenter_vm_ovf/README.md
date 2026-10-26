@@ -7,7 +7,7 @@ Part of the `lab` mechanism library: a generic, parameterised role. Supply site 
 ## Requirements
 
 - Runs on the control host (`delegate_to: localhost`) against the vCenter API. `pyvmomi` must be importable by Ansible's Python.
-- An OVA whose vApp properties cloud-init reads: `instance-id`, `hostname`, `public-keys` and base64 `user-data`, as Ubuntu's cloud-image OVAs do. `fail_on_spec_warnings` is on, so an OVA without those properties fails the deploy instead of booting unseeded.
+- An OVA whose vApp properties cloud-init reads: `instance-id`, `hostname`, `public-keys` and base64 `user-data`, as Ubuntu's cloud-image OVAs do. After the deploy the role reads the VM's vApp properties back from vCenter and fails unless each one holds the value it set, so an OVA without them fails instead of booting unseeded. Import-spec warnings are printed but not fatal: Ubuntu's OVA carries vendor `extraConfig` keys (such as `enableMPTSupport`) that vCenter can't parse and drops.
 - cloud-init can't set a static address through user-data on these images, so the VM boots with DHCP on the port group it's deployed onto. Write a static network config yourself and apply it with `network.yml`.
 
 ## Task files

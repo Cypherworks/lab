@@ -47,6 +47,15 @@
             checksum: "sha256:{{ vcenter_vm_ovf_ova_sha256 }}"
             mode: "0600"
 
+        - name: Build the cloud-init vApp properties
+          ansible.builtin.set_fact:
+            _vm_ovf_properties:
+              instance-id: "{{ vcenter_vm_ovf_name }}"
+              hostname: "{{ vcenter_vm_ovf_guest_hostname }}"
+              public-keys: "{{ vcenter_vm_ovf_ssh_authorized_keys | join('\n') }}"
+              user-data: "{{ lookup('ansible.builtin.template', 'user-data.yml.j2') | b64encode }}"
+
+        # Warnings still print (Ubuntu's OVA has extraConfig vCenter rejects).
         - name: Deploy the OVA, powered off, seeded by cloud-init
           community.vmware.vmware_deploy_ovf:
             name: "{{ vcenter_vm_ovf_name }}"
@@ -57,13 +66,28 @@
             networks: "{{ {vcenter_vm_ovf_ovf_network: vcenter_vm_ovf_network} }}"
             disk_provisioning: thin
             inject_ovf_env: true
-            fail_on_spec_warnings: true
+            fail_on_spec_warnings: false
             power_on: false
-            properties:
-              instance-id: "{{ vcenter_vm_ovf_name }}"
-              hostname: "{{ vcenter_vm_ovf_guest_hostname }}"
-              public-keys: "{{ vcenter_vm_ovf_ssh_authorized_keys | join('\n') }}"
-              user-data: "{{ lookup('ansible.builtin.template', 'user-data.yml.j2') | b64encode }}"
+            properties: "{{ _vm_ovf_properties }}"
+
+        - name: Read the deployed VM's vApp properties
+          community.vmware.vmware_guest_info:
+            name: "{{ vcenter_vm_ovf_name }}"
+            schema: vsphere
+            properties: ["config.vAppConfig.property"]
+          register: _vm_vapp
+
+        - name: Fail unless every cloud-init property took its value
+          vars:
+            _set: "{{ _vm_vapp.instance.config.vAppConfig.property | default([])
+                      | items2dict(key_name='id', value_name='value') }}"
+          ansible.builtin.assert:
+            that: _set[item.key] | default(none) == item.value
+            fail_msg: "The OVA has no '{{ item.key }}' vApp property, or it didn't take; cloud-init won't seed the VM."
+            quiet: true
+          loop: "{{ _vm_ovf_properties | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
 
         - name: Set the CPU and memory
           community.vmware.vmware_guest:
