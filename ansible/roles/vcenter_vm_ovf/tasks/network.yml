@@ -1,0 +1,34 @@
+---
+# Move the VM's first NIC to vcenter_vm_ovf_target_network and reboot it, so a
+# network config written but not applied (e.g. a static netplan) takes effect.
+- name: Move the first NIC and reboot
+  delegate_to: localhost
+  module_defaults:
+    group/community.vmware.vmware:
+      hostname: "{{ vcenter_vm_ovf_hostname }}"
+      username: "{{ vcenter_vm_ovf_username }}"
+      password: "{{ vcenter_vm_ovf_password }}"
+      validate_certs: "{{ vcenter_vm_ovf_validate_certs }}"
+      datacenter: "{{ vcenter_vm_ovf_datacenter }}"
+  block:
+    - name: Read the VM's NICs
+      community.vmware.vmware_guest_network:
+        name: "{{ vcenter_vm_ovf_name }}"
+        gather_network_info: true
+      register: _vm_nics
+
+    - name: Put the first NIC on the target port group
+      community.vmware.vmware_guest_network:
+        name: "{{ vcenter_vm_ovf_name }}"
+        label: "{{ _vm_nics.network_info[0].label }}"
+        network_name: "{{ vcenter_vm_ovf_target_network }}"
+        connected: true
+        start_connected: true
+        state: present
+      register: _vm_moved
+
+    - name: Reboot the guest onto its new network
+      community.vmware.vmware_guest_powerstate:
+        name: "{{ vcenter_vm_ovf_name }}"
+        state: reboot-guest
+      when: _vm_moved is changed

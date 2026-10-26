@@ -1,0 +1,7 @@
+---
+# The whole server: install, then firewall + start + settings.
+- name: Install Technitium DNS
+  ansible.builtin.include_tasks: install.yml
+
+- name: Configure Technitium DNS
+  ansible.builtin.include_tasks: configure.yml

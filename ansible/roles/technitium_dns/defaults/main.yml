@@ -1,0 +1,44 @@
+---
+# technitium_dns — Technitium DNS Server on Ubuntu, configured through its
+# HTTP API on loopback. Recursion, its client ACL, forwarders and the HTTPS
+# console are code; zones and records stay in the web console. A host
+# firewall (ufw) limits DNS to the client networks and SSH + the console to
+# the admin sources. Generic mechanism; site data from the deploy.
+#
+# The archive publishes a .sha256 beside each tarball (same origin, so it
+# catches corruption, not a compromised server). The tarball is fetched on
+# the control host and copied over, as the target may have no internet.
+
+technitium_dns_version: "15.6.2"
+technitium_dns_archive_sha256: "51f2d4ebaf156a85035e820afde5e1d428f1920a37d7f0c65203fb1766917e08"
+technitium_dns_archive_url: "https://download.technitium.com/dns/archive/{{ technitium_dns_version }}/DnsServerPortable.tar.gz"
+technitium_dns_cache_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/technitium_dns"
+
+# ASP.NET Core runtime from the distro's signed apt, not dotnet-install.
+technitium_dns_runtime_package: aspnetcore-runtime-10.0
+technitium_dns_dotnet: /usr/bin/dotnet
+
+technitium_dns_user: dns-server
+technitium_dns_install_dir: /opt/technitium/dns
+technitium_dns_config_dir: /etc/dns
+technitium_dns_log_dir: /var/log/technitium/dns
+
+technitium_dns_http_port: 5380    # loopback only (the role's API calls)
+technitium_dns_https_port: 53443  # the console, from the admin sources
+
+technitium_dns_admin_password: ""  # required (SOPS)
+
+# Deny unless set: UseSpecifiedNetworkACL + an ACL limits who may recurse.
+technitium_dns_recursion: Deny
+technitium_dns_recursion_acl: []
+technitium_dns_forwarders: []
+technitium_dns_forwarder_protocol: Udp
+
+# Host firewall: deny by default; these are the only sources let in.
+technitium_dns_firewall: true
+technitium_dns_dns_clients: []    # CIDRs/IPs allowed to query on 53
+technitium_dns_admin_sources: []  # IPs allowed SSH (22) and the console
+
+# Rebuilds: control-host archives, named <host>-config.tar.gz.
+technitium_dns_archive_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/state/technitium_dns"
+technitium_dns_restore_from: ""   # restore_config.yml: the source host

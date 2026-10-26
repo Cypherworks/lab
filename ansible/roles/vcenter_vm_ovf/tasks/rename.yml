@@ -1,0 +1,13 @@
+---
+# Rename the VM (vcenter_vm_ovf_name -> vcenter_vm_ovf_new_name), so a rebuild
+# can deploy a fresh VM under the original name while the old one still runs.
+- name: Rename the VM
+  delegate_to: localhost
+  community.vmware.vmware_object_rename:
+    hostname: "{{ vcenter_vm_ovf_hostname }}"
+    username: "{{ vcenter_vm_ovf_username }}"
+    password: "{{ vcenter_vm_ovf_password }}"
+    validate_certs: "{{ vcenter_vm_ovf_validate_certs }}"
+    object_type: VirtualMachine
+    object_name: "{{ vcenter_vm_ovf_name }}"
+    new_name: "{{ vcenter_vm_ovf_new_name }}"

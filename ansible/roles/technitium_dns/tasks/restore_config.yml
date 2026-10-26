@@ -1,0 +1,26 @@
+---
+# Rebuilds, new server: lay the old server's config dir down before the first
+# start, so zones and records carry over. Run after install.yml.
+- name: Check the archive exists on the control host
+  delegate_to: localhost
+  become: false
+  ansible.builtin.stat:
+    path: "{{ technitium_dns_archive_dir }}/{{ technitium_dns_restore_from }}-config.tar.gz"
+  register: _archive
+
+- name: Fail without an archive to restore
+  ansible.builtin.assert:
+    that: _archive.stat.exists
+    fail_msg: "No config archive for {{ technitium_dns_restore_from }} in {{ technitium_dns_archive_dir }}."
+
+- name: Stop Technitium DNS before restoring
+  ansible.builtin.systemd_service:
+    name: technitium-dns
+    state: stopped
+
+- name: Unpack the old config over the config directory
+  ansible.builtin.unarchive:
+    src: "{{ _archive.stat.path }}"
+    dest: "{{ technitium_dns_config_dir | dirname }}"
+    owner: "{{ technitium_dns_user }}"
+    group: "{{ technitium_dns_user }}"

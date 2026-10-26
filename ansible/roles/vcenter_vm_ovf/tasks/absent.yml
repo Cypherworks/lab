@@ -1,0 +1,21 @@
+---
+# Power the VM off and delete it from disk (the end of a rebuild).
+- name: Power off and delete the VM
+  delegate_to: localhost
+  module_defaults:
+    group/community.vmware.vmware:
+      hostname: "{{ vcenter_vm_ovf_hostname }}"
+      username: "{{ vcenter_vm_ovf_username }}"
+      password: "{{ vcenter_vm_ovf_password }}"
+      validate_certs: "{{ vcenter_vm_ovf_validate_certs }}"
+      datacenter: "{{ vcenter_vm_ovf_datacenter }}"
+  block:
+    - name: Power the VM off
+      community.vmware.vmware_guest_powerstate:
+        name: "{{ vcenter_vm_ovf_name }}"
+        state: powered-off
+
+    - name: Delete the VM
+      community.vmware.vmware_guest:
+        name: "{{ vcenter_vm_ovf_name }}"
+        state: absent

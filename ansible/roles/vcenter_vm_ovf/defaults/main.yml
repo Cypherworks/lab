@@ -1,0 +1,47 @@
+---
+# vcenter_vm_ovf — deploy a VM from an OVA through vCenter, with cloud-init
+# seeding its hostname and an SSH key, then size it and wait for its address.
+# Generic mechanism; site data from the deploy. Runs on the control host
+# against the vCenter API (needs pyvmomi). Extra task files: network.yml moves
+# the VM's first NIC to another port group and reboots it; rename.yml,
+# poweroff.yml and absent.yml support rebuilds.
+
+vcenter_vm_ovf_hostname: ""        # vCenter host/IP
+vcenter_vm_ovf_username: "administrator@vsphere.local"
+vcenter_vm_ovf_password: ""        # SSO admin password (SOPS)
+vcenter_vm_ovf_validate_certs: false
+
+vcenter_vm_ovf_datacenter: ""
+vcenter_vm_ovf_esxi_hostname: ""   # host the VM lands on
+vcenter_vm_ovf_datastore: ""
+vcenter_vm_ovf_folder: ""          # VM folder; empty = the datacenter's root
+
+vcenter_vm_ovf_name: ""            # VM name in vCenter
+vcenter_vm_ovf_guest_hostname: "{{ vcenter_vm_ovf_name }}"
+
+# The OVA: pinned URL + sha256, cached on the control host between runs.
+vcenter_vm_ovf_ova_url: ""
+vcenter_vm_ovf_ova_sha256: ""
+vcenter_vm_ovf_cache_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/vcenter_vm_ovf"
+
+# OVF network name -> the port group the VM is deployed onto.
+vcenter_vm_ovf_ovf_network: "VM Network"
+vcenter_vm_ovf_network: ""
+
+# Sizing; the root disk only ever grows.
+vcenter_vm_ovf_num_cpus: 2
+vcenter_vm_ovf_memory_mb: 2048
+vcenter_vm_ovf_disk_gb: 16
+
+# cloud-init: one sudo user with key-only SSH.
+vcenter_vm_ovf_user: ansible
+vcenter_vm_ovf_ssh_authorized_keys: []
+
+# How long to wait for VMware Tools to report an IPv4 address.
+vcenter_vm_ovf_ip_retries: 60
+vcenter_vm_ovf_ip_delay: 10
+
+# network.yml: the port group to move the first NIC onto.
+vcenter_vm_ovf_target_network: ""
+# rename.yml: the VM's new name.
+vcenter_vm_ovf_new_name: ""

@@ -6,3 +6,4 @@
   ansible.builtin.command:
     cmd: netplan apply
   changed_when: true
+  when: lab_netplan_apply | bool

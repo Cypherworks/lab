@@ -20,6 +20,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `lab_nameservers` | `[1.1.1.1, 1.0.0.1]` | Resolver addresses written to the netplan config. Override per deployment. |
 | `lab_search` | `"{{ internal_subdomain }}"` | DNS search domain. Depends on inventory `internal_subdomain`. |
 | `lab_vlans` | `[]` | Optional tagged VLAN sub-interfaces. Each entry: `name`, `id`, `addresses`, and optional `link` (defaults to `lab_interface`). No gateway is assigned. |
+| `lab_netplan_apply` | `true` | `false` writes the netplan file without running `netplan apply`, so it takes effect at the next boot. For a host whose static address is on a network it isn't connected to yet (a VM moved between port groups). |
 | `ops_ssh_authorized_keys` | `[]` | SSH public keys authorised for the ansible user. Config, not secret; supplied by inventory. |
 
 Required from inventory, no default (network config is only templated when `lab_ip` is defined):
