@@ -18,14 +18,14 @@ blocking:
 {% for group, entries in blocky_denylists.items() %}
     {{ group }}:
 {% for e in entries %}
-      - {{ e }}
+      - {{ e | to_json }}
 {% endfor %}
 {% endfor %}
   allowlists:
 {% for group, entries in blocky_allowlists.items() %}
     {{ group }}:
 {% for e in entries %}
-      - {{ e }}
+      - {{ e | to_json }}
 {% endfor %}
 {% endfor %}
   clientGroupsBlock:
@@ -43,6 +43,14 @@ customDNS:
   mapping:
 {% for fqdn, ip in blocky_custom_dns.items() %}
     {{ fqdn }}: {{ ip }}
+{% endfor %}
+{% endif %}
+
+{% if blocky_conditional_mapping %}
+conditional:
+  mapping:
+{% for domain, upstream in blocky_conditional_mapping.items() %}
+    {{ domain }}: {{ upstream }}
 {% endfor %}
 {% endif %}
 

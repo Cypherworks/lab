@@ -30,13 +30,14 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `blocky_cache_min` | `5m` | Minimum cache time. |
 | `blocky_cache_max` | `30m` | Maximum cache time. |
 | `blocky_log_level` | `info` | Log level. |
-| `blocky_denylists` | `{}` | Site data. Map of group name to a list of blocklist URLs or inline entries. |
+| `blocky_denylists` | `{}` | Site data. Map of group name to a list of blocklist URLs or inline entries. An inline entry is a multi-line string (YAML `|`): blocky reads a source with no newline as a file path. |
 | `blocky_allowlists` | `{}` | Site data. Map of group name to a list of allowlist URLs or inline entries. |
 | `blocky_client_groups_block` | `{default: []}` | Site data. Maps clients to the denylist groups that apply to them. |
 | `blocky_custom_dns` | `{}` | Site data. Map of FQDN to IP for local lab records. |
+| `blocky_conditional_mapping` | `{}` | Site data. Map of domain to the server that answers it and its subdomains, e.g. a private zone's own authoritative server. Blocking runs first, so a denylist group can keep a mapped domain from clients that shouldn't see it. |
 | `blocky_disable_resolved_stub` | `true` | Free port 53 by disabling the `systemd-resolved` stub listener and relinking `/etc/resolv.conf`. |
 
-Empty-collection defaults (`blocky_denylists`, `blocky_allowlists`, `blocky_custom_dns`) hold site data and are meant to be supplied from `group_vars` so every DNS node is identical.
+Empty-collection defaults (`blocky_denylists`, `blocky_allowlists`, `blocky_custom_dns`, `blocky_conditional_mapping`) hold site data and are meant to be supplied from `group_vars` so every DNS node is identical.
 
 ## Dependencies
 
@@ -69,6 +70,20 @@ Handlers: `Restart systemd-resolved` and `Restart blocky`. The systemd unit gran
             - ads
         blocky_custom_dns:
           caddy.lab.example: 10.0.30.10
+```
+
+A private zone answered by its own server, for one admin client only:
+
+```yaml
+blocky_conditional_mapping:
+  private.example: 10.0.0.53
+blocky_denylists:
+  private:
+    - |
+      *.private.example
+blocky_client_groups_block:
+  default: [ads, private]
+  10.0.0.20: [ads] # the admin client: no `private` group
 ```
 
 ## Notes

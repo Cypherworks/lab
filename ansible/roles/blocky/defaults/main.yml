@@ -34,6 +34,7 @@ blocky_allowlists: {} # group -> [urls/inline]
 blocky_client_groups_block: # which denylist groups apply to which clients
   default: []
 blocky_custom_dns: {} # fqdn -> ip (local lab records)
+blocky_conditional_mapping: {} # domain -> its own server, subdomains too
 
 # blocky binds :53, so free it from systemd-resolved's stub listener.
 blocky_disable_resolved_stub: true
