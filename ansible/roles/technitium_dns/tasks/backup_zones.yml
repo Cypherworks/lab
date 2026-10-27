@@ -1,0 +1,72 @@
+---
+# Back up the zones (records included) through the API while the server
+# keeps answering, pull the zip to the control host as
+# <host>-zones-<UTC time>.zip, and keep the newest technitium_dns_backup_keep.
+# Settings aren't backed up: they're code.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: Make a private scratch dir on the server
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .zones
+  register: _zones_scratch
+
+- name: Back up and pull the zones
+  block:
+    - name: Back up the zones
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/settings/backup?zones=true"
+        headers: { Authorization: "Bearer {{ _login.json.token }}" }
+        dest: "{{ _zones_scratch.path }}/zones.zip"
+      register: _zones_backup
+      # An API error comes back as JSON with HTTP 200.
+      failed_when: _zones_backup.content_type | default('') != 'application/zip'
+      no_log: true
+
+    - name: Create the archive directory on the control host
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ technitium_dns_archive_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Pull the backup to the control host
+      ansible.builtin.fetch:
+        src: "{{ _zones_scratch.path }}/zones.zip"
+        dest: "{{ technitium_dns_archive_dir }}/{{ inventory_hostname }}-zones-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}.zip"
+        flat: true
+      register: _zones_pulled
+
+    - name: Make the pulled backup private
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ _zones_pulled.dest }}"
+        mode: "0600"
+  always:
+    - name: Remove the scratch dir on the server
+      ansible.builtin.file:
+        path: "{{ _zones_scratch.path }}"
+        state: absent
+
+- name: List this host's backups on the control host
+  delegate_to: localhost
+  become: false
+  ansible.builtin.find:
+    paths: "{{ technitium_dns_archive_dir }}"
+    patterns: "{{ inventory_hostname }}-zones-*.zip"
+  register: _zones_backups
+
+- name: Remove all but the newest backups
+  delegate_to: localhost
+  become: false
+  vars:
+    # The UTC timestamps in the names sort oldest first.
+    _oldest_first: "{{ _zones_backups.files | map(attribute='path') | sort }}"
+    _drop_count: "{{ [_oldest_first | length - technitium_dns_backup_keep | int, 0] | max }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _oldest_first[: _drop_count | int] }}"

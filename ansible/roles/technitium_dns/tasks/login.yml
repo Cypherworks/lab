@@ -1,0 +1,46 @@
+---
+# Log in on loopback as admin, replacing the default password on a fresh
+# install. Registers _login; the API calls use _login.json.token.
+- name: Try the managed admin password
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body: { user: admin, pass: "{{ technitium_dns_admin_password }}" }
+  register: _managed_login
+  no_log: true
+
+# A skipped task still registers, so nothing in here registers _login.
+- name: First run, replace the default admin password
+  when: _managed_login.json.status | default('') != 'ok'
+  no_log: true
+  block:
+    - name: Log in with the default password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/user/login"
+        method: POST
+        body_format: form-urlencoded
+        body: { user: admin, pass: admin }
+      register: _default_login
+      failed_when: _default_login.json.status | default('') != 'ok'
+
+    - name: Set the managed admin password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/user/changePassword"
+        method: POST
+        body_format: form-urlencoded
+        headers: { Authorization: "Bearer {{ _default_login.json.token }}" }
+        body: { pass: admin, newPass: "{{ technitium_dns_admin_password }}" }
+      register: _changed_pw
+      failed_when: _changed_pw.json.status | default('') != 'ok'
+      changed_when: true
+
+- name: Log in with the managed admin password
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body: { user: admin, pass: "{{ technitium_dns_admin_password }}" }
+  register: _login
+  failed_when: _login.json.status | default('') != 'ok'
+  no_log: true

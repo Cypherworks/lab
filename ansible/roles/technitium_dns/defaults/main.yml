@@ -42,3 +42,6 @@ technitium_dns_admin_sources: []  # IPs allowed SSH (22) and the console
 # Rebuilds: control-host archives, named <host>-config.tar.gz.
 technitium_dns_archive_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/state/technitium_dns"
 technitium_dns_restore_from: ""   # restore_config.yml: the source host
+
+# Zone backups, same dir: <host>-zones-<UTC time>.zip, newest N kept.
+technitium_dns_backup_keep: 30
