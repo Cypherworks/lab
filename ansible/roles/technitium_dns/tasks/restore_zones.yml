@@ -1,0 +1,82 @@
+---
+# Seed a server that has no zones of its own (a fresh build after the old
+# one was lost) from this host's newest zone backup on the control host. A
+# server with zones is left alone, so console changes are never overwritten.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: List the server's zones
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/list"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _zones
+  failed_when: _zones.json.status | default('') != 'ok'
+  no_log: true
+
+# Built-in zones carry internal: true; the rest have false or no key.
+- name: Seed an empty server from the newest backup
+  when: _zones.json.response.zones | rejectattr('internal', 'true') | list | length == 0
+  block:
+    - name: List this host's backups on the control host
+      delegate_to: localhost
+      become: false
+      ansible.builtin.find:
+        paths: "{{ technitium_dns_archive_dir }}"
+        patterns: "{{ inventory_hostname }}-zones-*.zip"
+      register: _zones_backups
+
+    - name: Report that there's nothing to restore
+      ansible.builtin.debug:
+        msg: "No zones on the server and no backup in {{ technitium_dns_archive_dir }}; starting empty."
+      when: _zones_backups.files | length == 0
+
+    - name: Restore the newest backup
+      when: _zones_backups.files | length > 0
+      vars:
+        _newest: "{{ _zones_backups.files | map(attribute='path') | sort | last }}"
+      block:
+        - name: Make a private scratch dir on the server
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: .zones
+          register: _zones_scratch
+
+        - name: Copy the backup over
+          ansible.builtin.copy:
+            src: "{{ _newest }}"
+            dest: "{{ _zones_scratch.path }}/zones.zip"
+            mode: "0600"
+
+        - name: Write the API token header where curl can read it
+          ansible.builtin.copy:
+            content: "Authorization: Bearer {{ _login.json.token }}\n"
+            dest: "{{ _zones_scratch.path }}/auth"
+            mode: "0600"
+          no_log: true
+
+        # uri base64-encodes multipart files, which Technitium can't read.
+        - name: Restore the zones from the backup
+          ansible.builtin.command:  # noqa command-instead-of-module
+            argv:
+              - curl
+              - -sS
+              - -H
+              - "@{{ _zones_scratch.path }}/auth"
+              - -F
+              - "backup=@{{ _zones_scratch.path }}/zones.zip;type=application/zip"
+              - "http://127.0.0.1:{{ technitium_dns_http_port }}/api/settings/restore?zones=true"
+          register: _zones_restore
+          failed_when: >-
+            _zones_restore.rc != 0
+            or (_zones_restore.stdout | from_json).status | default('') != 'ok'
+          changed_when: true
+
+        - name: Report the backup restored
+          ansible.builtin.debug:
+            msg: "Restored zones from {{ _newest }}."
+      always:
+        - name: Remove the scratch dir on the server
+          ansible.builtin.file:
+            path: "{{ _zones_scratch.path }}"
+            state: absent
+          when: _zones_scratch.path is defined

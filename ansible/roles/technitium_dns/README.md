@@ -12,6 +12,8 @@ Part of the `lab` mechanism library: a generic, parameterised role. Supply site 
 
 Rebuilds (fresh VM, same records): `archive_config.yml` stops the old server and pulls its whole `/etc/dns` to the control host. `restore_config.yml` lays it down on the new server after `install.yml` and before `configure.yml`, as an in-place upgrade does. Technitium updates its own files on start.
 
+Zone backups (the server lost, not replaced): `backup_zones.yml` takes a zones-only backup through the API (`/api/settings/backup?zones=true`) while the server keeps answering, and pulls it to the control host as `<host>-zones-<UTC time>.zip` (0600, in a 0700 dir), keeping the newest `technitium_dns_backup_keep`. `restore_zones.yml` restores the newest of those through `/api/settings/restore`, but only into a server with no zones of its own (Technitium's internal ones don't count), so a converge never overwrites console changes. It uploads with `curl` because `uri` base64-encodes multipart files, which Technitium can't read. Technitium writes a zone change to disk about 5 seconds after it's made, so a backup taken straight after an edit misses that edit. `tests/zone_backups.yml` exercises both against a throwaway container on loopback.
+
 The plain-HTTP port (5380) is used by the role on loopback and is closed to the network by the firewall; the console is HTTPS on 53443.
 
 ## Requirements
@@ -19,6 +21,7 @@ The plain-HTTP port (5380) is used by the role on loopback and is closed to the 
 - Ubuntu with `aspnetcore-runtime-10.0` in its archive (24.04 and later).
 - The control host can reach `download.technitium.com`; the target needn't have internet.
 - `community.general` (ufw).
+- `curl` on the target, for `restore_zones.yml`.
 
 ## Role variables
 
@@ -42,3 +45,4 @@ The plain-HTTP port (5380) is used by the role on loopback and is closed to the 
 | `technitium_dns_admin_sources` | `[]` | Sources allowed SSH and the console. |
 | `technitium_dns_archive_dir` | `~/.local/state/technitium_dns` | Rebuild archives on the control host. |
 | `technitium_dns_restore_from` | `""` | `restore_config.yml`: whose archive to restore. |
+| `technitium_dns_backup_keep` | `30` | Zone backups kept per host in `technitium_dns_archive_dir`. |
