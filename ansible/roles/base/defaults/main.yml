@@ -9,6 +9,8 @@ base_packages:
   - htop
   - vim
   - python3
+# Refresh the apt cache first; false for a host with no mirror (airgapped).
+base_apt_update_cache: true
 
 # Per-host network (set in host_vars). lab_ip/lab_gateway are required; the rest
 # have sane defaults. Pis use eth0; x86 NICs are set per host.

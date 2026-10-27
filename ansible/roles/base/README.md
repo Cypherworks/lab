@@ -15,6 +15,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `base_packages` | `[curl, ca-certificates, unzip, htop, vim, python3]` | Packages installed on every host. |
+| `base_apt_update_cache` | `true` | Refresh the apt cache before installing. Set `false` on a host with no package mirror: with the packages already present, apt then never touches the network. |
 | `lab_interface` | `eth0` | Primary NIC for the static lab address. Pis use `eth0`; x86 NICs are set per host. |
 | `lab_prefix` | `24` | CIDR prefix length for `lab_ip`. |
 | `lab_nameservers` | `[1.1.1.1, 1.0.0.1]` | Resolver addresses written to the netplan config. Override per deployment. |
@@ -41,7 +42,7 @@ None.
 ## What it does
 
 1. Sets the system hostname to `inventory_hostname`.
-2. Installs `base_packages` via apt (cache refreshed, `cache_valid_time: 3600`).
+2. Installs `base_packages` via apt (cache refreshed when `base_apt_update_cache`, `cache_valid_time: 3600`).
 3. Sets the timezone to `timezone`.
 4. Authorises each key in `ops_ssh_authorized_keys` for `ansible_user`.
 5. When `lab_ip` is defined, templates `lab-netplan.yaml.j2` to `/etc/netplan/60-lab.yaml` (root:root, mode `0600`): a static v4 address on `lab_interface` with DHCP disabled, a default route via `lab_gateway`, nameservers and search domain, plus any `lab_vlans` sub-interfaces. Changes to the file notify the `Apply netplan` handler, which runs `netplan apply`.

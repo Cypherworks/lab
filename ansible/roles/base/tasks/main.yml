@@ -9,8 +9,9 @@
   ansible.builtin.apt:
     name: "{{ base_packages }}"
     state: present
-    update_cache: true
-    cache_valid_time: 3600
+    update_cache: "{{ base_apt_update_cache }}"
+    # Any non-zero cache_valid_time makes apt refresh, update_cache or not.
+    cache_valid_time: "{{ 3600 if base_apt_update_cache else 0 }}"
 
 - name: Set timezone
   become: true
