@@ -98,3 +98,6 @@
 - name: Load the unit
   ansible.builtin.systemd_service:
     daemon_reload: true
+
+- name: Free port 53
+  ansible.builtin.include_tasks: resolved_stub.yml

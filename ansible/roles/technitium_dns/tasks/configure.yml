@@ -13,5 +13,8 @@
     port: "{{ technitium_dns_http_port }}"
     timeout: 120
 
+- name: Check port 53
+  ansible.builtin.include_tasks: check_port_53.yml
+
 - name: Hold what the role holds through the API
   ansible.builtin.include_tasks: hold.yml
