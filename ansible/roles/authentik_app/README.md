@@ -69,6 +69,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `proxmox_oidc_redirect_uris` | `[]` | Proxmox VE UI base URL callbacks (site data). The `proxmox` blueprint is no longer in the render loop, so these only reach the `.env`. |
 | `vcenter_oidc_client_id` | `""` | vCenter OIDC client id (from SOPS; blueprint reads via `!Env`; shared with the `vcenter_oidc` spec). |
 | `vcenter_oidc_client_secret` | `""` | vCenter OIDC client secret (from SOPS). |
+| `technitium_oidc_client_id` | `""` | Technitium OIDC client id, shared with `technitium_dns`. |
+| `technitium_oidc_client_secret` | `""` | Technitium OIDC client secret. |
+| `technitium_oidc_redirect_uri` | `""` | Technitium's `/sso/callback` URL. |
 | `vcenter_oidc_redirect_uris` | `[]` | vCenter OIDC callbacks (site data). |
 
 ## Dependencies
@@ -80,7 +83,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 1. Creates the compose, blueprints, and media directories.
 2. Copies branding assets into `<media>/public`.
 3. When `authentik_ldaps_pki_role` is set, issues the LDAPS outpost cert from OpenBao PKI (`ldaps_cert.yml`) before the blueprint and compose consume it.
-4. Renders the eleven integration blueprints into `authentik_blueprints_dir`: `headscale`, `core`, `recovery`, `invitation`, `nas`, `grafana`, `openbao`, `vcenter`, `ldap`, `user`, `forward_auth`.
+4. Renders the twelve integration blueprints into `authentik_blueprints_dir`: `headscale`, `core`, `recovery`, `invitation`, `nas`, `grafana`, `openbao`, `vcenter`, `technitium`, `ldap`, `user`, `forward_auth`.
 5. Renders the `.env` and compose file.
 6. Starts the stack (server + worker) with `docker_compose_v2`, pulling missing images.
 7. When LDAPS issuance is enabled, bounces the outpost until it serves the CA-issued cert (SAN = this node's IP).

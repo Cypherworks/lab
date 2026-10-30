@@ -1,0 +1,27 @@
+---
+# Renders the Technitium blueprint and checks what a sign-in depends on, as
+# authentik itself isn't run here. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/authentik_app/tests/technitium_blueprint.yml
+- name: Verify the Technitium blueprint
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    technitium_oidc_redirect_uri: https://dns.example.test/sso/callback
+    _rendered: "{{ lookup('ansible.builtin.template', '../templates/blueprints/technitium.yaml.j2') }}"
+  tasks:
+    - name: Assert sign-in is limited to the admin group, which alone is sent
+      ansible.builtin.assert:
+        that:
+          - "'url: \"https://dns.example.test/sso/callback\"' in _rendered"
+          - "'matching_mode: strict' in _rendered"
+          - "'client_id: !Env TECHNITIUM_OIDC_CLIENT_ID' in _rendered"
+          - "'client_secret: !Env TECHNITIUM_OIDC_CLIENT_SECRET' in _rendered"
+          - "'scope_name: profile' in _rendered"
+          - "'\"roles\": [group.name for group in request.user.groups.all() if group.name == \"technitium-admins\"]' in _rendered"
+          - "'!KeyOf mapping-technitium-roles' in _rendered"
+          - "'group: !KeyOf group-technitium-admins' in _rendered"
+        fail_msg: "{{ _rendered }}"

@@ -17,6 +17,7 @@
       webServiceEnableTls: "true"
       webServiceTlsPort: "{{ technitium_dns_https_port }}"
       webServiceUseSelfSignedTlsCertificate: "true"
+      webServiceReverseProxyAddresses: "{{ technitium_dns_web_reverse_proxy_addresses | join(',') if technitium_dns_web_reverse_proxy_addresses else 'false' }}"
       dnssecValidation: "{{ technitium_dns_dnssec_validation | bool | string | lower }}"
       enableBlocking: "{{ technitium_dns_blocking | bool | string | lower }}"
       blockingType: "{{ technitium_dns_blocking_type }}"

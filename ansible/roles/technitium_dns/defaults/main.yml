@@ -42,6 +42,15 @@ technitium_dns_block_list_update_hours: 24
 
 technitium_dns_dnssec_validation: true
 
+# Proxies trusted to name the client in a header; empty trusts none.
+technitium_dns_web_reverse_proxy_addresses: []
+
+# OpenID Connect sign-in, off until an authority is set. Local login remains.
+technitium_dns_sso_authority: ""
+technitium_dns_sso_client_id: ""
+technitium_dns_sso_client_secret: ""  # required with an authority (SOPS)
+technitium_dns_sso_group_map: {}      # remote group: local group
+
 # Conditional Forwarder zones held to code; README has each entry's keys.
 technitium_dns_forwarder_zones: []
 

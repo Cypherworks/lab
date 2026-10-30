@@ -40,6 +40,12 @@
     technitium_dns_recursion_acl: ["{{ _listed_client }}", "{{ _other_client }}"]
     technitium_dns_forwarders: ["{{ _public_ip }}"]
     technitium_dns_block_list_urls: ["http://{{ _public_ip }}:5380/blocklist.txt"]
+    # On the primary before the secondary joins, as when rebuilding a node.
+    technitium_dns_sso_authority: https://auth.example.invalid/application/o/technitium/
+    technitium_dns_sso_client_id: test-client
+    technitium_dns_sso_client_secret: test-secret-value
+    technitium_dns_sso_group_map:
+      dns-admins: Administrators
     technitium_dns_forwarder_zones:
       - zone: "{{ _split }}"
         forwarder: this-server
@@ -76,7 +82,7 @@
 
         - name: Start the nodes and the stand-in public DNS
           ansible.builtin.command: >-
-            docker run -d --name technitium-cluster-{{ item.name }} --hostname {{ item.name }}
+            docker run -d --restart always --name technitium-cluster-{{ item.name }} --hostname {{ item.name }}
             --network {{ _net }} --ip {{ item.ip }} -p 127.0.0.1:{{ item.port }}:5380 {{ _image }}
           changed_when: true
           loop:
@@ -152,6 +158,10 @@
             technitium_dns_cluster_role: secondary
             technitium_dns_cluster_node_ip: "{{ _node2_ip }}"
 
+        - name: Watch the secondary for the web service restart
+          ansible.builtin.command: "{{ ansible_playbook_python }} -I {{ playbook_dir }}/api_steady.py {{ _node2_port }} 4"
+          changed_when: false
+
         - name: Wait for the zones to reach the secondary
           ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} nas.{{ _split }} A"
           register: _synced
@@ -167,6 +177,25 @@
           retries: 30
           delay: 2
           changed_when: false
+
+        - name: Log in to the secondary
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: login
+          vars: *secondary
+
+        - name: Read the secondary's SSO settings
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/admin/sso/get"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _secondary_sso
+
+        - name: Assert SSO reached the secondary
+          ansible.builtin.assert:
+            that:
+              - _secondary_sso.json.response.ssoEnabled | bool
+              - _secondary_sso.json.response.ssoClientId == 'test-client'
+            fail_msg: "{{ _secondary_sso.json.response | to_json }}"
 
         - name: Check the secondary's answers
           ansible.builtin.include_tasks: cluster_answers.yml

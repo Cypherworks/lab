@@ -35,6 +35,7 @@
     technitium_dns_forwarders: ["{{ _public_ip }}"]
     technitium_dns_block_list_urls: ["{{ _list_url }}"]
     technitium_dns_block_list_update_hours: 4
+    technitium_dns_web_reverse_proxy_addresses: ["172.30.97.70"]
   tasks:
     - name: Draw this run's admin password
       ansible.builtin.set_fact:
@@ -154,6 +155,7 @@
               - _s.blockingType == 'AnyAddress'
               - _s.blockListUrls == [_list_url]
               - _s.blockListUpdateIntervalHours == 4
+              - _s.webServiceReverseProxyAddresses == ['172.30.97.70']
             fail_msg: "{{ _s.dnssecValidation }}, {{ _s.enableBlocking }}, {{ _s.blockingType }}, {{ _s.blockListUrls }}, {{ _s.blockListUpdateIntervalHours }}"
 
         - name: Change the settings the way someone might in the console

@@ -44,6 +44,11 @@
 - name: Check the join
   when: _cluster_joined is changed
   block:
+    # The web service restarts 2 s after a join, dropping requests in flight.
+    - name: Let the web service restart
+      ansible.builtin.pause:
+        seconds: 3
+
     - name: Log in again
       ansible.builtin.include_tasks: login.yml
 

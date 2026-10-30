@@ -1,0 +1,70 @@
+# Managed by the authentik_app role. Technitium DNS OIDC SSO, mirrors the vcenter
+# pattern, admin-only. technitium-admins gates the app (default-deny). Technitium
+# reads the roles claim rather than groups, so a mapping on the profile scope sends
+# that one group as a role. Client id/secret via !Env (SOPS).
+version: 1
+metadata:
+  name: lab - technitium oidc
+entries:
+  # Admin group: Technitium's group map turns it into a local group.
+  - model: authentik_core.group
+    id: group-technitium-admins
+    identifiers:
+      name: technitium-admins
+    attrs:
+      name: technitium-admins
+
+  - model: authentik_providers_oauth2.scopemapping
+    id: mapping-technitium-roles
+    identifiers:
+      name: "lab - technitium roles"
+    attrs:
+      name: "lab - technitium roles"
+      scope_name: profile
+      expression: |
+        return {
+            "roles": [group.name for group in request.user.groups.all() if group.name == "technitium-admins"],
+        }
+
+  - model: authentik_providers_oauth2.oauth2provider
+    id: provider-technitium
+    identifiers:
+      name: Technitium
+    attrs:
+      name: Technitium
+      client_type: confidential
+      grant_types:
+        - authorization_code
+        - refresh_token
+      client_id: !Env TECHNITIUM_OIDC_CLIENT_ID
+      client_secret: !Env TECHNITIUM_OIDC_CLIENT_SECRET
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+        - url: "{{ technitium_oidc_redirect_uri }}"
+          matching_mode: strict
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !KeyOf mapping-technitium-roles
+
+  - model: authentik_core.application
+    id: app-technitium
+    identifiers:
+      slug: technitium
+    attrs:
+      name: Technitium
+      slug: technitium
+      provider: !KeyOf provider-technitium
+      policy_engine_mode: any
+
+  # Default-deny: only technitium-admins may authenticate to the app.
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf app-technitium
+      group: !KeyOf group-technitium-admins
+      order: 0
+    attrs:
+      enabled: true

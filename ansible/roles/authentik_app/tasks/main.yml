@@ -71,6 +71,7 @@
     - grafana
     - openbao
     - vcenter
+    - technitium
     - ldap
     - user
     - forward_auth

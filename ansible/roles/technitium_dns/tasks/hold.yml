@@ -1,6 +1,8 @@
 ---
-# Everything the role holds through the API. A joined secondary takes its
-# settings and zones from the primary, so only the primary's are written.
+# Everything the role holds through the API, settings before the cluster: a
+# join that has to turn HTTPS on itself hangs if the primary has SSO enabled.
+# A joined secondary takes its settings and zones from the primary, so only
+# the primary's are written.
 - name: Check the node against the cluster
   ansible.builtin.include_tasks: cluster_check.yml
   when: technitium_dns_cluster_domain | length > 0
@@ -12,6 +14,12 @@
 - name: Bring the node into the cluster
   ansible.builtin.include_tasks: cluster_join.yml
   when: technitium_dns_cluster_domain | length > 0
+
+- name: Hold the SSO settings
+  ansible.builtin.include_tasks: sso.yml
+  when:
+    - technitium_dns_sso_authority | length > 0
+    - technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'
 
 - name: Hold the forwarder zones
   ansible.builtin.include_tasks: forwarder_zones.yml
