@@ -1,0 +1,220 @@
+---
+# Upgrades a running OpenBao through the role's real install tasks, on systemd
+# in a privileged throwaway container, with moto standing in for AWS KMS so the
+# awskms seal really unseals. Proves the server restarts onto the new binary,
+# the KMS plugin unseals it, data survives, and the running-version gate
+# refuses a server that isn't the pinned version. Needs Docker, the
+# community.docker collection, and internet for images, debs and pip. From
+# ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/openbao/tests/upgrade.yml
+- name: Boot a fake KMS and a systemd host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: openbao-upgrade-test
+    _kms: openbao-upgrade-kms
+    _target: openbao-upgrade-target
+    _make_key: >-
+      import boto3;
+      print(boto3.client('kms', endpoint_url='http://127.0.0.1:5000',
+      region_name='eu-west-2', aws_access_key_id='fake',
+      aws_secret_access_key='fake').create_key()['KeyMetadata']['KeyId'])
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} {{ _kms }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start moto as the KMS
+      ansible.builtin.command: >-
+        docker run -d --name {{ _kms }} --network {{ _net }} python:3.13-alpine
+        sh -c "pip install -q 'moto[server]' && exec moto_server -H 0.0.0.0 -p 5000"
+      changed_when: true
+
+    - name: Create the seal key
+      ansible.builtin.command: docker exec {{ _kms }} python3 -c "{{ _make_key }}"
+      register: _key
+      until: _key.rc == 0
+      retries: 40
+      delay: 3
+      changed_when: true
+
+    - name: Boot systemd on Debian 13, as the service containers run
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+        python3 python3-apt ca-certificates jq && exec /lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Read the architecture
+      ansible.builtin.command: docker exec {{ _target }} dpkg --print-architecture
+      register: _arch
+      changed_when: false
+
+    - name: Target the container
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: upgrade_target
+        ansible_connection: community.docker.docker
+        ansible_become: false
+        ansible_python_interpreter: /usr/bin/python3
+        openbao_arch: "{{ _arch.stdout }}"
+        openbao_kms_key_id: "{{ _key.stdout }}"
+        openbao_kms_endpoint: "http://{{ _kms }}:5000"
+
+- name: Upgrade a running OpenBao
+  hosts: upgrade_target
+  gather_facts: false
+  vars:
+    openbao_api_addr: https://127.0.0.1:8200
+    openbao_cluster_addr: https://127.0.0.1:8201
+    openbao_node_id: upgrade-test
+    openbao_aws_region: eu-west-2
+    openbao_aws_access_key_id: fake-access
+    openbao_aws_secret_access_key: fake-secret
+    _start_version: "2.5.5"
+    _upgraded_version: "2.7.2"
+    _start_deb_sha256:
+      amd64: b86386c8c48a442d51979b754d1f3495c607a528dcbf9f697eb2819d5ac7aa3d
+      arm64: db6bb24900ce53eb8524866059b86c63fd8422bad5df09354399aaff8cb40292
+    _deb_sha256:
+      amd64: 42bd0890a8e2060e5f29410ea828ee047aa2de21028045731a0516d5a532928c
+      arm64: f9f40f906aaf673f536e59e45be3f485408b36cdb75697e89bb5201b8545dc46
+    _plugin_binary:
+      amd64: openbao-plugin-kms-aws_linux_amd64_v1
+      arm64: openbao-plugin-kms-aws_linux_arm64_v8
+    _plugin_sha256:
+      amd64: f00ebed7fa1cbec080e0fed908e167125bc14b266df7e4af845f82aa4650ed4e
+      arm64: 8f173d8590d3df52c3501dd3af79b5f90fbc8ae4386b04abb706ca8b82a55b23
+    _env:
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_SKIP_VERIFY: "true"
+  tasks:
+    - name: Install the start version, with the seal built in
+      ansible.builtin.include_role:
+        name: openbao
+        tasks_from: install
+      vars:
+        openbao_version: "{{ _start_version }}"
+        openbao_deb_sha256: "{{ _start_deb_sha256[openbao_arch] }}"
+        openbao_kms_plugin_version: ""
+
+    - name: Initialise it
+      environment: "{{ _env }}"
+      ansible.builtin.command: bao operator init -recovery-shares=5 -recovery-threshold=3 -format=json
+      register: _init
+      changed_when: true
+      no_log: true
+
+    - name: Wait for KMS to unseal it, then write data
+      environment: "{{ _env | combine({'BAO_TOKEN': (_init.stdout | from_json).root_token}) }}"
+      ansible.builtin.shell: |
+        bao secrets enable -path=secret -version=2 kv
+        bao kv put secret/upgrade value=survives
+        bao token create -policy=root -field=token
+      args:
+        executable: /bin/bash
+      register: _seeded
+      until: _seeded.rc == 0
+      retries: 12
+      delay: 5
+      changed_when: true
+      no_log: true
+
+    - name: Upgrade through the role's install tasks
+      ansible.builtin.include_role:
+        name: openbao
+        tasks_from: install
+      vars:
+        openbao_deb_sha256: "{{ _deb_sha256[openbao_arch] }}"
+        openbao_kms_plugin_binary: "{{ _plugin_binary[openbao_arch] }}"
+        openbao_kms_plugin_sha256: "{{ _plugin_sha256[openbao_arch] }}"
+
+    - name: Read the running server
+      environment: "{{ _env }}"
+      ansible.builtin.command: bao status -format=json
+      register: _status
+      changed_when: false
+
+    - name: Read the data written before the upgrade
+      environment: "{{ _env | combine({'BAO_TOKEN': _seeded.stdout_lines[-1]}) }}"
+      ansible.builtin.command: bao kv get -field=value secret/upgrade
+      register: _data
+      changed_when: false
+      no_log: true
+
+    - name: Read the package state and the plugin directory
+      ansible.builtin.shell: |
+        dpkg --get-selections openbao
+        stat -c '%U %a' /opt/openbao/plugins
+        stat -c '%U %a' /opt/openbao/plugins/{{ _plugin_binary[openbao_arch] }}
+      register: _host
+      changed_when: false
+
+    - name: Assert the new server unsealed through the plugin with the data intact
+      ansible.builtin.assert:
+        that:
+          - (_status.stdout | from_json).version == _upgraded_version
+          - not (_status.stdout | from_json).sealed
+          - (_status.stdout | from_json).type == 'awskms'
+          - _data.stdout == 'survives'
+          - _host.stdout_lines[0] is search('hold')
+          - _host.stdout_lines[1] == 'root 755'
+          - _host.stdout_lines[2] == 'root 755'
+
+    - name: Ask the gate for a version that isn't running
+      block:
+        - name: Run the gate
+          ansible.builtin.include_role:
+            name: openbao
+            tasks_from: verify_running
+          vars:
+            openbao_version: "9.9.9"
+            openbao_running_retries: 2
+            openbao_running_delay: 1
+
+        - name: The gate should not have passed
+          ansible.builtin.set_fact:
+            _gate_refused: false
+      rescue:
+        - name: The gate refused
+          ansible.builtin.set_fact:
+            _gate_refused: true
+
+    - name: Assert the gate refuses a server that isn't the pinned version
+      ansible.builtin.assert:
+        that: _gate_refused
+
+- name: Remove the containers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Remove the target and the KMS
+      ansible.builtin.command: docker rm -f openbao-upgrade-target openbao-upgrade-kms
+      changed_when: true
+
+    - name: Remove the network
+      ansible.builtin.command: docker network rm openbao-upgrade-test
+      changed_when: true
