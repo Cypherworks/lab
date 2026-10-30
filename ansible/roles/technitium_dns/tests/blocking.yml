@@ -1,0 +1,287 @@
+---
+# Exercises the settings the role holds, blocking and DNSSEC validation among
+# them, against throwaway containers: one server, a stand-in for the public
+# DNS that also serves the block list, and a client. Needs Docker; no internet
+# and no real server. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/blocking.yml
+- name: Verify blocking and DNSSEC settings
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, the role's pinned version.
+    _image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _net: technitium-blocking-test
+    _subnet: 172.30.97.0/24
+    _server: technitium-blocking-server
+    _server_ip: 172.30.97.10
+    _public: technitium-blocking-public
+    _public_ip: 172.30.97.60
+    _public_port: 15384
+    _client: 172.30.97.40
+    _list_url: "http://{{ _public_ip }}:5380/blocklist.txt"
+    _api: "http://127.0.0.1:{{ technitium_dns_http_port }}/api"
+    _public_api: "http://127.0.0.1:{{ _public_port }}/api"
+    _auth: { Authorization: "Bearer {{ _login.json.token }}" }
+    _dig: >-
+      docker run --rm --network {{ _net }} --ip {{ _client }} --entrypoint dig {{ _image }}
+      +short +time=3 +tries=2 @{{ _server_ip }}
+    technitium_dns_http_port: 15383
+    technitium_dns_recursion: UseSpecifiedNetworkACL
+    technitium_dns_recursion_acl: ["{{ _client }}"]
+    technitium_dns_forwarders: ["{{ _public_ip }}"]
+    technitium_dns_block_list_urls: ["{{ _list_url }}"]
+    technitium_dns_block_list_update_hours: 4
+  tasks:
+    - name: Draw this run's admin password
+      ansible.builtin.set_fact:
+        technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Make a scratch dir for the block list
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .technitium
+      register: _scratch
+
+    - name: Hold, change, hold again, and clean up
+      block:
+        - name: Write the block list, comments and all
+          ansible.builtin.copy:
+            content: "# Title: a test list, domains only\n# Entries: 1\n\nblocked.labcheck\n"
+            dest: "{{ _scratch.path }}/blocklist.txt"
+            mode: "0644"
+
+        - name: Make the test network
+          ansible.builtin.command: docker network create --subnet {{ _subnet }} {{ _net }}
+          changed_when: true
+
+        - name: Start the server and the stand-in public DNS
+          ansible.builtin.command: >-
+            docker run -d --name {{ item.name }} --network {{ _net }} --ip {{ item.ip }}
+            -p 127.0.0.1:{{ item.port }}:5380 {{ _image }}
+          changed_when: true
+          loop:
+            - { name: "{{ _server }}", ip: "{{ _server_ip }}", port: "{{ technitium_dns_http_port }}" }
+            - { name: "{{ _public }}", ip: "{{ _public_ip }}", port: "{{ _public_port }}" }
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Serve the block list from the stand-in's web root
+          ansible.builtin.command: docker cp {{ _scratch.path }}/blocklist.txt {{ _public }}:/opt/technitium/dns/www/blocklist.txt
+          changed_when: true
+
+        - name: Wait for the APIs to answer, as Docker's proxy accepts before them
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ item }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
+          loop: ["{{ technitium_dns_http_port }}", "{{ _public_port }}"]
+
+        - name: Log in to the stand-in public DNS
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body: { user: admin, pass: admin }
+          register: _public_login
+          until: _public_login.json.status | default('') == 'ok'
+          retries: 10
+          delay: 2
+
+        # Not .test: Technitium answers NXDOMAIN itself, never forwarding it.
+        - name: Publish the public records
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/{{ item }}"
+            headers: { Authorization: "Bearer {{ _public_login.json.token }}" }
+          register: _published
+          failed_when: _published.json.status != 'ok'
+          loop:
+            - zones/create?zone=allowed.labcheck&type=Primary
+            - zones/create?zone=blocked.labcheck&type=Primary
+            - zones/records/add?zone=allowed.labcheck&domain=allowed.labcheck&type=A&ipAddress=192.0.2.30
+            - zones/records/add?zone=blocked.labcheck&domain=blocked.labcheck&type=A&ipAddress=192.0.2.31
+            - zones/records/add?zone=blocked.labcheck&domain=sub.blocked.labcheck&type=A&ipAddress=192.0.2.31
+
+        - name: Hold the settings
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: settings
+
+        - name: Wait for the block list to take effect
+          ansible.builtin.command: "{{ _dig }} blocked.labcheck A"
+          register: _blocked
+          until: _blocked.stdout == '0.0.0.0'
+          retries: 15
+          delay: 2
+          changed_when: false
+
+        - name: Ask for a subdomain of the listed name
+          ansible.builtin.command: "{{ _dig }} sub.blocked.labcheck A"
+          register: _sub
+          changed_when: false
+
+        - name: Ask for a name the list doesn't hold
+          ansible.builtin.command: "{{ _dig }} allowed.labcheck A"
+          register: _allowed
+          changed_when: false
+
+        - name: Assert only the listed name and its subdomains are blocked
+          ansible.builtin.assert:
+            that:
+              - _sub.stdout == '0.0.0.0'
+              - _allowed.stdout == '192.0.2.30'
+            fail_msg: "sub.blocked.labcheck answered '{{ _sub.stdout }}', allowed.labcheck answered '{{ _allowed.stdout }}'"
+
+        - name: Read the settings
+          ansible.builtin.uri:
+            url: "{{ _api }}/settings/get"
+            headers: "{{ _auth }}"
+          register: _held
+
+        - name: Assert the settings are the role's
+          vars:
+            _s: "{{ _held.json.response }}"
+          ansible.builtin.assert:
+            that:
+              - _s.dnssecValidation | bool
+              - _s.enableBlocking | bool
+              - _s.blockingType == 'AnyAddress'
+              - _s.blockListUrls == [_list_url]
+              - _s.blockListUpdateIntervalHours == 4
+            fail_msg: "{{ _s.dnssecValidation }}, {{ _s.enableBlocking }}, {{ _s.blockingType }}, {{ _s.blockListUrls }}, {{ _s.blockListUpdateIntervalHours }}"
+
+        - name: Change the settings the way someone might in the console
+          ansible.builtin.uri:
+            url: "{{ _api }}/settings/set?dnssecValidation=false&enableBlocking=false&blockingType=NxDomain&blockListUrls=false&blockListUpdateIntervalHours=48"
+            headers: "{{ _auth }}"
+          register: _console
+          failed_when: _console.json.status != 'ok'
+
+        - name: Wait for the block to lift
+          ansible.builtin.command: "{{ _dig }} blocked.labcheck A"
+          register: _lifted
+          until: _lifted.stdout == '192.0.2.31'
+          retries: 15
+          delay: 2
+          changed_when: false
+
+        - name: Hold the settings after the changes
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: settings
+
+        - name: Wait for the block to come back
+          ansible.builtin.command: "{{ _dig }} blocked.labcheck A"
+          register: _blocked_again
+          until: _blocked_again.stdout == '0.0.0.0'
+          retries: 15
+          delay: 2
+          changed_when: false
+
+        - name: Read the settings again
+          ansible.builtin.uri:
+            url: "{{ _api }}/settings/get"
+            headers: "{{ _auth }}"
+          register: _restored
+
+        - name: Assert the changes were put back
+          vars:
+            _s: "{{ _restored.json.response }}"
+          ansible.builtin.assert:
+            that:
+              - _s.dnssecValidation | bool
+              - _s.enableBlocking | bool
+              - _s.blockingType == 'AnyAddress'
+              - _s.blockListUrls == [_list_url]
+              - _s.blockListUpdateIntervalHours == 4
+
+        - name: Turn HTTPS off the way someone might in the console
+          ansible.builtin.uri:
+            url: "{{ _api }}/settings/set?webServiceEnableTls=false"
+            headers: "{{ _auth }}"
+          register: _https_off
+          failed_when: _https_off.json.status != 'ok'
+
+        - name: Let that restart pass
+          ansible.builtin.pause:
+            seconds: 3
+
+        - name: Hold the settings, turning HTTPS back on
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: settings
+
+        - name: Watch the API for the web service restart
+          ansible.builtin.command: "{{ ansible_playbook_python }} -I {{ playbook_dir }}/api_steady.py {{ technitium_dns_http_port }} 4"
+          changed_when: false
+
+        - name: Drop the block lists
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: settings
+          vars:
+            technitium_dns_block_list_urls: []
+
+        - name: Wait for the listed name to resolve again
+          ansible.builtin.command: "{{ _dig }} blocked.labcheck A"
+          register: _unblocked
+          until: _unblocked.stdout == '192.0.2.31'
+          retries: 15
+          delay: 2
+          changed_when: false
+
+        - name: Clear the recursion ACL
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: settings
+          vars:
+            technitium_dns_recursion: Deny
+            technitium_dns_recursion_acl: []
+
+        - name: Read the settings after clearing the ACL
+          ansible.builtin.uri:
+            url: "{{ _api }}/settings/get"
+            headers: "{{ _auth }}"
+          register: _cleared
+
+        - name: Assert the ACL is gone
+          ansible.builtin.assert:
+            that: _cleared.json.response.recursionNetworkACL | default([], true) == []
+            fail_msg: "recursionNetworkACL is {{ _cleared.json.response.recursionNetworkACL }}"
+
+        - name: Hold a setting Technitium rejects
+          ansible.builtin.include_tasks: blocking_bad_setting.yml
+          vars:
+            technitium_dns_forwarder_protocol: NotAProtocol
+            _failing_task: "Hold the settings to the role's"
+
+        - name: Hold a setting Technitium answers ok but ignores
+          ansible.builtin.include_tasks: blocking_bad_setting.yml
+          vars:
+            technitium_dns_recursion: NotARecursionPolicy
+            _failing_task: Check the server took the settings
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: docker rm -f {{ _server }} {{ _public }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

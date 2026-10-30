@@ -1,0 +1,62 @@
+---
+# Every rule goes in before default-deny, so it can't cut this connection.
+- name: Read this run's SSH source (as the login user; sudo drops it)
+  ansible.builtin.command:
+    cmd: printenv SSH_CLIENT
+  become: false
+  register: _ssh_client
+  changed_when: false
+  failed_when: false
+
+- name: Refuse to firewall out this run's own SSH source
+  vars:
+    _src: "{{ (_ssh_client.stdout | default('')).split(' ') | first }}"
+  ansible.builtin.assert:
+    that: _src == '' or firewall_ssh_sources | length == 0 or _src in firewall_ssh_sources
+    fail_msg: "This run's SSH source '{{ _src }}' isn't in firewall_ssh_sources; enabling ufw would cut it off."
+
+- name: Install ufw
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+
+- name: Allow SSH
+  community.general.ufw:
+    rule: allow
+    proto: tcp
+    port: "{{ firewall_ssh_port | string }}"
+    from_ip: "{{ item }}"
+    comment: SSH
+  loop: "{{ firewall_ssh_sources if firewall_ssh_sources else ['any'] }}"
+
+- name: Apply the host's rules
+  community.general.ufw:
+    rule: "{{ item.rule | default('allow') }}"
+    port: "{{ item.port }}"
+    proto: "{{ item.proto | default(omit) }}"
+    from_ip: "{{ item.from | default('any') }}"
+    comment: "{{ item.comment | default(omit) }}"
+  loop: "{{ firewall_rules }}"
+  loop_control:
+    label: "{{ item.rule | default('allow') }} {{ item.port }}/{{ item.proto | default('any') }} from {{ item.from | default('any') }}"
+
+- name: Allow loopback traffic
+  community.general.ufw:
+    rule: allow
+    direction: "{{ item }}"
+    interface: lo
+  loop: [in, out]
+  when: firewall_allow_loopback | bool
+
+- name: Enable ufw and deny inbound by default
+  community.general.ufw:
+    state: enabled
+    policy: "{{ firewall_default_incoming }}"
+    direction: incoming
+  when: firewall_enabled | bool
+
+- name: Set the default outgoing policy
+  community.general.ufw:
+    direction: outgoing
+    policy: "{{ firewall_default_outgoing }}"
+  when: firewall_enabled | bool

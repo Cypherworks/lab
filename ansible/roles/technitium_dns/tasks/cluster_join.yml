@@ -1,0 +1,56 @@
+---
+# A primary initializes the cluster; a secondary joins it, taking the primary's
+# settings, users and zones. Both only once: the domain is fixed from then on.
+- name: Initialize the cluster
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/cluster/init"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      clusterDomain: "{{ technitium_dns_cluster_domain }}"
+      primaryNodeIpAddresses: "{{ technitium_dns_cluster_node_ip }}"
+  register: _cluster_init
+  when:
+    - technitium_dns_cluster_role == 'primary'
+    - not _cluster.json.response.clusterInitialized
+  failed_when: _cluster_init.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
+
+# Self-signed nodes, so the join can't verify the primary; DANE does after.
+- name: Join the cluster
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/cluster/initJoin"
+    method: POST
+    body_format: form-urlencoded
+    timeout: 300
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      secondaryNodeIpAddresses: "{{ technitium_dns_cluster_node_ip }}"
+      primaryNodeUrl: "{{ technitium_dns_cluster_primary_url }}"
+      primaryNodeIpAddress: "{{ technitium_dns_cluster_primary_ip }}"
+      ignoreCertificateErrors: "true"
+      primaryNodeUsername: admin
+      primaryNodePassword: "{{ technitium_dns_admin_password }}"
+  register: _cluster_joined
+  when:
+    - technitium_dns_cluster_role == 'secondary'
+    - not _cluster.json.response.clusterInitialized
+  failed_when: _cluster_joined.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
+
+- name: Check the join
+  when: _cluster_joined is changed
+  block:
+    - name: Log in again
+      ansible.builtin.include_tasks: login.yml
+
+    - name: Read the cluster state
+      ansible.builtin.include_tasks: cluster_read.yml
+
+    - name: Check the node joined the primary
+      ansible.builtin.assert:
+        that: _cluster.json.response.clusterNodes | selectattr('type', 'eq', 'Primary') | map(attribute='state') | list == ['Connected']
+        fail_msg: "The primary isn't connected: {{ _cluster.json.response.clusterNodes | to_json }}"

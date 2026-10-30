@@ -1,0 +1,21 @@
+---
+# Tries each client and port in _expected with a real TCP connection.
+- name: Try each port from each client
+  ansible.builtin.command: >-
+    docker run --rm --network firewall-test --ip {{ item.client }} ubuntu:24.04
+    timeout 3 bash -c '</dev/tcp/172.30.94.10/{{ item.port }}'
+  register: _tried
+  changed_when: false
+  failed_when: false
+  loop: "{{ _expected }}"
+  loop_control:
+    label: "{{ item.client }} {{ item.port }}"
+
+- name: Assert each port is as expected
+  ansible.builtin.assert:
+    that: (item.rc == 0) == item.item.open
+    fail_msg: "{{ item.item.client }} to {{ item.item.port }}: rc {{ item.rc }}, expected open={{ item.item.open }}"
+    quiet: true
+  loop: "{{ _tried.results }}"
+  loop_control:
+    label: "{{ item.item.client }} {{ item.item.port }}"

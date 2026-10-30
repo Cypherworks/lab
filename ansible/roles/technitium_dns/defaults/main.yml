@@ -1,9 +1,9 @@
 ---
 # technitium_dns — Technitium DNS Server on Ubuntu, configured through its
-# HTTP API on loopback. Recursion, its client ACL, forwarders and the HTTPS
-# console are code; zones and records stay in the web console. A host
-# firewall (ufw) limits DNS to the client networks and SSH + the console to
-# the admin sources. Generic mechanism; site data from the deploy.
+# HTTP API on loopback. Recursion, its client ACL, forwarders, the HTTPS
+# console and any listed forwarder zones are code; other zones and records
+# stay in the web console. Generic mechanism; site data from the deploy. The
+# firewall role, run first, limits who reaches DNS and the console.
 #
 # The archive publishes a .sha256 beside each tarball (same origin, so it
 # catches corruption, not a compromised server). The tarball is fetched on
@@ -34,10 +34,23 @@ technitium_dns_recursion_acl: []
 technitium_dns_forwarders: []
 technitium_dns_forwarder_protocol: Udp
 
-# Host firewall: deny by default; these are the only sources let in.
-technitium_dns_firewall: true
-technitium_dns_dns_clients: []    # CIDRs/IPs allowed to query on 53
-technitium_dns_admin_sources: []  # IPs allowed SSH (22) and the console
+# Blocking: lists of domains or hosts-file entries, re-fetched on the interval.
+technitium_dns_blocking: true
+technitium_dns_blocking_type: AnyAddress  # 0.0.0.0, or NxDomain
+technitium_dns_block_list_urls: []
+technitium_dns_block_list_update_hours: 24
+
+technitium_dns_dnssec_validation: true
+
+# Conditional Forwarder zones held to code; README has each entry's keys.
+technitium_dns_forwarder_zones: []
+
+# Cluster: off until a domain is set, and the domain can't change afterwards.
+technitium_dns_cluster_domain: ""
+technitium_dns_cluster_role: primary    # or secondary
+technitium_dns_cluster_node_ip: ""      # this node's static address
+technitium_dns_cluster_primary_url: ""  # secondary: the primary's HTTPS URL
+technitium_dns_cluster_primary_ip: ""   # secondary: the primary's address
 
 # Rebuilds: control-host archives, named <host>-config.tar.gz.
 technitium_dns_archive_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/state/technitium_dns"

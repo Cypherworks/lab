@@ -7,6 +7,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | Role | Purpose |
 |------|---------|
 | `base` | Baseline OS configuration for every host. |
+| `firewall` | Host firewall (ufw): default-deny inbound, SSH left open, each host's rules from its variables. |
 | `docker` | Docker Engine and Compose v2. Shared dependency. |
 | `unattended_upgrades` | Automatic security updates with a quiet-window reboot. |
 | `ssh_ca_trust` | Trust an SSH CA for user certificates via an additive sshd drop-in. |

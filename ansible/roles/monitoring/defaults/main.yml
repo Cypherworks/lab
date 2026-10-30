@@ -45,6 +45,11 @@ monitoring_speedtest_targets: []     # speedtest-tracker native /prometheus (:80
 # becomes the `instance` label (blackbox standard pattern).
 monitoring_blackbox_targets: []      # e.g. ["https://grafana.example.com"]
 
+# blackbox_exporter DNS probes: {target: "ip:53", instance}.
+monitoring_blackbox_dns_targets: []
+# A name each resolver answers itself, so an upstream outage can't fail it.
+monitoring_blackbox_dns_query: ""
+
 # snmp_exporter targets — the Synology NAS over SNMPv3. {target: "ip:161", instance}.
 monitoring_snmp_targets: []
 

@@ -1,0 +1,282 @@
+---
+# Exercises a two-node cluster against throwaway containers: a primary, a
+# secondary, a stand-in for the public DNS that also serves a block list, and
+# clients at fixed addresses. Needs Docker; no internet and no real server.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/cluster.yml
+- name: Verify the cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, the role's pinned version.
+    _image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _net: technitium-cluster-test
+    _subnet: 172.30.95.0/24
+    _node1_ip: 172.30.95.11
+    _node2_ip: 172.30.95.12
+    _node3_ip: 172.30.95.13
+    _public_ip: 172.30.95.60
+    _listed_client: 172.30.95.40
+    _other_client: 172.30.95.50
+    _node1_port: 15385
+    _node2_port: 15386
+    _node3_port: 15388
+    _public_port: 15387
+    _public_api: "http://127.0.0.1:{{ _public_port }}/api"
+    _split: split.labcheck
+    _private: private.labcheck
+    _dig: >-
+      docker run --rm --network {{ _net }} --ip {{ _listed_client }} --entrypoint dig {{ _image }}
+      +short +time=3 +tries=2
+    # Under the split zone and its wildcard, as a real deployment may place it.
+    technitium_dns_cluster_domain: "dns-cluster.{{ _split }}"
+    technitium_dns_cluster_primary_url: "https://node1.dns-cluster.{{ _split }}:53443/"
+    technitium_dns_cluster_primary_ip: "{{ _node1_ip }}"
+    technitium_dns_recursion: UseSpecifiedNetworkACL
+    technitium_dns_recursion_acl: ["{{ _listed_client }}", "{{ _other_client }}"]
+    technitium_dns_forwarders: ["{{ _public_ip }}"]
+    technitium_dns_block_list_urls: ["http://{{ _public_ip }}:5380/blocklist.txt"]
+    technitium_dns_forwarder_zones:
+      - zone: "{{ _split }}"
+        forwarder: this-server
+        records:
+          nas: 10.99.0.20
+          "*": 10.99.0.30
+        passthrough: [www]
+      - zone: "{{ _private }}"
+        forwarder: "{{ _public_ip }}"
+        query_acl: ["{{ _listed_client }}"]
+  tasks:
+    - name: Draw this run's admin password
+      ansible.builtin.set_fact:
+        technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Make a scratch dir for the block list
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .technitium
+      register: _scratch
+
+    - name: Form the cluster, change it, and clean up
+      block:
+        - name: Write the block list
+          ansible.builtin.copy:
+            content: "blocked.labcheck\n"
+            dest: "{{ _scratch.path }}/blocklist.txt"
+            mode: "0644"
+
+        - name: Make the test network
+          ansible.builtin.command: docker network create --subnet {{ _subnet }} {{ _net }}
+          changed_when: true
+
+        - name: Start the nodes and the stand-in public DNS
+          ansible.builtin.command: >-
+            docker run -d --name technitium-cluster-{{ item.name }} --hostname {{ item.name }}
+            --network {{ _net }} --ip {{ item.ip }} -p 127.0.0.1:{{ item.port }}:5380 {{ _image }}
+          changed_when: true
+          loop:
+            - { name: node1, ip: "{{ _node1_ip }}", port: "{{ _node1_port }}" }
+            - { name: node2, ip: "{{ _node2_ip }}", port: "{{ _node2_port }}" }
+            - { name: node3, ip: "{{ _node3_ip }}", port: "{{ _node3_port }}" }
+            - { name: public, ip: "{{ _public_ip }}", port: "{{ _public_port }}" }
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Serve the block list from the stand-in's web root
+          ansible.builtin.command: docker cp {{ _scratch.path }}/blocklist.txt technitium-cluster-public:/opt/technitium/dns/www/blocklist.txt
+          changed_when: true
+
+        - name: Wait for the APIs to answer, as Docker's proxy accepts before them
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ item }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
+          loop: ["{{ _node1_port }}", "{{ _node2_port }}", "{{ _node3_port }}", "{{ _public_port }}"]
+
+        - name: Log in to the stand-in public DNS
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body: { user: admin, pass: admin }
+          register: _public_login
+          until: _public_login.json.status | default('') == 'ok'
+          retries: 10
+          delay: 2
+
+        - name: Publish the public records
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/{{ item }}"
+            headers: { Authorization: "Bearer {{ _public_login.json.token }}" }
+          register: _published
+          failed_when: _published.json.status != 'ok'
+          loop:
+            - zones/create?zone={{ _split }}&type=Primary
+            - zones/create?zone={{ _private }}&type=Primary
+            - zones/create?zone=blocked.labcheck&type=Primary
+            - zones/records/add?zone={{ _split }}&domain=www.{{ _split }}&type=A&ipAddress=192.0.2.10
+            - zones/records/add?zone={{ _private }}&domain=www.{{ _private }}&type=A&ipAddress=192.0.2.20
+            - zones/records/add?zone=blocked.labcheck&domain=blocked.labcheck&type=A&ipAddress=192.0.2.31
+
+        # The zones exist first, as they will on a server joining a cluster.
+        - name: Hold the primary before there's a cluster
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: hold
+          vars:
+            technitium_dns_http_port: "{{ _node1_port }}"
+            technitium_dns_cluster_domain: ""
+
+        - name: Hold the primary
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: hold
+          vars: &primary
+            technitium_dns_http_port: "{{ _node1_port }}"
+            technitium_dns_cluster_role: primary
+            technitium_dns_cluster_node_ip: "{{ _node1_ip }}"
+
+        - name: Hold the secondary
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: hold
+          vars: &secondary
+            technitium_dns_http_port: "{{ _node2_port }}"
+            technitium_dns_cluster_role: secondary
+            technitium_dns_cluster_node_ip: "{{ _node2_ip }}"
+
+        - name: Wait for the zones to reach the secondary
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} nas.{{ _split }} A"
+          register: _synced
+          until: _synced.stdout == '10.99.0.20'
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Wait for the block list to reach the secondary
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} blocked.labcheck A"
+          register: _block_synced
+          until: _block_synced.stdout == '0.0.0.0'
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Check the secondary's answers
+          ansible.builtin.include_tasks: cluster_answers.yml
+
+        - name: Ask both nodes for the cluster's node names
+          ansible.builtin.command: "{{ _dig }} @{{ item.server }} {{ item.name }}.dns-cluster.{{ _split }} A"
+          register: _node_names
+          changed_when: false
+          loop:
+            - { server: "{{ _node1_ip }}", name: node1, answer: "{{ _node1_ip }}" }
+            - { server: "{{ _node1_ip }}", name: node2, answer: "{{ _node2_ip }}" }
+            - { server: "{{ _node2_ip }}", name: node1, answer: "{{ _node1_ip }}" }
+            - { server: "{{ _node2_ip }}", name: node2, answer: "{{ _node2_ip }}" }
+          loop_control:
+            label: "{{ item.server }} {{ item.name }}"
+
+        - name: Assert the wildcard doesn't catch the node names
+          ansible.builtin.assert:
+            that: item.stdout == item.item.answer
+            fail_msg: "{{ item.item.name }} from {{ item.item.server }} answered '{{ item.stdout }}'"
+            quiet: true
+          loop: "{{ _node_names.results }}"
+          loop_control:
+            label: "{{ item.item.server }} {{ item.item.name }}"
+
+        - name: Hold the primary again with nothing to change
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: hold
+          vars: *primary
+
+        - name: Hold the secondary again with nothing to change
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: hold
+          vars: *secondary
+
+        - name: Add a record on the primary
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: hold
+          vars:
+            <<: *primary
+            technitium_dns_forwarder_zones:
+              - zone: "{{ _split }}"
+                forwarder: this-server
+                records: { late: 10.99.0.60 }
+
+        - name: Wait for the new record on the secondary
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} late.{{ _split }} A"
+          register: _late
+          until: _late.stdout == '10.99.0.60'
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Hold a primary as a secondary
+          ansible.builtin.include_tasks: cluster_refused.yml
+          vars:
+            <<: *primary
+            technitium_dns_cluster_role: secondary
+            _failing_task: Refuse a node of the other role
+
+        - name: Hold a node from another cluster
+          ansible.builtin.include_tasks: cluster_refused.yml
+          vars:
+            <<: *primary
+            technitium_dns_cluster_domain: other.labcheck
+            _failing_task: Refuse a node of another cluster
+
+        - name: Hold an unknown role
+          ansible.builtin.include_tasks: cluster_refused.yml
+          vars:
+            <<: *primary
+            technitium_dns_cluster_role: tertiary
+            _failing_task: Check the cluster settings
+
+        - name: Join with a primary that doesn't exist
+          ansible.builtin.include_tasks: cluster_refused.yml
+          vars:
+            technitium_dns_http_port: "{{ _node3_port }}"
+            technitium_dns_cluster_role: secondary
+            technitium_dns_cluster_node_ip: "{{ _node3_ip }}"
+            technitium_dns_cluster_primary_ip: 172.30.95.99
+            _failing_task: Join the cluster
+
+        - name: Stop the primary
+          ansible.builtin.command: docker stop technitium-cluster-node1
+          changed_when: true
+
+        - name: Check the secondary's answers with the primary down
+          ansible.builtin.include_tasks: cluster_answers.yml
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: >-
+            docker rm -f technitium-cluster-node1 technitium-cluster-node2
+            technitium-cluster-node3 technitium-cluster-public
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

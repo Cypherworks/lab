@@ -1,0 +1,290 @@
+---
+# Exercises the forwarder zones against throwaway containers: one server, a
+# stand-in for the public DNS, and clients at fixed addresses. Needs Docker;
+# no internet and no real server. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/forwarder_zones.yml
+- name: Verify forwarder zones
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, the role's pinned version.
+    _image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _net: technitium-forwarder-zones-test
+    _subnet: 172.30.98.0/24
+    _server: technitium-forwarder-zones-server
+    _server_ip: 172.30.98.10
+    _public: technitium-forwarder-zones-public
+    _public_ip: 172.30.98.60
+    _public_port: 15382
+    _listed_client: 172.30.98.40
+    _other_client: 172.30.98.50
+    _split: split.test
+    _private: private.test
+    _api: "http://127.0.0.1:{{ technitium_dns_http_port }}/api"
+    _public_api: "http://127.0.0.1:{{ _public_port }}/api"
+    _auth: { Authorization: "Bearer {{ _login.json.token }}" }
+    technitium_dns_http_port: 15381
+    technitium_dns_forwarder_zones:
+      - zone: "{{ _split }}"
+        forwarder: this-server
+        records:
+          nas: 10.99.0.20
+          "*": 10.99.0.30
+        passthrough: [www]
+      - zone: "{{ _private }}"
+        forwarder: "{{ _public_ip }}"
+        query_acl: ["{{ _listed_client }}"]
+  tasks:
+    - name: Draw this run's admin password
+      ansible.builtin.set_fact:
+        technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Hold, change, hold again, and clean up
+      block:
+        - name: Make the test network
+          ansible.builtin.command: docker network create --subnet {{ _subnet }} {{ _net }}
+          changed_when: true
+
+        - name: Start the server and the stand-in public DNS
+          ansible.builtin.command: >-
+            docker run -d --name {{ item.name }} --network {{ _net }} --ip {{ item.ip }}
+            -p 127.0.0.1:{{ item.port }}:5380 {{ _image }}
+          changed_when: true
+          loop:
+            - { name: "{{ _server }}", ip: "{{ _server_ip }}", port: "{{ technitium_dns_http_port }}" }
+            - { name: "{{ _public }}", ip: "{{ _public_ip }}", port: "{{ _public_port }}" }
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Wait for the APIs to answer, as Docker's proxy accepts before them
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ item }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
+          loop: ["{{ technitium_dns_http_port }}", "{{ _public_port }}"]
+
+        - name: Log in to the stand-in public DNS
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body: { user: admin, pass: admin }
+          register: _public_login
+          until: _public_login.json.status | default('') == 'ok'
+          retries: 10
+          delay: 2
+
+        - name: Publish the public records
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/{{ item }}"
+            headers: { Authorization: "Bearer {{ _public_login.json.token }}" }
+          register: _published
+          failed_when: _published.json.status != 'ok'
+          loop:
+            - zones/create?zone={{ _split }}&type=Primary
+            - zones/create?zone={{ _private }}&type=Primary
+            - zones/records/add?zone={{ _split }}&domain={{ _split }}&type=MX&exchange=mx.example.net&preference=10
+            - zones/records/add?zone={{ _split }}&domain=www.{{ _split }}&type=A&ipAddress=192.0.2.10
+            - zones/records/add?zone={{ _split }}&domain=_dmarc.{{ _split }}&type=TXT&text=public-dmarc
+            - zones/records/add?zone={{ _private }}&domain=www.{{ _private }}&type=A&ipAddress=192.0.2.20
+
+        - name: Log in to the server
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: login
+
+        # this-server resolves through these, as it recurses in production.
+        - name: Send the server's recursion to the stand-in public DNS
+          ansible.builtin.uri:
+            url: "{{ _api }}/settings/set?forwarders={{ _public_ip }}&forwarderProtocol=Udp"
+            headers: "{{ _auth }}"
+          register: _forwarders
+          failed_when: _forwarders.json.status != 'ok'
+
+        - name: Hold the forwarder zones
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: forwarder_zones
+
+        - name: Check the answers
+          ansible.builtin.include_tasks: forwarder_zones_answers.yml
+
+        - name: Read the split zone's records
+          ansible.builtin.uri:
+            url: "{{ _api }}/zones/records/get?zone={{ _split }}&domain={{ _split }}&listZone=true"
+            headers: "{{ _auth }}"
+          register: _first_records
+
+        - name: Read the private zone's records
+          ansible.builtin.uri:
+            url: "{{ _api }}/zones/records/get?zone={{ _private }}&domain={{ _private }}&listZone=true"
+            headers: "{{ _auth }}"
+          register: _private_records
+
+        - name: Assert validation is on through this server, off to another
+          vars:
+            _fwd: "{{ _first_records.json.response.records | selectattr('type', 'eq', 'FWD') | map(attribute='rData.dnssecValidation') | unique | list }}"
+            _private_fwd: "{{ _private_records.json.response.records | selectattr('type', 'eq', 'FWD') | map(attribute='rData.dnssecValidation') | list }}"
+          ansible.builtin.assert:
+            that:
+              - _fwd == [true]
+              - _private_fwd == [false]
+            fail_msg: "this-server {{ _fwd }}, private {{ _private_fwd }}"
+
+        - name: Hold the zones again with nothing to change
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: forwarder_zones
+
+        - name: Read the split zone's records again
+          ansible.builtin.uri:
+            url: "{{ _api }}/zones/records/get?zone={{ _split }}&domain={{ _split }}&listZone=true"
+            headers: "{{ _auth }}"
+          register: _second_records
+
+        - name: Assert a rerun added nothing
+          ansible.builtin.assert:
+            that: _second_records.json.response.records == _first_records.json.response.records
+            fail_msg: "{{ _first_records.json.response.records }} became {{ _second_records.json.response.records }}"
+
+        - name: Change the zones the way someone might in the console
+          ansible.builtin.uri:
+            url: "{{ _api }}/{{ item }}"
+            headers: "{{ _auth }}"
+          register: _console
+          failed_when: _console.json.status != 'ok'
+          loop:
+            - zones/records/add?zone={{ _split }}&domain=nas.{{ _split }}&type=A&ipAddress=10.99.0.99&overwrite=true
+            - zones/records/delete?zone={{ _split }}&domain=www.{{ _split }}&type=FWD&forwarder=this-server&protocol=Udp
+            - zones/records/add?zone={{ _split }}&domain=adhoc.{{ _split }}&type=A&ipAddress=10.99.0.40
+            - zones/options/set?zone={{ _private }}&queryAccess=Allow
+            - zones/records/add?zone={{ _split }}&domain={{ _split }}&type=FWD&forwarder=this-server&protocol=Udp&dnssecValidation=false&overwrite=true
+
+        - name: Hold the zones after the changes
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: forwarder_zones
+
+        - name: Check the answers are back
+          ansible.builtin.include_tasks: forwarder_zones_answers.yml
+
+        - name: Read the split zone's records after the changes
+          ansible.builtin.uri:
+            url: "{{ _api }}/zones/records/get?zone={{ _split }}&domain={{ _split }}&listZone=true"
+            headers: "{{ _auth }}"
+          register: _third_records
+
+        - name: Assert the zone's validation was put back
+          vars:
+            _fwd: "{{ _third_records.json.response.records | selectattr('type', 'eq', 'FWD') | map(attribute='rData.dnssecValidation') | unique | list }}"
+          ansible.builtin.assert:
+            that: _fwd == [true]
+            fail_msg: "FWD records hold {{ _fwd }}"
+
+        - name: Ask for the console's own record
+          ansible.builtin.command: >-
+            docker run --rm --network {{ _net }} --ip {{ _listed_client }} --entrypoint dig {{ _image }}
+            +short +time=3 +tries=2 @{{ _server_ip }} adhoc.{{ _split }} A
+          register: _adhoc
+          changed_when: false
+
+        - name: Assert the console's own record was left alone
+          ansible.builtin.assert:
+            that: _adhoc.stdout == '10.99.0.40'
+            fail_msg: "adhoc.{{ _split }} answered '{{ _adhoc.stdout }}'"
+
+        - name: Make a primary zone under a forwarder zone's name
+          ansible.builtin.uri:
+            url: "{{ _api }}/zones/create?zone=primary.test&type=Primary"
+            headers: "{{ _auth }}"
+          register: _primary
+          failed_when: _primary.json.status != 'ok'
+
+        - name: Hold a zone that exists as another type
+          vars:
+            technitium_dns_forwarder_zones:
+              - { zone: primary.test, forwarder: this-server }
+          block:
+            - name: Hold the forwarder zones
+              ansible.builtin.include_role:
+                name: technitium_dns
+                tasks_from: forwarder_zones
+
+            - name: Record that the hold went through
+              ansible.builtin.set_fact:
+                _wrong_type: ""
+          rescue:
+            - name: Record which task failed
+              ansible.builtin.set_fact:
+                _wrong_type: "{{ ansible_failed_task.name }}"
+
+        - name: Assert a zone of another type is refused
+          ansible.builtin.assert:
+            that: _wrong_type == 'Refuse a same-named zone of another type'
+            fail_msg: "expected the type check to fail, got '{{ _wrong_type }}'"
+            success_msg: a zone of another type is refused as expected
+
+        - name: Hold a record Technitium rejects
+          vars:
+            technitium_dns_forwarder_zones:
+              - { zone: "{{ _split }}", forwarder: this-server, records: { bad: not-an-address } }
+          block:
+            - name: Hold the forwarder zones
+              ansible.builtin.include_role:
+                name: technitium_dns
+                tasks_from: forwarder_zones
+
+            - name: Record that the hold went through
+              ansible.builtin.set_fact:
+                _bad_record: ""
+          rescue:
+            - name: Record which task failed
+              ansible.builtin.set_fact:
+                _bad_record: "{{ ansible_failed_task.name }}"
+
+        - name: Assert a rejected record fails the hold
+          ansible.builtin.assert:
+            that: _bad_record == "Hold its local records to the role's"
+            fail_msg: "expected the record task to fail, got '{{ _bad_record }}'"
+            success_msg: a rejected record fails as expected
+
+        - name: Drop the private zone's client list
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: forwarder_zones
+          vars:
+            technitium_dns_forwarder_zones:
+              - { zone: "{{ _private }}", forwarder: "{{ _public_ip }}" }
+
+        - name: Ask as the client that was refused
+          ansible.builtin.command: >-
+            docker run --rm --network {{ _net }} --ip {{ _other_client }} --entrypoint dig {{ _image }}
+            +short +time=3 +tries=2 @{{ _server_ip }} www.{{ _private }} A
+          register: _opened
+          changed_when: false
+
+        - name: Assert an empty list lets anyone ask
+          ansible.builtin.assert:
+            that: _opened.stdout == '192.0.2.20'
+            fail_msg: "www.{{ _private }} answered '{{ _opened.stdout }}'"
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: docker rm -f {{ _server }} {{ _public }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          changed_when: true
+          failed_when: false

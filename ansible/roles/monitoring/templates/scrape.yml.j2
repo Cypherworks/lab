@@ -68,6 +68,25 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox:9115
 {% endif %}
+{% if monitoring_blackbox_dns_targets %}
+  # blackbox_exporter DNS probes, one per resolver. Each keeps its own `instance`
+  # label; __address__ is rewritten to the exporter.
+  - job_name: dns
+    metrics_path: /probe
+    params:
+      module: [dns_lookup]
+    static_configs:
+{% for t in monitoring_blackbox_dns_targets %}
+      - targets: ["{{ t.target }}"]
+        labels:
+          instance: "{{ t.instance }}"
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: blackbox:9115
+{% endif %}
 {% if monitoring_snmp_targets %}
   # snmp_exporter multi-target for the Synology NAS. vmsingle asks snmp_exporter to
   # walk the NAS with the named module + auth; the NAS hostname becomes `instance`.
