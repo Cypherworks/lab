@@ -1,0 +1,36 @@
+---
+# systemd-resolved's stub listener holds 127.0.0.53:53, which costs Technitium
+# its IPv4 TCP/53 bind. Restarted here, not by a handler: configure.yml starts
+# the server in the same play, before handlers run.
+- name: Create the systemd-resolved drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Free port 53 from the systemd-resolved stub listener
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/10-no-stub.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Managed by Ansible (technitium_dns role).
+      [Resolve]
+      DNSStubListener=no
+  register: _resolved_stub
+
+- name: Point resolv.conf at the real upstreams, not the disabled stub
+  ansible.builtin.file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+
+- name: Restart systemd-resolved
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: restarted
+  when: _resolved_stub.changed

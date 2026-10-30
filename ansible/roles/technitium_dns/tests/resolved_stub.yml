@@ -1,0 +1,152 @@
+---
+# Exercises the fight for port 53 on a host booted like a real Ubuntu one:
+# systemd runs in a privileged throwaway container, so systemd-resolved's stub
+# listener is the real thing, beside a real Technitium. With the stub up,
+# Technitium loses IPv4 TCP/53 without a word. Needs Docker, community.docker,
+# and internet for the image and its apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/resolved_stub.yml
+- name: Boot a host with the stub listener up
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, as the lab's resolvers run.
+    _dns_image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _target: technitium-stub-target
+    _net: technitium-stub-test
+  tasks:
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.96.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Boot systemd in the server's image
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} --ip 172.30.96.10
+        --entrypoint sh {{ _dns_image }} -c
+        'apt-get update -qq && apt-get install -y -qq python3 systemd systemd-sysv systemd-resolved iproute2
+        && exec /usr/lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Point resolv.conf at the stub, as stock Ubuntu does (Docker mounts its own)
+      ansible.builtin.command: >-
+        docker exec {{ _target }} sh -c
+        'umount /etc/resolv.conf && ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf'
+      changed_when: true
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: stub_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Hold port 53
+  hosts: stub_target
+  gather_facts: false
+  vars:
+    _server: systemd-run --unit=technitium --working-directory=/opt/technitium/dns /usr/bin/dotnet DnsServerApp.dll /etc/dns
+    _net: technitium-stub-test
+  tasks:
+    - name: Lose the port, free it, and clean up
+      block:
+        - name: Run the server with the stub listener still up
+          ansible.builtin.command: "{{ _server }}"
+          changed_when: true
+
+        - name: Refuse a server that lost port 53
+          block:
+            - name: Check the port
+              ansible.builtin.include_role:
+                name: technitium_dns
+                tasks_from: check_port_53
+
+            - name: Record that the check went through
+              ansible.builtin.set_fact:
+                _refused: ""
+          rescue:
+            - name: Record which task failed
+              ansible.builtin.set_fact:
+                _refused: "{{ ansible_failed_task.name }}"
+
+        - name: Assert the check caught it
+          ansible.builtin.assert:
+            that: _refused == 'Check the server holds port 53 on TCP'
+            fail_msg: "{{ _refused }}"
+
+        - name: Stop the server
+          ansible.builtin.systemd_service:
+            name: technitium
+            state: stopped
+
+        - name: Free the port
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: resolved_stub
+
+        - name: Run the server with the port free
+          ansible.builtin.command: "{{ _server }}"
+          changed_when: true
+
+        - name: Check the port
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: check_port_53
+
+        - name: Connect to TCP/53 on the server's IPv4 address from another host
+          ansible.builtin.command: >-
+            docker run --rm --network {{ _net }} ubuntu:24.04 bash -c
+            'exec 3<>/dev/tcp/172.30.96.10/53'
+          delegate_to: localhost
+          connection: local
+          vars: &control_host
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          changed_when: false
+
+        - name: Read where resolv.conf points
+          ansible.builtin.stat:
+            path: /etc/resolv.conf
+          register: _resolv
+
+        - name: Assert the host resolves through its real upstreams
+          ansible.builtin.assert:
+            that: _resolv.stat.lnk_target == '/run/systemd/resolve/resolv.conf'
+            fail_msg: "{{ _resolv.stat | to_json }}"
+
+        - name: Free the port again
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: resolved_stub
+
+        - name: Assert a rerun changes nothing
+          ansible.builtin.assert:
+            that: not _resolved_stub.changed
+            fail_msg: "{{ _resolved_stub | to_json }}"
+      always:
+        - name: Remove the target
+          ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false

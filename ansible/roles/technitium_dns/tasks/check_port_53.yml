@@ -1,0 +1,9 @@
+---
+# Technitium only logs a failed bind and carries on, so a lost port doesn't
+# fail anything else. The API answers either way.
+- name: Check the server holds port 53 on TCP
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 53
+    timeout: 30
+    msg: Nothing answers TCP on 127.0.0.1:53. Another service may hold the port.
