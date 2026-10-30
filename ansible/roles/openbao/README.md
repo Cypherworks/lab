@@ -20,7 +20,15 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `openbao_version` | `2.5.5` | Pinned upstream release. |
+| `openbao_version` | `2.7.2` | Pinned upstream release. |
+| `openbao_deb_sha256` | *pinned* | sha256 of the `.deb` for this version and architecture. |
+| `openbao_plugin_dir` | `/opt/openbao/plugins` | Root-owned plugin directory. |
+| `openbao_kms_plugin_version` | `0.1.1` | `openbao-plugins` kms-aws release. awskms is a plugin from 2.7. Empty leaves it out, for earlier versions. |
+| `openbao_kms_plugin_binary` | `openbao-plugin-kms-aws_linux_amd64_v1` | Release asset and binary name. |
+| `openbao_kms_plugin_url` | *derived* | Plugin download URL. |
+| `openbao_kms_plugin_sha256` | *pinned* | sha256 of the plugin `.tar.gz`. |
+| `openbao_running_retries` / `openbao_running_delay` | `24` / `5` | How long a run waits for the pinned version to be running and unsealed. |
+| `openbao_kms_endpoint` | `""` | KMS API endpoint, for a VPC endpoint. |
 | `openbao_arch` | `amd64` | Package architecture. |
 | `openbao_release_base` | `https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}` | Release download base. |
 | `openbao_deb_url` | `{{ openbao_release_base }}/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb` | Full `.deb` URL. |

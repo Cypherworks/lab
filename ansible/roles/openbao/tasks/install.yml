@@ -1,0 +1,149 @@
+---
+# Install OpenBao from the pinned upstream .deb (same pattern as the headscale role).
+# The package creates the openbao user/group, the systemd unit, /etc/openbao/, and a
+# self-signed TLS cert under /opt/openbao/tls.
+#
+# The KMS plugin goes on first: awskms left the binary in 2.7, so a new package
+# without the plugin can't start, and a failed download must stop before that.
+- name: Install the KMS seal plugin
+  when: openbao_kms_plugin_version | length > 0
+  block:
+    - name: Create the plugin directory
+      become: true
+      ansible.builtin.file:
+        path: "{{ openbao_plugin_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download the pinned KMS plugin
+      become: true
+      ansible.builtin.get_url:
+        url: "{{ openbao_kms_plugin_url }}"
+        dest: "/tmp/{{ openbao_kms_plugin_binary }}-{{ openbao_kms_plugin_version }}.tar.gz"
+        checksum: "sha256:{{ openbao_kms_plugin_sha256 }}"
+        mode: "0644"
+
+    - name: Extract the KMS plugin
+      become: true
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ openbao_kms_plugin_binary }}-{{ openbao_kms_plugin_version }}.tar.gz"
+        dest: "{{ openbao_plugin_dir }}"
+        remote_src: true
+        include: ["{{ openbao_kms_plugin_binary }}"]
+        owner: root
+        group: root
+        mode: "0755"
+      notify: Restart openbao
+
+- name: Download the pinned OpenBao package
+  become: true
+  ansible.builtin.get_url:
+    url: "{{ openbao_deb_url }}"
+    dest: "/tmp/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+    checksum: "sha256:{{ openbao_deb_sha256 }}"
+    mode: "0644"
+
+# Replacing the package doesn't restart the service, so this has to notify.
+- name: Install OpenBao
+  become: true
+  ansible.builtin.apt:
+    deb: "/tmp/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+  notify: Restart openbao
+
+# Hold it so unattended-upgrades can never change or autoremove the root-of-trust package
+# (the incus outage showed what an unexpected package change does). Manually-installed
+# pinned .deb, not in an apt repo, so low-risk — belt-and-braces.
+- name: Hold the OpenBao package
+  become: true
+  ansible.builtin.dpkg_selections:
+    name: openbao
+    selection: hold
+
+- name: Render the OpenBao auto-unseal credentials (systemd EnvironmentFile)
+  become: true
+  ansible.builtin.template:
+    src: openbao.env.j2
+    dest: /etc/openbao/openbao.env
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart openbao
+
+- name: Render the OpenBao config
+  become: true
+  ansible.builtin.template:
+    src: openbao.hcl.j2
+    dest: /etc/openbao/openbao.hcl
+    owner: root
+    group: openbao
+    mode: "0640"
+  notify: Restart openbao
+
+# The declarative `audit "file"` stanza opens this log as OpenBao starts, so the dir
+# must exist and be writable by the openbao user beforehand — otherwise the only audit
+# device fails and OpenBao won't serve.
+- name: Ensure the audit log directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ openbao_audit_log_dir }}"
+    state: directory
+    owner: openbao
+    group: openbao
+    mode: "0750"
+  when: openbao_audit_enabled | bool
+
+# Self-heal a transient unseal failure at boot (see the override template): without
+# this the packaged unit's StartLimitBurst gives up and OpenBao stays sealed.
+- name: Ensure the OpenBao service drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/system/openbao.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the OpenBao service self-heal override
+  become: true
+  ansible.builtin.template:
+    src: openbao-service-override.conf.j2
+    dest: /etc/systemd/system/openbao.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+# Starts uninitialised + sealed on a fresh node; the awskms seal auto-unseals on every
+# subsequent start once initialised. daemon_reload picks up the override above.
+- name: Enable and start OpenBao
+  become: true
+  ansible.builtin.systemd_service:
+    name: openbao
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Guard: if a package upgrade or a stray edit ever drops the override, the start
+# rate-limit comes back and a boot-time blip can brick auto-unseal again. Fail the
+# converge loudly rather than silently regressing to that.
+- name: Read the OpenBao unit state
+  become: true
+  ansible.builtin.systemd_service:
+    name: openbao
+  register: openbao_unit
+  changed_when: false
+
+- name: Confirm the self-heal restart policy is in effect
+  ansible.builtin.assert:
+    that: openbao_unit.status.StartLimitIntervalUSec == "0"
+    fail_msg: >-
+      OpenBao's start rate-limit is not disabled
+      (StartLimitIntervalUSec={{ openbao_unit.status.StartLimitIntervalUSec }}) —
+      the self-heal override is missing.
+
+- name: Restart now if the package, plugin or config changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Confirm the pinned OpenBao is the one running
+  ansible.builtin.include_tasks: verify_running.yml

@@ -18,9 +18,23 @@ listener "tcp" {
 api_addr     = "{{ openbao_api_addr }}"
 cluster_addr = "{{ openbao_cluster_addr }}"
 
+{% if openbao_kms_plugin_version %}
+plugin_directory = "{{ openbao_plugin_dir }}"
+
+{# The plugin inherits the server's environment, so the AWS creds stay in the
+   EnvironmentFile. The version carries the v that release tags use. #}
+plugin "kms" "awskms" {
+  command = "{{ openbao_kms_plugin_binary }}"
+  version = "v{{ openbao_kms_plugin_version }}"
+}
+
+{% endif %}
 seal "awskms" {
   region     = "{{ openbao_aws_region }}"
   kms_key_id = "{{ openbao_kms_key_id }}"
+{% if openbao_kms_endpoint %}
+  endpoint   = "{{ openbao_kms_endpoint }}"
+{% endif %}
 }
 {% if openbao_audit_enabled %}
 

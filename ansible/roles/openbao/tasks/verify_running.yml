@@ -1,0 +1,27 @@
+---
+# The package can change on disk while the old process keeps serving, and an
+# initialised server that can't reach KMS stays sealed. Either fails the run.
+- name: Confirm the pinned OpenBao is running and unsealed
+  vars:
+    openbao_status: "{{ (openbao_running.stdout | default('', true) or '{}') | from_json }}"
+    openbao_is_pinned: "{{ openbao_status.version | default('') == openbao_version }}"
+    openbao_is_unsealed: "{{ not (openbao_status.initialized | default(false)) or not (openbao_status.sealed | default(true)) }}"
+  block:
+    - name: Wait for the pinned OpenBao
+      environment:
+        BAO_ADDR: "{{ openbao_api_addr }}"
+        BAO_SKIP_VERIFY: "true"
+      ansible.builtin.command: bao status -format=json
+      register: openbao_running
+      until: openbao_is_pinned and openbao_is_unsealed
+      retries: "{{ openbao_running_retries }}"
+      delay: "{{ openbao_running_delay }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Fail unless the pinned OpenBao is running and unsealed
+      ansible.builtin.assert:
+        that:
+          - openbao_is_pinned
+          - openbao_is_unsealed
+        fail_msg: "Expected {{ openbao_version }} unsealed, got: {{ openbao_running.stdout | default('no answer') }}"

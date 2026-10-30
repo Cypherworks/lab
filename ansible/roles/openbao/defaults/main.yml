@@ -7,10 +7,26 @@
 # /opt/openbao/tls that we use as the listener's bootstrap cert until the internal
 # PKI can issue one. Site-specific values (advertised addresses, KMS key, creds)
 # stay empty here and are set by the deploy — the role carries no site data.
-openbao_version: "2.5.5"
+openbao_version: "2.7.2"
 openbao_arch: amd64
 openbao_release_base: "https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}"
 openbao_deb_url: "{{ openbao_release_base }}/openbao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+# sha256 of the .deb for openbao_version + openbao_arch. Pin both together.
+openbao_deb_sha256: 42bd0890a8e2060e5f29410ea828ee047aa2de21028045731a0516d5a532928c
+
+# awskms is a plugin from 2.7. Held locally so unsealing needs no registry.
+openbao_plugin_dir: /opt/openbao/plugins
+# Empty leaves the plugin out, for versions with awskms built in.
+openbao_kms_plugin_version: "0.1.1"
+openbao_kms_plugin_binary: openbao-plugin-kms-aws_linux_amd64_v1
+openbao_kms_plugin_release_base: "https://github.com/openbao/openbao-plugins/releases/download/kms-aws-v{{ openbao_kms_plugin_version }}"
+openbao_kms_plugin_url: "{{ openbao_kms_plugin_release_base }}/{{ openbao_kms_plugin_binary }}.tar.gz"
+# sha256 of the plugin .tar.gz for the version and binary above.
+openbao_kms_plugin_sha256: f00ebed7fa1cbec080e0fed908e167125bc14b266df7e4af845f82aa4650ed4e
+
+# How long a run waits for the pinned version to be running and unsealed.
+openbao_running_retries: 24
+openbao_running_delay: 5
 
 # Raft data + the package's self-signed bootstrap cert (package defaults). The
 # listener cert/key files are later overwritten in place with a PKI-issued cert (see
@@ -41,6 +57,8 @@ openbao_disable_mlock: true
 # the AWS credentials ARE secret (deploy supplies them from SOPS) and are passed via
 # the systemd EnvironmentFile, never written into the config.
 openbao_kms_key_id: ""
+# KMS API endpoint, for a VPC endpoint. Empty uses the region's default.
+openbao_kms_endpoint: ""
 openbao_aws_region: ""
 openbao_aws_access_key_id: ""
 openbao_aws_secret_access_key: ""
