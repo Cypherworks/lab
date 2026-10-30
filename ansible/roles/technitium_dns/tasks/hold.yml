@@ -1,0 +1,20 @@
+---
+# Everything the role holds through the API. A joined secondary takes its
+# settings and zones from the primary, so only the primary's are written.
+- name: Check the node against the cluster
+  ansible.builtin.include_tasks: cluster_check.yml
+  when: technitium_dns_cluster_domain | length > 0
+
+- name: Hold the settings
+  ansible.builtin.include_tasks: settings.yml
+  when: not (_cluster_joined_secondary | default(false) | bool)
+
+- name: Bring the node into the cluster
+  ansible.builtin.include_tasks: cluster_join.yml
+  when: technitium_dns_cluster_domain | length > 0
+
+- name: Hold the forwarder zones
+  ansible.builtin.include_tasks: forwarder_zones.yml
+  when:
+    - technitium_dns_forwarder_zones | length > 0
+    - technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'

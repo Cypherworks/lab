@@ -1,0 +1,56 @@
+---
+# Hold the server's settings to the role's through the API on loopback,
+# writing only when something differs.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: Read the settings
+  ansible.builtin.include_tasks: settings_read.yml
+
+- name: Hold the settings to the role's
+  vars:
+    _body:
+      recursion: "{{ technitium_dns_recursion }}"
+      recursionNetworkACL: "{{ technitium_dns_recursion_acl | join(',') if technitium_dns_recursion_acl else 'false' }}"
+      forwarders: "{{ technitium_dns_forwarders | join(',') if technitium_dns_forwarders else 'false' }}"
+      forwarderProtocol: "{{ technitium_dns_forwarder_protocol }}"
+      webServiceEnableTls: "true"
+      webServiceTlsPort: "{{ technitium_dns_https_port }}"
+      webServiceUseSelfSignedTlsCertificate: "true"
+      dnssecValidation: "{{ technitium_dns_dnssec_validation | bool | string | lower }}"
+      enableBlocking: "{{ technitium_dns_blocking | bool | string | lower }}"
+      blockingType: "{{ technitium_dns_blocking_type }}"
+      blockListUrls: "{{ technitium_dns_block_list_urls | join(',') if technitium_dns_block_list_urls else 'false' }}"
+      blockListUpdateIntervalHours: "{{ technitium_dns_block_list_update_hours }}"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/settings/set"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body: "{{ _body }}"
+  register: _set
+  when: _settings_drift | bool
+  failed_when: _set.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
+
+# The web service restarts 2 s after such a write, dropping any request in
+# flight, and the API has no signal for it, so wait it out.
+- name: Let the web service restart
+  ansible.builtin.pause:
+    seconds: 3
+  when:
+    - _set is changed
+    - _settings_web_drift | bool
+
+# Technitium answers ok to some values it ignores, such as an unknown policy.
+- name: Check the write
+  when: _set is changed
+  block:
+    - name: Read the settings back
+      ansible.builtin.include_tasks: settings_read.yml
+
+    - name: Check the server took the settings
+      ansible.builtin.assert:
+        that: not (_settings_drift | bool)
+        fail_msg: The server answered ok but doesn't hold the role's settings; a value it doesn't know is the usual cause.

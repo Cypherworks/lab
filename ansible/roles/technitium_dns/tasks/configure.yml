@@ -1,58 +1,6 @@
 ---
-# Firewall first, then start the service, then hold its settings to the
-# role's through the API on loopback (never over the network).
-- name: Host firewall
-  when: technitium_dns_firewall | bool
-  block:
-    - name: Check the firewall settings
-      ansible.builtin.assert:
-        that:
-          - technitium_dns_admin_sources | length > 0
-          - technitium_dns_dns_clients | length > 0
-        fail_msg: technitium_dns_firewall needs admin sources and DNS clients.
-
-    - name: Read this run's SSH source (as the login user; sudo drops it)
-      ansible.builtin.command:
-        cmd: printenv SSH_CLIENT
-      become: false
-      register: _ssh_client
-      changed_when: false
-      failed_when: false
-
-    - name: Refuse to firewall out this run's own SSH source
-      vars:
-        _src: "{{ (_ssh_client.stdout | default('')).split(' ') | first }}"
-      ansible.builtin.assert:
-        that: _src in technitium_dns_admin_sources
-        fail_msg: "This run's SSH source '{{ _src }}' isn't in technitium_dns_admin_sources; enabling ufw would cut it off."
-
-    - name: Install ufw
-      ansible.builtin.apt:
-        name: ufw
-        state: present
-
-    - name: Allow SSH and the console from the admin sources
-      community.general.ufw:
-        rule: allow
-        proto: tcp
-        from_ip: "{{ item.0 }}"
-        to_port: "{{ item.1 }}"
-      loop: "{{ technitium_dns_admin_sources | product(['22', technitium_dns_https_port | string]) | list }}"
-
-    - name: Allow DNS from the client networks
-      community.general.ufw:
-        rule: allow
-        proto: "{{ item.1 }}"
-        from_ip: "{{ item.0 }}"
-        to_port: "53"
-      loop: "{{ technitium_dns_dns_clients | product(['udp', 'tcp']) | list }}"
-
-    - name: Deny everything else inbound and enable
-      community.general.ufw:
-        state: enabled
-        policy: deny
-        direction: incoming
-
+# Start the service, then hold its settings to the role's through the API on
+# loopback (never over the network). Run the firewall role first.
 - name: Start Technitium DNS
   ansible.builtin.systemd_service:
     name: technitium-dns
@@ -65,43 +13,5 @@
     port: "{{ technitium_dns_http_port }}"
     timeout: 120
 
-- name: Log in
-  ansible.builtin.include_tasks: login.yml
-
-- name: Read the DNS settings
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/settings/get"
-    headers: { Authorization: "Bearer {{ _login.json.token }}" }
-  register: _settings
-  no_log: true
-
-- name: Hold the settings to the role's
-  vars:
-    _s: "{{ _settings.json.response }}"
-    _drift: >-
-      {{ _s.recursion != technitium_dns_recursion
-         or (_s.recursionNetworkACL | default([], true) | sort) != (technitium_dns_recursion_acl | sort)
-         or (_s.forwarders | default([], true) | sort) != (technitium_dns_forwarders | sort)
-         or _s.forwarderProtocol != technitium_dns_forwarder_protocol
-         or not (_s.webServiceEnableTls | bool)
-         or (_s.webServiceTlsPort | int) != (technitium_dns_https_port | int)
-         or not (_s.webServiceUseSelfSignedTlsCertificate | bool) }}
-    _body:
-      recursion: "{{ technitium_dns_recursion }}"
-      forwarders: "{{ technitium_dns_forwarders | join(',') if technitium_dns_forwarders else 'false' }}"
-      forwarderProtocol: "{{ technitium_dns_forwarder_protocol }}"
-      webServiceEnableTls: "true"
-      webServiceTlsPort: "{{ technitium_dns_https_port }}"
-      webServiceUseSelfSignedTlsCertificate: "true"
-    _acl: "{{ {'recursionNetworkACL': technitium_dns_recursion_acl | join(',')} if technitium_dns_recursion_acl else {} }}"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/settings/set"
-    method: POST
-    body_format: form-urlencoded
-    headers: { Authorization: "Bearer {{ _login.json.token }}" }
-    body: "{{ _body | combine(_acl) }}"
-  register: _set
-  when: _drift | bool
-  failed_when: _set.json.status | default('') != 'ok'
-  changed_when: true
-  no_log: true
+- name: Hold what the role holds through the API
+  ansible.builtin.include_tasks: hold.yml

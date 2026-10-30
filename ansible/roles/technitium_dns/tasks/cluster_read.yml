@@ -1,0 +1,8 @@
+---
+- name: Read the cluster state
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/cluster/state"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _cluster
+  failed_when: _cluster.json.status | default('') != 'ok'
+  no_log: true

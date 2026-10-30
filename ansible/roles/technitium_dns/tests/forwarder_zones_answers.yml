@@ -1,0 +1,32 @@
+---
+# What each client should be told once the zones are held. Each query is
+# client, name, type and the expected status and answer.
+- name: Ask from each client
+  ansible.builtin.command: >-
+    docker run --rm --network {{ _net }} --ip {{ item.client }} --entrypoint dig {{ _image }}
+    +noall +comments +answer +time=3 +tries=2 @{{ _server_ip }} {{ item.name }} {{ item.type }}
+  register: _asked
+  changed_when: false
+  loop:
+    - { client: "{{ _listed_client }}", name: "nas.{{ _split }}", type: A, status: NOERROR, answer: 10.99.0.20 }
+    - { client: "{{ _listed_client }}", name: "grafana.{{ _split }}", type: A, status: NOERROR, answer: 10.99.0.30 }
+    - { client: "{{ _listed_client }}", name: "www.{{ _split }}", type: A, status: NOERROR, answer: 192.0.2.10 }
+    - { client: "{{ _listed_client }}", name: "{{ _split }}", type: MX, status: NOERROR, answer: mx.example.net. }
+    - { client: "{{ _listed_client }}", name: "_dmarc.{{ _split }}", type: TXT, status: NOERROR, answer: public-dmarc }
+    - { client: "{{ _listed_client }}", name: "www.{{ _private }}", type: A, status: NOERROR, answer: 192.0.2.20 }
+    - { client: "{{ _other_client }}", name: "www.{{ _private }}", type: A, status: REFUSED, answer: "" }
+    - { client: "{{ _other_client }}", name: "{{ _private }}", type: SOA, status: REFUSED, answer: "" }
+  loop_control:
+    label: "{{ item.client }} {{ item.name }} {{ item.type }}"
+
+- name: Assert each client's answer
+  ansible.builtin.assert:
+    that:
+      - "('status: ' ~ item.item.status) in item.stdout"
+      - item.item.answer in item.stdout
+      - item.item.answer != '' or (item.stdout_lines | reject('match', ';') | select | list | length == 0)
+    fail_msg: "{{ item.item.client }} {{ item.item.name }} {{ item.item.type }}: {{ item.stdout }}"
+    quiet: true
+  loop: "{{ _asked.results }}"
+  loop_control:
+    label: "{{ item.item.client }} {{ item.item.name }} {{ item.item.type }}"

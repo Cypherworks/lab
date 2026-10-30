@@ -67,6 +67,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 | [`vcenter_network`](ansible/roles/vcenter_network) | Manage VM port groups (VLAN, binding, closed security policy) on an existing vSphere Distributed Switch. |
 | [`vcenter_vm_ovf`](ansible/roles/vcenter_vm_ovf) | Deploy a VM from an OVA through vCenter, seeded by cloud-init, sized, and waited on for its address; plus NIC move, rename and delete for rebuilds. |
 | [`technitium_dns`](ansible/roles/technitium_dns) | Technitium DNS Server with recursion, its ACL, forwarders and the HTTPS console held to code through the API; host firewall; config carry-over for rebuilds. |
+| [`firewall`](ansible/roles/firewall) | Host firewall (ufw): default-deny inbound, SSH left open, each host's rules from its variables. |
 | [`vcenter_oidc`](ansible/roles/vcenter_oidc) | vCenter identity provider federation against an external OIDC provider (Authentik). |
 | [`openbao`](ansible/roles/openbao) | OpenBao secrets manager — PKI, AWS-KMS auto-unseal, OIDC, SSH CA, S3 snapshots. |
 | [`authentik_app`](ansible/roles/authentik_app) | Authentik app tier against an external HA database, with blueprint integrations and an LDAP outpost. |

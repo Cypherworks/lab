@@ -1,0 +1,157 @@
+---
+# Checks the DNS probe end to end: a real blackbox_exporter, on the role's
+# rendered config, asks a throwaway Technitium server a real question. Needs
+# Docker, and internet to pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/dns_probe.yml
+- name: Verify the DNS probe
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, as the lab's resolvers run.
+    _dns_image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _net: monitoring-dns-probe-test
+    _dns: monitoring-dns-probe-server
+    _dns_ip: 172.30.91.10
+    _dns_port: 15404
+    _blackbox: monitoring-dns-probe-blackbox
+    _blackbox_port: 15405
+    _probe: "http://127.0.0.1:{{ _blackbox_port }}/probe?module=dns_lookup&target={{ _dns_ip }}:53"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Point the role at the test server
+      ansible.builtin.set_fact:
+        monitoring_blackbox_dns_query: probe.labcheck
+        monitoring_blackbox_dns_targets:
+          - { target: "{{ _dns_ip }}:53", instance: pi-dns-1 }
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, probe, and clean up
+      block:
+        - name: Render the blackbox and scrape configs
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/{{ item }}"
+            mode: "0644"
+          loop: [blackbox.yml, scrape.yml]
+
+        - name: Assert the scrape job names each resolver
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/scrape.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'dns') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _job.metrics_path == '/probe'
+              - _job.params.module == ['dns_lookup']
+              - _job.static_configs[0].targets == [_dns_ip ~ ':53']
+              - _job.static_configs[0].labels.instance == 'pi-dns-1'
+            fail_msg: "{{ _job | to_json }}"
+
+        - name: Make the test network
+          ansible.builtin.command: docker network create --subnet 172.30.91.0/24 {{ _net }}
+          changed_when: true
+
+        - name: Start a server to probe
+          ansible.builtin.command: >-
+            docker run -d --name {{ _dns }} --network {{ _net }} --ip {{ _dns_ip }}
+            -p 127.0.0.1:{{ _dns_port }}:5380 {{ _dns_image }}
+          changed_when: true
+
+        - name: Create the exporter on the role's config
+          ansible.builtin.command: >-
+            docker create --name {{ _blackbox }} --network {{ _net }}
+            -p 127.0.0.1:{{ _blackbox_port }}:9115 {{ monitoring_blackbox_image }}
+            --config.file=/tmp/blackbox.yml
+          changed_when: true
+
+        - name: Give the exporter its config
+          ansible.builtin.command: docker cp {{ _scratch.path }}/blackbox.yml {{ _blackbox }}:/tmp/blackbox.yml
+          changed_when: true
+
+        - name: Start the exporter
+          ansible.builtin.command: docker start {{ _blackbox }}
+          changed_when: true
+
+        - name: Wait for the server's API, as Docker's proxy accepts before it
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _dns_port }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
+
+        - name: Log in to the server
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _dns_port }}/api/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body: { user: admin, pass: admin }
+          register: _login
+          until: _login.json.status | default('') == 'ok'
+          retries: 10
+          delay: 2
+
+        - name: Publish the name the probe asks for
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _dns_port }}/api/{{ item }}"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _published
+          failed_when: _published.json.status != 'ok'
+          loop:
+            - zones/create?zone=probe.labcheck&type=Primary
+            - zones/records/add?zone=probe.labcheck&domain=probe.labcheck&type=A&ipAddress=192.0.2.40
+
+        - name: Probe the server
+          ansible.builtin.uri:
+            url: "{{ _probe }}"
+            return_content: true
+          register: _healthy
+          until: _healthy.status == 200
+          retries: 10
+          delay: 2
+
+        - name: Stop the server
+          ansible.builtin.command: docker stop {{ _dns }}
+          changed_when: true
+
+        - name: Probe the stopped server
+          ansible.builtin.uri:
+            url: "{{ _probe }}"
+            return_content: true
+          register: _stopped
+
+        - name: Assert the probe tells a working server from a dead one
+          ansible.builtin.assert:
+            that:
+              - "'probe_success 1' in _healthy.content"
+              - "'probe_success 0' in _stopped.content"
+            fail_msg: "{{ _healthy.content }} then {{ _stopped.content }}"
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: docker rm -f {{ _dns }} {{ _blackbox }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

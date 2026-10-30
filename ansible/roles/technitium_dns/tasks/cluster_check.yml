@@ -1,0 +1,36 @@
+---
+# Stop before writing anything if the node doesn't match what the role says it
+# is. Sets _cluster_joined_secondary for the tasks that follow.
+- name: Check the cluster settings
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_cluster_role in ['primary', 'secondary']
+      - technitium_dns_cluster_node_ip | length > 0
+      - technitium_dns_cluster_role == 'primary' or technitium_dns_cluster_primary_url | length > 0
+      - technitium_dns_cluster_role == 'primary' or technitium_dns_cluster_primary_ip | length > 0
+    fail_msg: A cluster needs a role of primary or secondary and this node's address; a secondary also needs the primary's URL and address.
+
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: Read the cluster state
+  ansible.builtin.include_tasks: cluster_read.yml
+
+- name: Refuse a node of another cluster
+  ansible.builtin.assert:
+    that: >-
+      not _cluster.json.response.clusterInitialized
+      or _cluster.json.response.clusterDomain == technitium_dns_cluster_domain
+    fail_msg: "This node is in another cluster, not {{ technitium_dns_cluster_domain }}; the domain can't change without deleting the cluster."
+
+- name: Refuse a node of the other role
+  vars:
+    _nodes: "{{ _cluster.json.response.clusterNodes | default([]) }}"
+    _self: "{{ _nodes | selectattr('state', 'eq', 'Self') | map(attribute='type') | first | default('') }}"
+  ansible.builtin.assert:
+    that: not _cluster.json.response.clusterInitialized or _self | lower == technitium_dns_cluster_role
+    fail_msg: "This node is the cluster's {{ _self }}, not its {{ technitium_dns_cluster_role }}."
+
+- name: Note whether this is a joined secondary
+  ansible.builtin.set_fact:
+    _cluster_joined_secondary: "{{ technitium_dns_cluster_role == 'secondary' and _cluster.json.response.clusterInitialized }}"

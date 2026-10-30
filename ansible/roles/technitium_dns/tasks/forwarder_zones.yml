@@ -1,0 +1,21 @@
+---
+# Hold each zone in technitium_dns_forwarder_zones to the role's: created if
+# missing, then its query access and listed names set. Names the role doesn't
+# list stay the console's.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: List the server's zones
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/list"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _zones
+  failed_when: _zones.json.status | default('') != 'ok'
+  no_log: true
+
+- name: Hold each forwarder zone
+  ansible.builtin.include_tasks: forwarder_zone.yml
+  loop: "{{ technitium_dns_forwarder_zones }}"
+  loop_control:
+    loop_var: _forwarder_zone
+    label: "{{ _forwarder_zone.zone }}"

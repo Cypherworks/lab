@@ -1,0 +1,30 @@
+---
+# Read the settings and compare them with the role's, into _settings_drift and,
+# for the ones that restart the web service, _settings_web_drift.
+- name: Read the DNS settings
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/settings/get"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _settings
+  no_log: true
+
+- name: Compare the settings with the role's
+  vars:
+    _s: "{{ _settings.json.response }}"
+    _web_drift: >-
+      {{ not (_s.webServiceEnableTls | bool)
+         or (_s.webServiceTlsPort | int) != (technitium_dns_https_port | int)
+         or not (_s.webServiceUseSelfSignedTlsCertificate | bool) }}
+  ansible.builtin.set_fact:
+    _settings_web_drift: "{{ _web_drift }}"
+    _settings_drift: >-
+      {{ (_web_drift | bool)
+         or _s.recursion != technitium_dns_recursion
+         or (_s.recursionNetworkACL | default([], true) | sort) != (technitium_dns_recursion_acl | sort)
+         or (_s.forwarders | default([], true) | sort) != (technitium_dns_forwarders | sort)
+         or _s.forwarderProtocol != technitium_dns_forwarder_protocol
+         or (_s.dnssecValidation | bool) != (technitium_dns_dnssec_validation | bool)
+         or (_s.enableBlocking | bool) != (technitium_dns_blocking | bool)
+         or _s.blockingType != technitium_dns_blocking_type
+         or (_s.blockListUrls | default([], true) | sort) != (technitium_dns_block_list_urls | sort)
+         or (_s.blockListUpdateIntervalHours | int) != (technitium_dns_block_list_update_hours | int) }}

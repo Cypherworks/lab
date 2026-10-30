@@ -1,0 +1,162 @@
+---
+# Exercises the firewall with real connections against a throwaway container:
+# ufw filters inside it, and clients at fixed addresses try each port. Needs
+# Docker, community.docker, and internet for its apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/firewall/tests/firewall.yml
+- name: Start a target to firewall
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: firewall-test-target
+    _net: firewall-test
+  tasks:
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.94.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Start the target, allowed to change its own firewall
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --cap-add NET_ADMIN --network {{ _net }}
+        --ip 172.30.94.10 ubuntu:24.04 sleep 900
+      changed_when: true
+
+    - name: Install what the role and its listeners need
+      ansible.builtin.command: >-
+        docker exec {{ _target }} sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 iptables'
+      changed_when: true
+
+    - name: Listen on the ports under test
+      ansible.builtin.command: docker exec -d {{ _target }} python3 -m http.server {{ item }}
+      changed_when: true
+      loop: [22, 8443, 9000]
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: firewall_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Hold the target's firewall
+  hosts: firewall_target
+  gather_facts: false
+  vars:
+    _listed: 172.30.94.40
+    firewall_rules:
+      - { port: "8443", proto: tcp, from: "{{ _listed }}", comment: console }
+  tasks:
+    - name: Refuse to shut out this run's own SSH source
+      environment:
+        SSH_CLIENT: 172.30.94.77 50000 22
+      block:
+        - name: Hold the firewall with SSH limited to someone else
+          ansible.builtin.include_role:
+            name: firewall
+          vars:
+            firewall_ssh_sources: ["{{ _listed }}"]
+
+        - name: Record that the hold went through
+          ansible.builtin.set_fact:
+            _refused: ""
+      rescue:
+        - name: Record which task failed
+          ansible.builtin.set_fact:
+            _refused: "{{ ansible_failed_task.name }}"
+
+    - name: Assert the run was refused
+      ansible.builtin.assert:
+        that: _refused == "Refuse to firewall out this run's own SSH source"
+        fail_msg: "expected the SSH check to fail, got '{{ _refused }}'"
+        success_msg: this run's own SSH source is protected as expected
+
+    - name: Hold the firewall with SSH limited to the listed client
+      ansible.builtin.include_role:
+        name: firewall
+      vars:
+        firewall_ssh_sources: ["{{ _listed }}"]
+
+- name: Check SSH limited to one client
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Check the ports
+      ansible.builtin.include_tasks: firewall_ports.yml
+      vars:
+        _expected:
+          - { client: 172.30.94.40, port: 22, open: true }
+          - { client: 172.30.94.50, port: 22, open: false }
+          - { client: 172.30.94.40, port: 8443, open: true }
+          - { client: 172.30.94.50, port: 8443, open: false }
+          - { client: 172.30.94.40, port: 9000, open: false }
+
+- name: Hold the target's firewall by default
+  hosts: firewall_target
+  gather_facts: false
+  vars:
+    firewall_rules:
+      - { port: "8443", proto: tcp, from: 172.30.94.40, comment: console }
+  tasks:
+    - name: Clear the firewall
+      ansible.builtin.command: ufw --force reset
+      changed_when: true
+
+    - name: Hold the firewall
+      ansible.builtin.include_role:
+        name: firewall
+
+    - name: Read the rules
+      ansible.builtin.command: ufw status
+      register: _first
+      changed_when: false
+
+    - name: Hold it again
+      ansible.builtin.include_role:
+        name: firewall
+
+    - name: Read the rules again
+      ansible.builtin.command: ufw status
+      register: _second
+      changed_when: false
+
+    - name: Assert a rerun added nothing, and the loopback rule is there
+      ansible.builtin.assert:
+        that:
+          - _second.stdout == _first.stdout
+          - "'on lo' in _first.stdout"
+        fail_msg: "{{ _first.stdout }} became {{ _second.stdout }}"
+
+- name: Check SSH left open, and clean up
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Check, and clean up
+      block:
+        - name: Check the ports
+          ansible.builtin.include_tasks: firewall_ports.yml
+          vars:
+            _expected:
+              - { client: 172.30.94.50, port: 22, open: true }
+              - { client: 172.30.94.40, port: 8443, open: true }
+              - { client: 172.30.94.50, port: 8443, open: false }
+              - { client: 172.30.94.40, port: 9000, open: false }
+      always:
+        - name: Remove the target
+          ansible.builtin.command: docker rm -f firewall-test-target
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm firewall-test
+          changed_when: true
+          failed_when: false

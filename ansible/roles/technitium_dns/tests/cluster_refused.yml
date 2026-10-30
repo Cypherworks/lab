@@ -1,0 +1,23 @@
+---
+# Holds a node the role must refuse (the caller's vars), and checks which task
+# stops it.
+- name: Hold the node
+  block:
+    - name: Hold the node
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: hold
+
+    - name: Record that the hold went through
+      ansible.builtin.set_fact:
+        _refused: ""
+  rescue:
+    - name: Record which task failed
+      ansible.builtin.set_fact:
+        _refused: "{{ ansible_failed_task.name }}"
+
+- name: Assert the node was refused
+  ansible.builtin.assert:
+    that: _refused == _failing_task
+    fail_msg: "expected '{{ _failing_task }}' to fail, got '{{ _refused }}'"
+    success_msg: "{{ _failing_task }} failed as expected"

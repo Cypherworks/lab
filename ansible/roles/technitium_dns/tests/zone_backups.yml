@@ -46,11 +46,13 @@
             {{ _image }}
           changed_when: true
 
-        - name: Wait for its API
-          ansible.builtin.wait_for:
-            host: 127.0.0.1
-            port: "{{ technitium_dns_http_port }}"
-            timeout: 120
+        - name: Wait for its API to answer, as Docker's proxy accepts before it
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ technitium_dns_http_port }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
 
         - name: Restore into an empty server with no backup to restore
           ansible.builtin.include_role:

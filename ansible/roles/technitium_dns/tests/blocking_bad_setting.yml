@@ -1,0 +1,22 @@
+---
+# Holds a bad setting (the caller's vars) and checks which task stops it.
+- name: Hold the settings
+  block:
+    - name: Hold the settings
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: settings
+
+    - name: Record that the hold went through
+      ansible.builtin.set_fact:
+        _bad_setting: ""
+  rescue:
+    - name: Record which task failed
+      ansible.builtin.set_fact:
+        _bad_setting: "{{ ansible_failed_task.name }}"
+
+- name: Assert the bad setting failed the hold
+  ansible.builtin.assert:
+    that: _bad_setting == _failing_task
+    fail_msg: "expected '{{ _failing_task }}' to fail, got '{{ _bad_setting }}'"
+    success_msg: "{{ _failing_task }} failed as expected"

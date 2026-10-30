@@ -13,3 +13,13 @@ modules:
       tls_config:
         insecure_skip_verify: true
 {% endif %}
+{% if monitoring_blackbox_dns_targets %}
+  dns_lookup:
+    prober: dns
+    timeout: 5s
+    dns:
+      query_name: "{{ monitoring_blackbox_dns_query }}"
+      query_type: "A"
+      preferred_ip_protocol: "ip4"
+      valid_rcodes: [NOERROR]
+{% endif %}
