@@ -124,3 +124,7 @@ proxmox_oidc_redirect_uris: []
 vcenter_oidc_client_id: ""
 vcenter_oidc_client_secret: ""
 vcenter_oidc_redirect_uris: []
+# Technitium OIDC: id/secret via !Env (SOPS); shared with technitium_dns.
+technitium_oidc_client_id: ""
+technitium_oidc_client_secret: ""
+technitium_oidc_redirect_uri: ""

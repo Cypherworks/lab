@@ -14,7 +14,8 @@
     _web_drift: >-
       {{ not (_s.webServiceEnableTls | bool)
          or (_s.webServiceTlsPort | int) != (technitium_dns_https_port | int)
-         or not (_s.webServiceUseSelfSignedTlsCertificate | bool) }}
+         or not (_s.webServiceUseSelfSignedTlsCertificate | bool)
+         or (_s.webServiceReverseProxyAddresses | default([], true) | sort) != (technitium_dns_web_reverse_proxy_addresses | sort) }}
   ansible.builtin.set_fact:
     _settings_web_drift: "{{ _web_drift }}"
     _settings_drift: >-

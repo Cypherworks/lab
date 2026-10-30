@@ -1,0 +1,22 @@
+---
+# Read the SSO settings and compare them with the role's, into _sso_drift.
+- name: Read the SSO settings
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/sso/get"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _sso
+  failed_when: _sso.json.status | default('') != 'ok'
+  no_log: true
+
+- name: Compare the SSO settings with the role's
+  vars:
+    _s: "{{ _sso.json.response }}"
+    _map: "{{ _s.ssoGroupMap | default([], true) | items2dict(key_name='remoteGroup', value_name='localGroup') }}"
+  ansible.builtin.set_fact:
+    _sso_drift: >-
+      {{ not (_s.ssoEnabled | bool)
+         or _s.ssoAuthority != technitium_dns_sso_authority
+         or _s.ssoClientId != technitium_dns_sso_client_id
+         or not (_s.ssoAllowSignup | bool)
+         or not (_s.ssoAllowSignupOnlyForMappedUsers | bool)
+         or _map != technitium_dns_sso_group_map }}

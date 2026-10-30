@@ -1,0 +1,55 @@
+---
+# Hold OpenID Connect sign-in to the role's settings, written only when they
+# differ. The server masks the client secret on read, so a new secret alone
+# isn't seen as a change: README covers rotating it.
+- name: Check the SSO settings
+  ansible.builtin.assert:
+    that:
+      - technitium_dns_sso_authority | length > 0
+      - technitium_dns_sso_client_id | length > 0
+      - technitium_dns_sso_client_secret | length > 0
+      - technitium_dns_sso_group_map | length > 0
+    fail_msg: SSO needs an authority, a client id and secret, and a group map, or nobody can sign in with it.
+
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: Read the SSO settings
+  ansible.builtin.include_tasks: sso_read.yml
+
+- name: Hold the SSO settings to the role's
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/sso/set"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      ssoEnabled: "true"
+      ssoAuthority: "{{ technitium_dns_sso_authority }}"
+      ssoClientId: "{{ technitium_dns_sso_client_id }}"
+      ssoClientSecret: "{{ technitium_dns_sso_client_secret }}"
+      ssoAllowSignup: "true"
+      ssoAllowSignupOnlyForMappedUsers: "true"
+      ssoGroupMap: "{{ technitium_dns_sso_group_map.items() | map('join', '|') | join('|') }}"
+  register: _sso_set
+  when: _sso_drift | bool
+  failed_when: _sso_set.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
+
+# A write restarts the web service when it needs to, as a web setting does.
+- name: Let the web service restart
+  ansible.builtin.pause:
+    seconds: 3
+  when: _sso_set is changed
+
+- name: Check the write
+  when: _sso_set is changed
+  block:
+    - name: Read the SSO settings back
+      ansible.builtin.include_tasks: sso_read.yml
+
+    - name: Check the server took the SSO settings
+      ansible.builtin.assert:
+        that: not (_sso_drift | bool)
+        fail_msg: The server answered ok but doesn't hold the role's SSO settings.
