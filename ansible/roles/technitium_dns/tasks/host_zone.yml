@@ -1,0 +1,64 @@
+---
+# One zone this server is the authority for: _host_zone, with A records from
+# _host_zone_records and PTRs from _host_zone_ptrs, last octet to name.
+- name: Find the zone on the server
+  ansible.builtin.set_fact:
+    _existing_zone: "{{ _zones.json.response.zones | selectattr('name', 'eq', _host_zone) | first | default({}) }}"
+    _zone_catalog: "{{ 'cluster-catalog.' ~ technitium_dns_cluster_domain if technitium_dns_cluster_domain else '' }}"
+
+- name: Refuse a same-named zone of another type
+  ansible.builtin.assert:
+    that: _existing_zone.type | default('Primary') == 'Primary'
+    fail_msg: "{{ _host_zone }} exists as {{ _existing_zone.type | default('') }}, not a Primary zone; delete it in the console first."
+
+- name: Create the zone
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/create"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      zone: "{{ _host_zone }}"
+      type: Primary
+  register: _zone_created
+  when: _existing_zone | length == 0
+  failed_when: _zone_created.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
+
+- name: Hold its query access and cluster membership
+  ansible.builtin.include_tasks: zone_options.yml
+  vars:
+    _held_zone: "{{ _host_zone }}"
+    _held_zone_acl: []
+
+- name: Hold its A records
+  ansible.builtin.include_tasks: zone_records.yml
+  vars:
+    _held_zone: "{{ _host_zone }}"
+    _held_zone_records: "{{ _host_zone_records }}"
+
+- name: Hold its PTR records
+  vars:
+    _fqdn: "{{ item.key }}.{{ _host_zone }}"
+    _named: "{{ _zone_records.json.response.records | selectattr('name', 'eq', _fqdn) }}"
+    _held: "{{ _named | selectattr('type', 'eq', 'PTR') | map(attribute='rData.ptrName') | list }}"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/records/add"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      zone: "{{ _host_zone }}"
+      domain: "{{ _fqdn }}"
+      type: PTR
+      ptrName: "{{ item.value }}"
+      overwrite: "true"
+  loop: "{{ _host_zone_ptrs | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: _ptr_added
+  when: _held != [item.value]
+  failed_when: _ptr_added.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true

@@ -1,0 +1,23 @@
+---
+# Holds query logs the role must refuse (the caller's vars), and checks which
+# task stops it.
+- name: Hold the query logs
+  block:
+    - name: Hold the query logs
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: query_logs
+
+    - name: Record that the hold went through
+      ansible.builtin.set_fact:
+        _refused: ""
+  rescue:
+    - name: Record which task failed
+      ansible.builtin.set_fact:
+        _refused: "{{ ansible_failed_task.name }}"
+
+- name: Assert the hold was refused
+  ansible.builtin.assert:
+    that: _refused == _failing_task
+    fail_msg: "expected '{{ _failing_task }}' to fail, got '{{ _refused }}'"
+    success_msg: "{{ _failing_task }} failed as expected"

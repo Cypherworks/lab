@@ -51,6 +51,20 @@ technitium_dns_sso_client_id: ""
 technitium_dns_sso_client_secret: ""  # required with an authority (SOPS)
 technitium_dns_sso_group_map: {}      # remote group: local group
 
+# Query logging, off unless set. The published .sha256 matches this pin.
+technitium_dns_query_logs: false
+technitium_dns_query_logs_app: "Query Logs (Sqlite)"
+technitium_dns_query_logs_version: "9.1.3"
+technitium_dns_query_logs_sha256: "f2e98072de46b87683eabc3a3f44056f0eff95d0de6e6d85e67ebd909744b355"
+technitium_dns_query_logs_url: "https://download.technitium.com/dns/apps/QueryLogsSqliteApp-v{{ technitium_dns_query_logs_version }}.zip"
+technitium_dns_query_logs_max_days: 7        # the app's default
+technitium_dns_query_logs_max_records: 10000  # the app's default
+
+# Hosts to answer for, name: IPv4 address, as a forward zone under the domain
+# and a reverse zone per /24. Off until a domain is set.
+technitium_dns_host_domain: ""
+technitium_dns_hosts: {}
+
 # Conditional Forwarder zones held to code; README has each entry's keys.
 technitium_dns_forwarder_zones: []
 

@@ -1,0 +1,35 @@
+---
+# Hold technitium_dns_hosts as a forward zone under technitium_dns_host_domain
+# and a reverse zone per /24, one PTR per address. They answer only for the
+# names listed, unlike a forwarder zone, so nothing here falls through.
+- name: Read the server's zones
+  ansible.builtin.include_tasks: zones_read.yml
+
+- name: Work out the reverse zones
+  ansible.builtin.set_fact:
+    _host_reverse_zones: >-
+      {%- set zones = {} -%}
+      {%- for name, address in technitium_dns_hosts.items() -%}
+      {%- set o = address.split('.') -%}
+      {%- set zone = o[2] ~ '.' ~ o[1] ~ '.' ~ o[0] ~ '.in-addr.arpa' -%}
+      {%- set _ = zones.setdefault(zone, {}).update({o[3]: name ~ '.' ~ technitium_dns_host_domain}) -%}
+      {%- endfor -%}
+      {{ zones }}
+
+- name: Hold the forward zone
+  ansible.builtin.include_tasks: host_zone.yml
+  vars:
+    _host_zone: "{{ technitium_dns_host_domain }}"
+    _host_zone_records: "{{ technitium_dns_hosts }}"
+    _host_zone_ptrs: {}
+
+- name: Hold the reverse zones
+  ansible.builtin.include_tasks: host_zone.yml
+  vars:
+    _host_zone: "{{ _reverse_zone.key }}"
+    _host_zone_records: {}
+    _host_zone_ptrs: "{{ _reverse_zone.value }}"
+  loop: "{{ _host_reverse_zones | dict2items }}"
+  loop_control:
+    loop_var: _reverse_zone
+    label: "{{ _reverse_zone.key }}"

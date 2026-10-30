@@ -1,0 +1,110 @@
+---
+# Hold the Query Logs (Sqlite) app at the pinned version, uploaded so the
+# target needs no internet, and its retention at the role's. On a cluster the
+# primary's app reaches the secondary, and each node logs its own queries.
+- name: Fetch the pinned app on the control host
+  delegate_to: localhost
+  become: false
+  run_once: true
+  block:
+    - name: Create the release cache directory
+      ansible.builtin.file:
+        path: "{{ technitium_dns_cache_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Download the Query Logs app and check its sha256
+      ansible.builtin.get_url:
+        url: "{{ technitium_dns_query_logs_url }}"
+        dest: "{{ technitium_dns_cache_dir }}/QueryLogsSqliteApp-{{ technitium_dns_query_logs_version }}.zip"
+        checksum: "sha256:{{ technitium_dns_query_logs_sha256 }}"
+        mode: "0600"
+
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: Read the installed apps
+  ansible.builtin.include_tasks: query_logs_read.yml
+
+- name: Upload the app when it differs
+  when: _query_logs_installed != technitium_dns_query_logs_version
+  block:
+    - name: Make a private scratch dir on the server
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .app
+      register: _app_scratch
+
+    - name: Copy the app over
+      ansible.builtin.copy:
+        src: "{{ technitium_dns_cache_dir }}/QueryLogsSqliteApp-{{ technitium_dns_query_logs_version }}.zip"
+        dest: "{{ _app_scratch.path }}/app.zip"
+        mode: "0600"
+
+    - name: Write the API token header where curl can read it
+      ansible.builtin.copy:
+        content: "Authorization: Bearer {{ _login.json.token }}\n"
+        dest: "{{ _app_scratch.path }}/auth"
+        mode: "0600"
+      no_log: true
+
+    # uri base64-encodes multipart files, which Technitium can't read.
+    - name: Upload the app
+      vars:
+        _action: "{{ 'update' if _query_logs_installed else 'install' }}"
+      ansible.builtin.command:  # noqa command-instead-of-module
+        argv:
+          - curl
+          - -sS
+          - -H
+          - "@{{ _app_scratch.path }}/auth"
+          - -F
+          - "file=@{{ _app_scratch.path }}/app.zip;type=application/zip"
+          - "http://127.0.0.1:{{ technitium_dns_http_port }}/api/apps/{{ _action }}?name={{ technitium_dns_query_logs_app | urlencode }}"
+      register: _query_logs_uploaded
+      failed_when: >-
+        _query_logs_uploaded.rc != 0
+        or (_query_logs_uploaded.stdout | from_json).status | default('') != 'ok'
+      changed_when: true
+
+    - name: Read the installed apps again
+      ansible.builtin.include_tasks: query_logs_read.yml
+
+    - name: Check the installed app
+      ansible.builtin.assert:
+        that: _query_logs_installed == technitium_dns_query_logs_version
+        fail_msg: "The upload left {{ _query_logs_installed }} installed, not {{ technitium_dns_query_logs_version }}."
+  always:
+    - name: Remove the scratch dir on the server
+      ansible.builtin.file:
+        path: "{{ _app_scratch.path }}"
+        state: absent
+      when: _app_scratch.path is defined
+
+- name: Read the app's config
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/apps/config/get?name={{ technitium_dns_query_logs_app | urlencode }}"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _query_logs_config
+  failed_when: _query_logs_config.json.status | default('') != 'ok'
+  no_log: true
+
+- name: Hold the app's retention to the role's
+  vars:
+    _held: "{{ _query_logs_config.json.response.config | from_json }}"
+    _wanted: >-
+      {{ _held | combine({'enableLogging': true,
+                          'maxLogDays': technitium_dns_query_logs_max_days | int,
+                          'maxLogRecords': technitium_dns_query_logs_max_records | int}) }}
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/apps/config/set?name={{ technitium_dns_query_logs_app | urlencode }}"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      config: "{{ _wanted | to_json }}"
+  register: _query_logs_config_set
+  when: _wanted != _held
+  failed_when: _query_logs_config_set.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
