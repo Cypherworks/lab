@@ -21,6 +21,18 @@
     - technitium_dns_sso_authority | length > 0
     - technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'
 
+- name: Hold the query logs
+  ansible.builtin.include_tasks: query_logs.yml
+  when:
+    - technitium_dns_query_logs | bool
+    - technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'
+
+- name: Hold the host zones
+  ansible.builtin.include_tasks: host_zones.yml
+  when:
+    - technitium_dns_host_domain | length > 0
+    - technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'
+
 - name: Hold the forwarder zones
   ansible.builtin.include_tasks: forwarder_zones.yml
   when:

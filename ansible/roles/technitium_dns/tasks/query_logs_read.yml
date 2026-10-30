@@ -1,0 +1,15 @@
+---
+# Read which version of the app is installed, into _query_logs_installed.
+- name: List the installed apps
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/apps/list"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _apps
+  failed_when: _apps.json.status | default('') != 'ok'
+  no_log: true
+
+- name: Note the installed version
+  vars:
+    _app: "{{ _apps.json.response.apps | selectattr('name', 'eq', technitium_dns_query_logs_app) }}"
+  ansible.builtin.set_fact:
+    _query_logs_installed: "{{ _app | map(attribute='version') | first | default('') }}"

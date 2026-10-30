@@ -30,72 +30,17 @@
   changed_when: true
   no_log: true
 
-- name: Read the zone's query access
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/options/get?zone={{ _forwarder_zone.zone | urlencode }}"
-    headers: { Authorization: "Bearer {{ _login.json.token }}" }
-  register: _zone_options
-  failed_when: _zone_options.json.status | default('') != 'ok'
-  no_log: true
-
-# A member zone keeps its own query access only with the override set.
-- name: Hold its query access and cluster membership to the role's
+- name: Hold its query access and cluster membership
+  ansible.builtin.include_tasks: zone_options.yml
   vars:
-    _o: "{{ _zone_options.json.response }}"
-    _acl: "{{ _forwarder_zone.query_acl | default([]) }}"
-    _access: "{{ 'UseSpecifiedNetworkACL' if _acl else 'Allow' }}"
-    _drift: >-
-      {{ _o.queryAccess != _access
-         or (_acl and (_o.queryAccessNetworkACL | default([], true) | sort) != (_acl | sort))
-         or (_zone_catalog and (_o.catalog != _zone_catalog or not (_o.overrideCatalogQueryAccess | bool))) }}
-    _acl_body: "{{ {'queryAccessNetworkACL': _acl | join(',')} if _acl else {} }}"
-    _catalog_body: "{{ {'catalog': _zone_catalog, 'overrideCatalogQueryAccess': 'true'} if _zone_catalog else {} }}"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/options/set"
-    method: POST
-    body_format: form-urlencoded
-    headers: { Authorization: "Bearer {{ _login.json.token }}" }
-    body: "{{ {'zone': _forwarder_zone.zone, 'queryAccess': _access} | combine(_acl_body, _catalog_body) }}"
-  register: _options_set
-  when: _drift | bool
-  failed_when: _options_set.json.status | default('') != 'ok'
-  changed_when: true
-  no_log: true
+    _held_zone: "{{ _forwarder_zone.zone }}"
+    _held_zone_acl: "{{ _forwarder_zone.query_acl | default([]) }}"
 
-- name: Read the zone's records
+- name: Hold its local records
+  ansible.builtin.include_tasks: zone_records.yml
   vars:
-    _zone: "{{ _forwarder_zone.zone | urlencode }}"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/records/get?zone={{ _zone }}&domain={{ _zone }}&listZone=true"
-    headers: { Authorization: "Bearer {{ _login.json.token }}" }
-  register: _zone_records
-  failed_when: _zone_records.json.status | default('') != 'ok'
-  no_log: true
-
-- name: Hold its local records to the role's
-  vars:
-    _fqdn: "{{ item.key }}.{{ _forwarder_zone.zone }}"
-    _named: "{{ _zone_records.json.response.records | selectattr('name', 'eq', _fqdn) }}"
-    _held: "{{ _named | selectattr('type', 'eq', 'A') | map(attribute='rData.ipAddress') | list }}"
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/records/add"
-    method: POST
-    body_format: form-urlencoded
-    headers: { Authorization: "Bearer {{ _login.json.token }}" }
-    body:
-      zone: "{{ _forwarder_zone.zone }}"
-      domain: "{{ _fqdn }}"
-      type: A
-      ipAddress: "{{ item.value }}"
-      overwrite: "true"
-  loop: "{{ _forwarder_zone.records | default({}) | dict2items }}"
-  loop_control:
-    label: "{{ item.key }}"
-  register: _record_added
-  when: _held != [item.value]
-  failed_when: _record_added.json.status | default('') != 'ok'
-  changed_when: true
-  no_log: true
+    _held_zone: "{{ _forwarder_zone.zone }}"
+    _held_zone_records: "{{ _forwarder_zone.records | default({}) }}"
 
 # The apex's too. A passthrough name without a FWD record hits a wildcard.
 - name: Hold its forwarding to the role's

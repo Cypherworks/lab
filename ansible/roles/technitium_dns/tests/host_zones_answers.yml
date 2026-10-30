@@ -1,0 +1,23 @@
+---
+# Each name forward, each address back, across both /24s.
+- name: Ask for each name and address
+  ansible.builtin.command: "{{ _dig }} {{ item.query }}"
+  register: _asked
+  changed_when: false
+  loop:
+    - { query: alpha.lab.labcheck A, answer: 10.99.1.11 }
+    - { query: gamma.lab.labcheck A, answer: 10.99.2.21 }
+    - { query: -x 10.99.1.11, answer: alpha.lab.labcheck. }
+    - { query: -x 10.99.1.12, answer: beta.lab.labcheck. }
+    - { query: -x 10.99.2.21, answer: gamma.lab.labcheck. }
+  loop_control:
+    label: "{{ item.query }}"
+
+- name: Assert each answer
+  ansible.builtin.assert:
+    that: item.stdout == item.item.answer
+    fail_msg: "{{ item.item.query }} answered '{{ item.stdout }}'"
+    quiet: true
+  loop: "{{ _asked.results }}"
+  loop_control:
+    label: "{{ item.item.query }}"

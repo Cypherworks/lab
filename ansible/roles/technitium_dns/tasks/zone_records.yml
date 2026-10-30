@@ -1,0 +1,37 @@
+---
+# Read one zone's records, and hold its A records: _held_zone_records, a map
+# of name to address under _held_zone. Other names stay the console's.
+- name: Read the zone's records
+  vars:
+    _zone: "{{ _held_zone | urlencode }}"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/records/get?zone={{ _zone }}&domain={{ _zone }}&listZone=true"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _zone_records
+  failed_when: _zone_records.json.status | default('') != 'ok'
+  no_log: true
+
+- name: Hold its local records to the role's
+  vars:
+    _fqdn: "{{ item.key }}.{{ _held_zone }}"
+    _named: "{{ _zone_records.json.response.records | selectattr('name', 'eq', _fqdn) }}"
+    _held: "{{ _named | selectattr('type', 'eq', 'A') | map(attribute='rData.ipAddress') | list }}"
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/records/add"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      zone: "{{ _held_zone }}"
+      domain: "{{ _fqdn }}"
+      type: A
+      ipAddress: "{{ item.value }}"
+      overwrite: "true"
+  loop: "{{ _held_zone_records | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: _record_added
+  when: _held != [item.value]
+  failed_when: _record_added.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true

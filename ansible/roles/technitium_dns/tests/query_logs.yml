@@ -1,0 +1,156 @@
+---
+# Exercises the query logs against a throwaway container and the pinned app,
+# which is fetched once into the role's cache. Needs Docker and dig, and
+# internet for that first fetch. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/query_logs.yml
+- name: Verify the query logs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, the role's pinned version.
+    _image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _container: technitium-query-logs-test
+    _dns_port: 15421
+    _api: "http://127.0.0.1:{{ technitium_dns_http_port }}/api"
+    _auth: { Authorization: "Bearer {{ _login.json.token }}" }
+    _app: "name={{ 'Query Logs (Sqlite)' | urlencode }}"
+    technitium_dns_http_port: 15422
+    technitium_dns_query_logs: true
+    technitium_dns_query_logs_max_days: 21
+    technitium_dns_query_logs_max_records: 123456
+  tasks:
+    - name: Draw this run's admin password
+      ansible.builtin.set_fact:
+        technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Hold, change, hold again, and clean up
+      block:
+        - name: Start a throwaway Technitium on loopback
+          ansible.builtin.command: >-
+            docker run -d --name {{ _container }}
+            -p 127.0.0.1:{{ technitium_dns_http_port }}:5380
+            -p 127.0.0.1:{{ _dns_port }}:53/udp {{ _image }}
+          changed_when: true
+
+        - name: Wait for its API to answer, as Docker's proxy accepts before it
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ technitium_dns_http_port }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
+
+        - name: Hold the query logs
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: query_logs
+
+        - name: Send a query to log
+          ansible.builtin.command: dig +time=3 +tries=1 -p {{ _dns_port }} @127.0.0.1 logged.example.com A
+          changed_when: false
+
+        - name: Wait for it to reach the log
+          ansible.builtin.uri:
+            url: "{{ _api }}/logs/query?{{ _app }}&classPath=QueryLogsSqlite.App&entriesPerPage=20"
+            headers: "{{ _auth }}"
+          register: _logged
+          until: >-
+            _logged.json.status == 'ok'
+            and (_logged.json.response.entries | selectattr('qname', 'eq', 'logged.example.com') | list | length) > 0
+          retries: 15
+          delay: 2
+
+        - name: Assert the entry names the client and what it asked
+          vars:
+            _entry: "{{ _logged.json.response.entries | selectattr('qname', 'eq', 'logged.example.com') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _entry.clientIpAddress | length > 0
+              - _entry.qtype == 'A'
+              - _entry.protocol == 'Udp'
+            fail_msg: "{{ _entry | to_json }}"
+
+        - name: Read the app's config
+          ansible.builtin.uri:
+            url: "{{ _api }}/apps/config/get?{{ _app }}"
+            headers: "{{ _auth }}"
+          register: _config
+
+        - name: Assert the role's retention holds and the rest is the app's
+          vars:
+            _c: "{{ _config.json.response.config | from_json }}"
+          ansible.builtin.assert:
+            that:
+              - _c.enableLogging | bool
+              - _c.maxLogDays == 21
+              - _c.maxLogRecords == 123456
+              - _c.sqliteDbPath == 'querylogs.db'
+            fail_msg: "{{ _c | to_json }}"
+
+        - name: Hold them again with nothing to change
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: query_logs
+
+        - name: Assert a rerun changed nothing
+          ansible.builtin.assert:
+            that:
+              - _query_logs_uploaded is skipped
+              - _query_logs_config_set is skipped
+            fail_msg: the role wrote to an app with nothing to change
+
+        - name: Change the retention the way someone might in the console
+          ansible.builtin.uri:
+            url: "{{ _api }}/apps/config/set?{{ _app }}"
+            method: POST
+            body_format: form-urlencoded
+            headers: "{{ _auth }}"
+            body:
+              config: "{{ (_config.json.response.config | from_json) | combine({'maxLogDays': 1}) | to_json }}"
+          register: _console
+          failed_when: _console.json.status != 'ok'
+
+        - name: Hold them after the change
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: query_logs
+
+        - name: Read the config again
+          ansible.builtin.uri:
+            url: "{{ _api }}/apps/config/get?{{ _app }}"
+            headers: "{{ _auth }}"
+          register: _restored
+
+        - name: Assert the change was put back
+          ansible.builtin.assert:
+            that: (_restored.json.response.config | from_json).maxLogDays == 21
+            fail_msg: "maxLogDays is {{ (_restored.json.response.config | from_json).maxLogDays }}"
+
+        - name: Hold a version the app doesn't turn out to be
+          ansible.builtin.include_tasks: query_logs_refused.yml
+          vars:
+            technitium_dns_query_logs_version: "9.1.2"
+            technitium_dns_query_logs_url: https://download.technitium.com/dns/apps/QueryLogsSqliteApp-v9.1.3.zip
+            _failing_task: Check the installed app
+
+        - name: Hold a checksum the download doesn't match
+          ansible.builtin.include_tasks: query_logs_refused.yml
+          vars:
+            technitium_dns_query_logs_version: "9.1.3-bad"
+            technitium_dns_query_logs_url: https://download.technitium.com/dns/apps/QueryLogsSqliteApp-v9.1.3.zip
+            technitium_dns_query_logs_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+            _failing_task: Download the Query Logs app and check its sha256
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the container
+          ansible.builtin.command: docker rm -f {{ _container }}
+          changed_when: true
+          failed_when: false

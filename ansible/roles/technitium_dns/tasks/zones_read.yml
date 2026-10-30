@@ -1,0 +1,12 @@
+---
+# Log in and list the server's zones, into _zones.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: List the server's zones
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/zones/list"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _zones
+  failed_when: _zones.json.status | default('') != 'ok'
+  no_log: true

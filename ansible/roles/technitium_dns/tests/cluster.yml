@@ -46,6 +46,13 @@
     technitium_dns_sso_client_secret: test-secret-value
     technitium_dns_sso_group_map:
       dns-admins: Administrators
+    _logs_app: "name={{ 'Query Logs (Sqlite)' | urlencode }}"
+    technitium_dns_query_logs: true
+    technitium_dns_query_logs_max_days: 21
+    # Under the split zone and its wildcard, which mustn't catch these.
+    technitium_dns_host_domain: "lab.{{ _split }}"
+    technitium_dns_hosts:
+      alpha: 10.99.1.11
     technitium_dns_forwarder_zones:
       - zone: "{{ _split }}"
         forwarder: this-server
@@ -178,6 +185,22 @@
           delay: 2
           changed_when: false
 
+        - name: Wait for a host name on the secondary
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} alpha.lab.{{ _split }} A"
+          register: _host_synced
+          until: _host_synced.stdout == '10.99.1.11'
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Wait for its PTR on the secondary
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} -x 10.99.1.11"
+          register: _ptr_synced
+          until: _ptr_synced.stdout == 'alpha.lab.' ~ _split ~ '.'
+          retries: 30
+          delay: 2
+          changed_when: false
+
         - name: Log in to the secondary
           ansible.builtin.include_role:
             name: technitium_dns
@@ -189,6 +212,32 @@
             url: "http://127.0.0.1:{{ _node2_port }}/api/admin/sso/get"
             headers: { Authorization: "Bearer {{ _login.json.token }}" }
           register: _secondary_sso
+
+        - name: Read the secondary's query logs config
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/apps/config/get?{{ _logs_app }}"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _secondary_logs
+          until: >-
+            _secondary_logs.json.status == 'ok'
+            and (_secondary_logs.json.response.config | default('{}', true) | from_json).maxLogDays | default(0) == 21
+          retries: 30
+          delay: 2
+
+        - name: Send the secondary a query to log
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} logged-there.{{ _split }} A"
+          changed_when: false
+
+        - name: Wait for it in the secondary's own log
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/logs/query?{{ _logs_app }}&classPath=QueryLogsSqlite.App&entriesPerPage=20"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _secondary_entries
+          until: >-
+            _secondary_entries.json.status == 'ok'
+            and ('logged-there.' ~ _split) in (_secondary_entries.json.response.entries | map(attribute='qname'))
+          retries: 15
+          delay: 2
 
         - name: Assert SSO reached the secondary
           ansible.builtin.assert:
