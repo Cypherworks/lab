@@ -22,9 +22,9 @@
         - name: a cert inside the window fires, and one outside it doesn't
           interval: 1m
           input_series:
-            - series: 'probe_ssl_earliest_cert_expiry{instance="https://soon.test"}'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://soon.example.test"}'
               values: '{{ 10 * _day }}+0x180'
-            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.test"}'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.example.test"}'
               values: '{{ 45 * _day }}+0x180'
           alert_rule_test:
             - eval_time: 2h
@@ -32,16 +32,17 @@
               exp_alerts:
                 - exp_labels:
                     severity: warning
-                    instance: https://soon.test
+                    instance: https://soon.example.test
+                    host: soon
                   exp_annotations:
-                    summary: "TLS cert expiring soon: https://soon.test"
+                    summary: "TLS cert expiring soon: soon"
                     description: "Under {{ monitoring_cert_expiry_warn_days }} days left, so renewal has been failing."
             - eval_time: 2h
               alertname: CertNotProbed
         - name: a target that stops reporting fires
           interval: 1m
           input_series:
-            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.test"}'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.example.test"}'
               values: '{{ 45 * _day }}+0x180'
           alert_rule_test:
             - eval_time: 2h
@@ -59,7 +60,7 @@
 
     - name: Point the role at two targets
       ansible.builtin.set_fact:
-        monitoring_blackbox_targets: ["https://soon.test", "https://fine.test"]
+        monitoring_blackbox_targets: ["https://soon.example.test", "https://fine.example.test"]
 
     - name: Create the working directory
       ansible.builtin.file:
