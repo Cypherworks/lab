@@ -47,6 +47,27 @@ groups:
         annotations:
           summary: "Patroni has no primary"
           description: "No PostgreSQL primary in the cluster — auto-failover may be stuck."
+{% if monitoring_blackbox_targets %}
+
+      - alert: CertExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * {{ monitoring_cert_expiry_warn_days }}
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS cert expiring soon: {{ '{{ $labels.instance }}' }}"
+          description: "Under {{ monitoring_cert_expiry_warn_days }} days left, so renewal has been failing."
+
+      # A failed probe reports no expiry, so the rule above can't fire for it.
+      - alert: CertNotProbed
+        expr: (count(probe_ssl_earliest_cert_expiry) or vector(0)) < {{ monitoring_blackbox_targets | length }}
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS cert probe not reporting"
+          description: "Fewer targets reporting a cert than configured, so an expiry could go unseen."
+{% endif %}
 
       - alert: RedisDown
         expr: redis_up == 0

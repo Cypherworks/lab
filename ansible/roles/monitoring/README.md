@@ -54,6 +54,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_redis_targets` | `[]` | redis endpoints (`:6379`) via redis_exporter. |
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
 | `monitoring_blackbox_targets` | `[]` | Plain list of https URLs for cert-expiry probes; the URL becomes the `instance` label. |
+| `monitoring_cert_expiry_warn_days` | `14` | `CertExpiringSoon` fires under this many days left. `CertNotProbed` fires when fewer targets report a cert than are configured. |
 | `monitoring_blackbox_dns_targets` | `[]` | DNS resolvers to probe, as `{target: "ip:53", instance}`. Scraped as job `dns`; `probe_success` is 1 when one answers. |
 | `monitoring_blackbox_dns_query` | `""` | The name each resolver is asked. Choose one it answers itself, so the check survives an upstream outage. |
 | `monitoring_snmp_targets` | `[]` | SNMPv3 targets (the Synology NAS): `{target: "ip:161", instance}`. |

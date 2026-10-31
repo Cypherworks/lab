@@ -1,0 +1,108 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up probe
+# data: a cert close to expiry, one with plenty of time, and a target whose
+# probe has stopped reporting. Needs Docker, and internet to pull the image
+# once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/cert_expiry.yml
+- name: Verify the cert expiry alerts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.cert_expiry"
+    _image: prom/prometheus:v2.53.4
+    _day: 86400
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 1m
+      tests:
+        - name: a cert inside the window fires, and one outside it doesn't
+          interval: 1m
+          input_series:
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://soon.test"}'
+              values: '{{ 10 * _day }}+0x180'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.test"}'
+              values: '{{ 45 * _day }}+0x180'
+          alert_rule_test:
+            - eval_time: 2h
+              alertname: CertExpiringSoon
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                    instance: https://soon.test
+                  exp_annotations:
+                    summary: "TLS cert expiring soon: https://soon.test"
+                    description: "Under {{ monitoring_cert_expiry_warn_days }} days left, so renewal has been failing."
+            - eval_time: 2h
+              alertname: CertNotProbed
+        - name: a target that stops reporting fires
+          interval: 1m
+          input_series:
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.test"}'
+              values: '{{ 45 * _day }}+0x180'
+          alert_rule_test:
+            - eval_time: 2h
+              alertname: CertNotProbed
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                  exp_annotations:
+                    summary: "TLS cert probe not reporting"
+                    description: "Fewer targets reporting a cert than configured, so an expiry could go unseen."
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Point the role at two targets
+      ansible.builtin.set_fact:
+        monitoring_blackbox_targets: ["https://soon.test", "https://fine.test"]
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alerts behave
+      ansible.builtin.assert:
+        that:
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"
