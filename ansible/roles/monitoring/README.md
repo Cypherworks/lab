@@ -23,7 +23,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_config_dir` | `{{ monitoring_compose_dir }}/config` | Rendered config root (scrape, rules, Grafana provisioning, etc.). |
 | `monitoring_vmsingle_image` | `victoriametrics/victoria-metrics:v1.102.1` | VictoriaMetrics single-node (storage + scraping). |
 | `monitoring_vmalert_image` | `victoriametrics/vmalert:v1.102.1` | vmalert (rule evaluation). |
-| `monitoring_alertmanager_image` | `prom/alertmanager:v0.27.0` | Alertmanager. |
+| `monitoring_alertmanager_image` | `prom/alertmanager:v0.34.2` | Alertmanager. `webhook_url_file` needs 0.28 or later. |
 | `monitoring_grafana_image` | `grafana/grafana:11.2.0` | Grafana. |
 | `monitoring_ntfy_image` | `binwiederhier/ntfy:v2.26.0` | Self-hosted ntfy. |
 | `monitoring_redis_exporter_image` | `oliver006/redis_exporter:v1.62.0` | Redis exporter. |
@@ -97,6 +97,8 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_ntfy_alert_priority` | `"high"` | Alert notification priority (high = sound/vibrate). |
 | `monitoring_ntfy_alert_tags` | `"warning"` | Alert notification tags. |
 | `monitoring_alertmanager_repeat_interval` | `"24h"` | How often Alertmanager re-notifies a still-firing alert. |
+| `monitoring_discord_critical_webhook_url` / `monitoring_discord_warning_webhook_url` | `""` | Secrets. Discord webhooks by severity, written to files. Text sent there goes through `alert-text.tmpl`, which strips URLs, FQDNs and addresses. Empty leaves Discord out. |
+| `monitoring_healthchecks_ping_url` | `""` | Secret. Set, a `Watchdog` alert pings it about every 2 minutes, so an outside service can notice the lab has gone. |
 | `monitoring_ntfy_user` | `""` | Human username (web UI + phone app), from the deploy. |
 | `monitoring_ntfy_alertmanager_password` | `""` | SOPS — the alertmanager publisher user. |
 | `monitoring_ntfy_user_password` | `""` | SOPS — the human subscriber user. |
