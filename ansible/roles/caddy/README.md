@@ -22,10 +22,11 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `caddy_binary` | `/usr/local/bin/caddy` | Caddy binary used for `validate` and `reload`. |
 | `caddy_routes` | `[]` | Site data. Declarative list of routes (see below). |
 | `caddy_authentik_upstreams` | `[]` | Authentik embedded-outpost upstreams (server on `:9000`) that back a route's `authentik_gated` forward-auth. Empty means gating is unavailable. |
+| `caddy_allowed_sources` | `[]` | Source CIDRs allowed to reach the site. Others get 403, except on routes with `any_source: true`. Covers the fallback response and any new route. Empty leaves every route open. Layer4 proxies aren't covered. |
 | `caddy_l4_proxies` | `[]` | Raw-TCP (layer4) passthrough proxies. Each entry renders a `:port` block proxying to `upstreams` with no TLS termination. |
 | `caddy_trusted_ca_certs` | `{}` | Site data. Map of name to PEM content, installed into the system trust store so routes can verify internal HTTPS upstreams. |
 
-Each `caddy_routes` entry: `name` (matcher id), `host` (FQDN), and either `upstream` (single backend) or `upstreams` (a list, load-balanced). Optional: `lb_policy` (defaults to `round_robin` when more than one upstream), `health_uri` and `health_interval` (default `10s`) for active health checks, `tls_skip_verify` for self-signed backends, `header_up` (a map of headers to set upstream), `header_up_remove` (a list of headers to strip), and `authentik_gated` (front the route with an Authentik login via `caddy_authentik_upstreams`).
+Each `caddy_routes` entry: `name` (matcher id), `host` (FQDN), and either `upstream` (single backend) or `upstreams` (a list, load-balanced). Optional: `lb_policy` (defaults to `round_robin` when more than one upstream), `health_uri` and `health_interval` (default `10s`) for active health checks, `tls_skip_verify` for self-signed backends, `header_up` (a map of headers to set upstream), `header_up_remove` (a list of headers to strip), `authentik_gated` (front the route with an Authentik login via `caddy_authentik_upstreams`), `any_source` (exempt the host from `caddy_allowed_sources`), and `sources` and `paths` (lists that narrow the route to those client CIDRs and request paths). A narrowed route has to come before the host's main route in `caddy_routes`, as the first match wins. That's how one client skips a gate: a narrowed route with no `authentik_gated`.
 
 Each `caddy_l4_proxies` entry: `port`, `upstreams` (a list of `host:port`), `lb_policy` (default `round_robin`), and `health_interval` (default `5s`).
 

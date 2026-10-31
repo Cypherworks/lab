@@ -33,8 +33,35 @@
 	tls {
 		dns route53
 	}
+{% if caddy_allowed_sources %}
+{% set open_hosts = caddy_routes | selectattr('any_source', 'defined') | selectattr('any_source') | map(attribute='host') | unique | list %}
+	{# First handle in the site, so it covers gated routes and the fallback, and
+	   a new route is closed until it opts out. #}
+	@outside_sources {
+		not remote_ip {{ caddy_allowed_sources | join(' ') }}
+{% if open_hosts %}
+		not host {{ open_hosts | join(' ') }}
+{% endif %}
+	}
+	handle @outside_sources {
+		respond 403
+	}
+{% endif %}
 {% for route in caddy_routes %}
+{% if route.sources is defined or route.paths is defined %}
+	{# Narrower than the host alone: list it before the host's main route. #}
+	@{{ route.name }} {
+		host {{ route.host }}
+{% if route.sources is defined %}
+		remote_ip {{ route.sources | join(' ') }}
+{% endif %}
+{% if route.paths is defined %}
+		path {{ route.paths | join(' ') }}
+{% endif %}
+	}
+{% else %}
 	@{{ route.name }} host {{ route.host }}
+{% endif %}
 	handle @{{ route.name }} {
 {% if route.authentik_gated | default(false) %}
 		{# Gate behind an Authentik login via the embedded outpost: pass the outpost

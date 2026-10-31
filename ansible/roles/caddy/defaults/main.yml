@@ -13,6 +13,9 @@ caddy_binary: /usr/local/bin/caddy
 # login via these. Empty = gating unavailable.
 caddy_authentik_upstreams: []
 
+# Source CIDRs allowed in. Others get 403 unless a route sets any_source.
+caddy_allowed_sources: []
+
 # One wildcard cert (Route53 DNS-01) covers every host below. Add/remove a service
 # by editing this list (in group_vars) and re-running — the reload is sub-second.
 # Each entry: name (matcher id), host (FQDN), and either upstream (single backend)
