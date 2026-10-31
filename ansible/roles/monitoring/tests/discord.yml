@@ -1,0 +1,198 @@
+---
+# Runs real Alertmanager on the role's rendered config, with a stub standing in
+# for Discord, healthchecks.io and ntfy. Sends alerts stuffed with URLs, FQDNs
+# and IP addresses, and checks what would leave the lab. Needs Docker, and
+# internet to pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/discord.yml
+- name: Verify the alert routes and what they send
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: monitoring-discord-test
+    _am: monitoring-discord-alertmanager
+    _stub_name: monitoring-discord-stub
+    _dir: "{{ playbook_dir }}/.discord"
+    _stub: |
+      import http.server, json
+      class H(http.server.BaseHTTPRequestHandler):
+          def do_POST(self):
+              size = int(self.headers.get("Content-Length", 0))
+              body = self.rfile.read(size).decode()
+              with open("/tmp/hits", "a") as hits:
+                  hits.write(json.dumps({"path": self.path, "body": body}) + "\n")
+              self.send_response(204)
+              self.end_headers()
+          def log_message(self, *args):
+              pass
+      http.server.ThreadingHTTPServer(("0.0.0.0", 80), H).serve_forever()
+    _alerts:
+      - labels: {alertname: TargetDown, instance: "https://grafana.example.co.uk", severity: critical}
+        annotations:
+          summary: "Target down: blackbox-https / https://grafana.example.co.uk"
+          description: "No metrics from 198.51.100.7:9100 or app-1.lab.example.co.uk."
+      - labels: {alertname: DiskFilling, instance: "pg-1", severity: warning}
+        annotations:
+          summary: "Disk filling on pg-1 (/var)"
+          description: "Over 85% used."
+      - labels: {alertname: Watchdog, severity: none}
+        annotations:
+          summary: "Heartbeat"
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _am }} {{ _stub_name }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Turn the external receivers on
+      ansible.builtin.set_fact:
+        monitoring_discord_critical_webhook_url: http://stub/discord-critical
+        monitoring_discord_warning_webhook_url: http://stub/discord-warning
+        monitoring_healthchecks_ping_url: http://stub/heartbeat
+
+    - name: Create the working directories
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [config, templates, secrets]
+
+    - name: Render the role's config
+      ansible.builtin.template:
+        src: "../templates/{{ item.src }}"
+        dest: "{{ _dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: alertmanager.yml.j2, dest: config/alertmanager.yml }
+        - { src: alert-rules.yml.j2, dest: config/alert-rules.yml }
+        - { src: alert-text.tmpl.j2, dest: templates/alert-text.tmpl }
+
+    - name: Write the secret files as the role does
+      ansible.builtin.copy:
+        content: "{{ item.url }}"
+        dest: "{{ _dir }}/secrets/{{ item.name }}"
+        mode: "0644"
+      loop: "{{ monitoring_alert_secret_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start the stub
+      ansible.builtin.command:
+        argv: [docker, run, -d, --name, "{{ _stub_name }}", --network, "{{ _net }}",
+               --network-alias, stub, --network-alias, ntfy,
+               python:3.13-alpine, python3, -c, "{{ _stub }}"]
+      changed_when: true
+
+    - name: Start Alertmanager
+      ansible.builtin.command: >-
+        docker run -d --name {{ _am }} --network {{ _net }}
+        -v {{ _dir }}/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+        -v {{ _dir }}/templates:/etc/alertmanager/templates:ro
+        -v {{ _dir }}/secrets:/etc/alertmanager/secrets:ro
+        {{ monitoring_alertmanager_image }}
+        --config.file=/etc/alertmanager/alertmanager.yml
+      changed_when: true
+
+    - name: Read which user Alertmanager runs as
+      ansible.builtin.command: docker exec {{ _am }} id -u
+      register: _am_uid
+      until: _am_uid.rc == 0
+      retries: 10
+      delay: 1
+      changed_when: false
+
+    - name: Send the alerts
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - "{{ _net }}"
+          - python:3.13-alpine
+          - python3
+          - -c
+          - |
+            import json, sys, urllib.request as u, time
+            body = json.dumps(json.loads(sys.argv[1])).encode()
+            for _ in range(30):
+                try:
+                    u.urlopen(u.Request("http://{{ _am }}:9093/api/v2/alerts", body, {"Content-Type": "application/json"}), timeout=3)
+                    break
+                except OSError:
+                    time.sleep(1)
+            else:
+                sys.exit(1)
+          - "{{ _alerts | to_json }}"
+      changed_when: true
+
+    - name: Wait for delivery and a repeat heartbeat
+      ansible.builtin.pause:
+        seconds: 135
+
+    - name: Read what left Alertmanager
+      ansible.builtin.command: docker exec {{ _stub_name }} cat /tmp/hits
+      register: _hits
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}/config:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Keep the logs for a failure
+      ansible.builtin.command: docker logs --tail 15 {{ _am }}
+      register: _am_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f {{ _am }} {{ _stub_name }};
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Sort the deliveries by destination
+      ansible.builtin.set_fact:
+        _sent: "{{ _hits.stdout_lines | map('from_json') | list }}"
+
+    - name: Assert each alert went to the right place
+      vars:
+        _critical: "sent: {{ _sent | selectattr('path', 'equalto', '/discord-critical') | map(attribute='body') | join(' ') }}"
+        _warning: "sent: {{ _sent | selectattr('path', 'equalto', '/discord-warning') | map(attribute='body') | join(' ') }}"
+        _heartbeats: "{{ _sent | selectattr('path', 'equalto', '/heartbeat') | list }}"
+        _ntfy: "{{ _sent | selectattr('path', 'search', '^/lab-alerts') | list }}"
+        _discord: "{{ _critical }} {{ _warning }}"
+      ansible.builtin.assert:
+        that:
+          - _vmalert.rc == 0
+          - _am_uid.stdout == monitoring_alertmanager_uid | string
+          - "'Target down: blackbox-https / grafana' in _critical"
+          - "'Disk filling on pg-1' in _warning"
+          - "'Disk filling' not in _critical"
+          - "'example.co.uk' not in _discord"
+          - "'198.51' not in _discord"
+          - "'Heartbeat' not in _discord"
+          - _heartbeats | length >= 2
+          - _ntfy | length >= 2
+        fail_msg: "{{ _hits.stdout }} {{ _am_logs.stderr }} {{ _vmalert.stderr }}"

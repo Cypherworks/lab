@@ -1,15 +1,10 @@
 {# Managed by the monitoring role. Alerts POST to ntfy with the role's custom
    "lab" template (see ntfy-alert.yml) for a glanceable one-line title + summary.
-   Needs ntfy >= v2.14 for server-side templates. #}
-route:
-  receiver: ntfy
-  group_by: [alertname, instance]
-  group_wait: 30s
-  group_interval: 5m
-  repeat_interval: {{ monitoring_alertmanager_repeat_interval }}
-
-receivers:
-  - name: ntfy
+   Needs ntfy >= v2.14 for server-side templates.
+   Discord and healthchecks.io are outside the lab, so their URLs are secrets
+   read from files, and what they're sent goes through alert-text.tmpl. #}
+{% macro receiver(name, webhook_url) %}
+  - name: {{ name }}
     webhook_configs:
       # priority raises it to a sound/vibrate push; tags add an icon. Both are ntfy
       # publish params applied alongside the alertmanager template.
@@ -19,3 +14,39 @@ receivers:
           basic_auth:
             username: alertmanager
             password: "{{ monitoring_ntfy_alertmanager_password }}"
+{% if webhook_url %}
+    discord_configs:
+      - webhook_url_file: /etc/alertmanager/secrets/discord-{{ name }}
+        title: '{% raw %}{{ template "lab.title" . }}{% endraw %}'
+        message: '{% raw %}{{ template "lab.message" . }}{% endraw %}'
+{% endif %}
+{% endmacro %}
+templates:
+  - /etc/alertmanager/templates/*.tmpl
+
+route:
+  receiver: warning
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: {{ monitoring_alertmanager_repeat_interval }}
+  routes:
+{% if monitoring_healthchecks_ping_url %}
+    - matchers: ['alertname="Watchdog"']
+      receiver: heartbeat
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+{% endif %}
+    - matchers: ['severity="critical"']
+      receiver: critical
+
+receivers:
+{{ receiver('critical', monitoring_discord_critical_webhook_url) -}}
+{{ receiver('warning', monitoring_discord_warning_webhook_url) -}}
+{% if monitoring_healthchecks_ping_url %}
+  - name: heartbeat
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/healthchecks-ping
+        send_resolved: false
+{% endif %}

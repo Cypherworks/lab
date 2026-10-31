@@ -50,6 +50,8 @@ services:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
     volumes:
       - {{ monitoring_config_dir }}/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - {{ monitoring_config_dir }}/alertmanager-templates:/etc/alertmanager/templates:ro
+      - {{ monitoring_config_dir }}/alertmanager-secrets:/etc/alertmanager/secrets:ro
       - amdata:/alertmanager
     depends_on:
       - ntfy
