@@ -1,0 +1,161 @@
+---
+# Runs the rendered Caddyfile on real Caddy, with clients at fixed addresses
+# inside and outside the allowed range, a stub backend and a stub Authentik
+# outpost that refuses everyone. Only the DNS-01 TLS line changes, as the stock
+# image has no route53 module. Needs Docker and internet for images. From
+# ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/caddy/tests/source_guard.yml
+- name: Verify the source guard
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: caddy-guard-test
+    _dir: "{{ playbook_dir }}/.source_guard"
+    _caddy_ip: 172.30.97.10
+    _inside: 172.30.97.20
+    _outside: 172.30.97.30
+    caddy_domain: guard.test
+    caddy_acme_email: test@guard.test
+    caddy_l4_proxies: []
+    caddy_allowed_sources: ["{{ _inside }}/32"]
+    caddy_authentik_upstreams: ["http://stub:9000"]
+    caddy_routes:
+      - { name: guarded, host: guarded.guard.test, upstream: "http://stub:8080" }
+      - { name: gated, host: gated.guard.test, upstream: "http://stub:8080", authentik_gated: true }
+      - { name: open, host: open.guard.test, upstream: "http://stub:8080", any_source: true }
+      - { name: gatedopen, host: gatedopen.guard.test, upstream: "http://stub:8080", authentik_gated: true, any_source: true }
+    _stub: |
+      import http.server
+      class H(http.server.BaseHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(401 if "outpost" in self.path else 200)
+              self.end_headers()
+          def log_message(self, *args):
+              pass
+      for port in (8080, 9000):
+          import threading
+          server = http.server.ThreadingHTTPServer(("0.0.0.0", port), H)
+          threading.Thread(target=server.serve_forever).start()
+    # host, expected status from inside, expected status from outside
+    _expected:
+      - { host: guarded.guard.test, inside: "200", outside: "403" }
+      - { host: gated.guard.test, inside: "401", outside: "403" }
+      - { host: open.guard.test, inside: "200", outside: "200" }
+      - { host: gatedopen.guard.test, inside: "401", outside: "401" }
+      - { host: unrouted.guard.test, inside: "200", outside: "403" }
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f caddy-guard-caddy caddy-guard-stub 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's Caddyfile
+      ansible.builtin.template:
+        src: ../templates/Caddyfile.j2
+        dest: "{{ _dir }}/Caddyfile"
+        mode: "0644"
+
+    - name: Swap DNS-01 for an internal issuer
+      ansible.builtin.replace:
+        path: "{{ _dir }}/Caddyfile"
+        regexp: 'dns route53'
+        replace: 'issuer internal'
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.97.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Start the stub backend and outpost
+      ansible.builtin.command:
+        argv: [docker, run, -d, --name, caddy-guard-stub, --network, "{{ _net }}", --network-alias, stub,
+               python:3.13-alpine, python3, -c, "{{ _stub }}"]
+      changed_when: true
+
+    - name: Start Caddy
+      ansible.builtin.command: >-
+        docker run -d --name caddy-guard-caddy --network {{ _net }} --ip {{ _caddy_ip }}
+        -v {{ _dir }}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2
+      changed_when: true
+
+    - name: Wait for the Caddy listener
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip 172.30.97.40 curlimages/curl:8.11.1
+        -sk -o /dev/null -w '%{http_code}' --resolve open.guard.test:443:{{ _caddy_ip }}
+        https://open.guard.test/
+      register: _up
+      until: _up.stdout == "200"
+      retries: 20
+      delay: 2
+      changed_when: false
+      failed_when: false
+
+    - name: Ask from inside the allowed range
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip {{ _inside }} curlimages/curl:8.11.1
+        -sk -o /dev/null -w '%{http_code}' --resolve {{ item.host }}:443:{{ _caddy_ip }}
+        https://{{ item.host }}/
+      loop: "{{ _expected }}"
+      register: _from_inside
+      changed_when: false
+      failed_when: false
+
+    - name: Ask from outside the allowed range
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip {{ _outside }} curlimages/curl:8.11.1
+        -sk -o /dev/null -w '%{http_code}' --resolve {{ item.host }}:443:{{ _caddy_ip }}
+        https://{{ item.host }}/
+      loop: "{{ _expected }}"
+      register: _from_outside
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f caddy-guard-caddy caddy-guard-stub;
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert each host answers each source as expected
+      ansible.builtin.assert:
+        that:
+          - item.0.stdout == item.0.item.inside
+          - item.1.stdout == item.0.item.outside
+        fail_msg: "{{ item.0.item.host }}: inside {{ item.0.stdout }}, outside {{ item.1.stdout }}"
+        quiet: true
+      loop: "{{ _from_inside.results | zip(_from_outside.results) | list }}"
+      loop_control:
+        label: "{{ item.0.item.host }}"
+
+- name: Verify an empty allow list leaves every route open
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    caddy_domain: guard.test
+    caddy_acme_email: test@guard.test
+    caddy_l4_proxies: []
+    caddy_allowed_sources: []
+    caddy_authentik_upstreams: []
+    caddy_routes: []
+    _rendered: "{{ lookup('ansible.builtin.template', '../templates/Caddyfile.j2') }}"
+  tasks:
+    - name: Assert the guard is left out
+      ansible.builtin.assert:
+        that: "'remote_ip' not in _rendered"

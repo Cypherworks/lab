@@ -33,6 +33,20 @@
 	tls {
 		dns route53
 	}
+{% if caddy_allowed_sources %}
+{% set open_hosts = caddy_routes | selectattr('any_source', 'defined') | selectattr('any_source') | map(attribute='host') | list %}
+	{# First handle in the site, so it covers gated routes and the fallback, and
+	   a new route is closed until it opts out. #}
+	@outside_sources {
+		not remote_ip {{ caddy_allowed_sources | join(' ') }}
+{% if open_hosts %}
+		not host {{ open_hosts | join(' ') }}
+{% endif %}
+	}
+	handle @outside_sources {
+		respond 403
+	}
+{% endif %}
 {% for route in caddy_routes %}
 	@{{ route.name }} host {{ route.host }}
 	handle @{{ route.name }} {
