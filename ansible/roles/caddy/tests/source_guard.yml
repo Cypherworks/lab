@@ -24,6 +24,7 @@
     caddy_allowed_sources: ["{{ _inside }}/32"]
     caddy_authentik_upstreams: ["http://stub:9000"]
     caddy_routes:
+      - { name: scoped, host: gatedopen.guard.test, upstream: "http://stub:8080", any_source: true, sources: ["{{ _outside }}/32"], paths: ["/api/*"] }
       - { name: guarded, host: guarded.guard.test, upstream: "http://stub:8080" }
       - { name: gated, host: gated.guard.test, upstream: "http://stub:8080", authentik_gated: true }
       - { name: open, host: open.guard.test, upstream: "http://stub:8080", any_source: true }
@@ -120,6 +121,19 @@
       changed_when: false
       failed_when: false
 
+    - name: Ask a scoped route from its source and path, then off each
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip {{ item.ip }} curlimages/curl:8.11.1
+        -sk -o /dev/null -w '%{http_code}' --resolve gatedopen.guard.test:443:{{ _caddy_ip }}
+        https://gatedopen.guard.test{{ item.path }}
+      loop:
+        - { ip: "{{ _outside }}", path: /api/status, status: "200" }
+        - { ip: "{{ _outside }}", path: /other, status: "401" }
+        - { ip: "{{ _inside }}", path: /api/status, status: "401" }
+      register: _scoped
+      changed_when: false
+      failed_when: false
+
     - name: Remove the containers
       ansible.builtin.shell: >-
         docker rm -f caddy-guard-caddy caddy-guard-stub;
@@ -141,6 +155,15 @@
       loop: "{{ _from_inside.results | zip(_from_outside.results) | list }}"
       loop_control:
         label: "{{ item.0.item.host }}"
+
+    - name: Assert only the named source on the named path skips the gate
+      ansible.builtin.assert:
+        that: item.stdout == item.item.status
+        fail_msg: "{{ item.item.ip }} {{ item.item.path }}: {{ item.stdout }}"
+        quiet: true
+      loop: "{{ _scoped.results }}"
+      loop_control:
+        label: "{{ item.item.ip }} {{ item.item.path }}"
 
 - name: Verify an empty allow list leaves every route open
   hosts: localhost
