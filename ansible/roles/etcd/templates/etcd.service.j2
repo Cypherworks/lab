@@ -12,6 +12,7 @@ Group=etcd
 ExecStart=/usr/local/bin/etcd --config-file {{ etcd_config_file }}
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec={{ etcd_start_timeout }}
 LimitNOFILE=65536
 
 [Install]

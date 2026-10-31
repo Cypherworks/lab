@@ -1,0 +1,148 @@
+---
+# Takes a real three-member cluster, formed by the role with no compaction, on
+# systemd in throwaway containers, and applies compaction as a live cluster
+# gets it. A writer runs throughout, to show quorum holds as members restart
+# one at a time. Then a bad config has to stop the roll at the first member.
+# Needs Docker, the community.docker collection, and internet for the image,
+# apt and the etcd release. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/etcd/tests/compaction.yml
+- name: Verify compaction reaches a running cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: etcd-role-test
+    _members: [etcd-test-1, etcd-test-2, etcd-test-3]
+    _ips: {etcd-test-1: 172.30.98.11, etcd-test-2: 172.30.98.12, etcd-test-3: 172.30.98.13}
+    _endpoints: http://172.30.98.11:2379,http://172.30.98.12:2379,http://172.30.98.13:2379
+    _hosts: "etcd-test-1,etcd-test-2,etcd-test-3,"
+    _converge: >-
+      ansible-playbook -i {{ _hosts }} -c community.docker.docker
+      {{ playbook_dir }}/converge.yml
+    _writer: >-
+      while true; do
+      ETCDCTL_API=3 etcdctl --endpoints={{ _endpoints }} --command-timeout=2s
+      put counter "$(date +%s)" >/dev/null 2>&1 && date +%s >> /tmp/writes;
+      sleep 0.2; done
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _members | join(' ') }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.98.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Boot systemd on Debian 13, as the members run
+      ansible.builtin.command: >-
+        docker run -d --name {{ item }} --hostname {{ item }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} --ip {{ _ips[item] }} debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+        python3 ca-certificates && exec /lib/systemd/systemd'
+      loop: "{{ _members }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ item }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+      loop: "{{ _members }}"
+
+    - name: Form the cluster with no compaction, all members together
+      ansible.builtin.command: "{{ _converge }} -e etcd_auto_compaction_mode="
+      changed_when: true
+
+    - name: Write history to compact, and read the first member's pid
+      ansible.builtin.shell: |
+        for i in 1 2 3 4 5 6 7 8; do
+          docker exec etcd-test-1 sh -c 'ETCDCTL_API=3 etcdctl put counter x >/dev/null'
+        done
+        docker exec etcd-test-1 systemctl show -p MainPID --value etcd
+      register: _pid_before
+      changed_when: true
+
+    - name: Start the writer
+      ansible.builtin.command:
+        argv: [docker, exec, -d, etcd-test-3, sh, -c, "{{ _writer }}"]
+      changed_when: true
+
+    - name: Apply compaction to the running cluster
+      ansible.builtin.command: "{{ _converge }}"
+      changed_when: true
+
+    - name: Find the writes and the longest gap between them
+      ansible.builtin.shell: |
+        docker exec etcd-test-3 cat /tmp/writes |
+          awk 'NR>1 && $1-p>m {m=$1-p} {p=$1; n++} END {print n+0, m+0}'
+      register: _writes
+      changed_when: false
+
+    - name: Wait past the retention, then ask for a compacted revision
+      ansible.builtin.shell: |
+        sleep 25
+        docker exec etcd-test-1 sh -c 'ETCDCTL_API=3 etcdctl get counter --rev=2' 2>&1 || true
+      register: _old_revision
+      changed_when: false
+
+    - name: Read the restart order, the pid and the start timeout
+      ansible.builtin.shell: |
+        for m in {{ _members | join(' ') }}; do
+          docker exec $m systemctl show -p ActiveEnterTimestampMonotonic --value etcd
+        done
+        docker exec etcd-test-1 systemctl show -p MainPID --value etcd
+        docker exec etcd-test-1 systemctl show -p TimeoutStartUSec --value etcd
+      register: _state
+      changed_when: false
+
+    - name: Assert compaction runs, and members rolled in turn with quorum held
+      ansible.builtin.assert:
+        that:
+          - _old_revision.stdout is search('required revision has been compacted')
+          - _state.stdout_lines[3] != _pid_before.stdout_lines[-1]
+          - _state.stdout_lines[4] == '5min'
+          - (_state.stdout_lines[0] | int) < (_state.stdout_lines[1] | int)
+          - (_state.stdout_lines[1] | int) < (_state.stdout_lines[2] | int)
+          - (_writes.stdout.split()[0] | int) > 20
+          - (_writes.stdout.split()[1] | int) <= 6
+        fail_msg: "{{ _old_revision.stdout }} / {{ _state.stdout_lines }} / writes, gap: {{ _writes.stdout }}"
+
+    - name: Read the last member's process
+      ansible.builtin.command: docker exec etcd-test-3 systemctl show -p MainPID --value etcd
+      register: _last_before
+      changed_when: false
+
+    - name: Apply a config etcd can't start with
+      ansible.builtin.command: "{{ _converge }} -e etcd_auto_compaction_mode=bogus"
+      register: _refused
+      changed_when: false
+      failed_when: false
+
+    - name: Read the last member and the surviving quorum
+      ansible.builtin.shell: |
+        docker exec etcd-test-3 systemctl show -p MainPID --value etcd
+        docker exec etcd-test-3 sh -c 'ETCDCTL_API=3 etcdctl put still-here yes'
+      register: _after_refused
+      changed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f {{ _members | join(' ') }};
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Assert a member that can't start stops the roll
+      ansible.builtin.assert:
+        that:
+          - _refused.rc != 0
+          - _after_refused.stdout_lines[0] == _last_before.stdout
+          - _after_refused.stdout_lines[1] == 'OK'
+        fail_msg: "rc {{ _refused.rc }} / {{ _after_refused.stdout_lines }}"

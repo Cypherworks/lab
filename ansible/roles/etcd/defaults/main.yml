@@ -17,6 +17,14 @@ etcd_cluster_token: authentik-etcd
 # Fallback when no peer answers; role auto-selects 'existing' to join.
 etcd_initial_cluster_state: new
 
+# Without this the backend keeps every revision until quota, and slows start.
+etcd_auto_compaction_mode: periodic
+etcd_auto_compaction_retention: "1h"
+# Seconds. A large backend takes minutes to load after a multi-node outage.
+etcd_start_timeout: 300
+# Tries, 5 s apart, for the cluster to be healthy after a member restarts.
+etcd_restart_retries: 60
+
 # Required from inventory (no default): the full member list, e.g.
 #   etcd_members:
 #     - { name: etcd-1, ip: 10.0.30.31 }

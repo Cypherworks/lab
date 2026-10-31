@@ -1,0 +1,12 @@
+---
+# Shared by compaction.yml and the plays it runs: three members on one network.
+etcd_members:
+  - { name: etcd-test-1, ip: 172.30.98.11 }
+  - { name: etcd-test-2, ip: 172.30.98.12 }
+  - { name: etcd-test-3, ip: 172.30.98.13 }
+etcd_cluster_token: etcd-role-test
+# Short, so a test sees compaction run.
+etcd_auto_compaction_retention: "10s"
+etcd_restart_retries: 12
+ansible_become: false
+ansible_python_interpreter: /usr/bin/python3

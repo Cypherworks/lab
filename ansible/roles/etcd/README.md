@@ -25,6 +25,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `etcd_config_file` | `{{ etcd_conf_dir }}/etcd.conf.yml` | Rendered config path. |
 | `etcd_cluster_token` | `authentik-etcd` | `initial-cluster-token` shared by all members. |
 | `etcd_initial_cluster_state` | `new` | `new` on first bring-up; set to `existing` (per host, temporarily) when re-adding a member to a live cluster. |
+| `etcd_auto_compaction_mode` / `etcd_auto_compaction_retention` | `periodic` / `1h` | Backend compaction. An empty mode leaves it out. |
+| `etcd_start_timeout` | `300` | `TimeoutStartSec`, in seconds. |
+| `etcd_restart_retries` | `60` | Tries, 5 s apart, for the cluster to be healthy after a member restarts. |
 | `etcd_bind_ip` | derived from `etcd_members` by matching `inventory_hostname` | This host's bind address for peer and client URLs. |
 
 Required from inventory (no default): `etcd_members` — the full member list, each entry `{ name: <inventory_hostname>, ip: <bind IP> }`.
@@ -41,7 +44,7 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
 4. Creates the config directory (`root:etcd`, 0750) and data directory (`etcd:etcd`, 0700).
 5. For a **fresh** node, probes the other members: if a live cluster answers it registers this node with `etcdctl member add` and starts it as an `existing` member; if none answer it bootstraps a `new` cluster. An already-initialised member skips this (its `initial-cluster*` are inert), so adding a node never bounces the running members.
 6. Renders `etcd.conf.yml` from `etcd_members` (fresh/joining nodes only), building `initial-cluster` from every member. The host binds its `etcd_members` IP, plus `127.0.0.1` for local clients.
-7. Installs the systemd unit and enables/starts etcd, reloading systemd and restarting on config or unit change.
+7. Installs the systemd unit and enables/starts etcd. A running member with a changed config or unit restarts one at a time, and each must leave the whole cluster healthy before the next. A member that can't rejoin ends the run.
 
 ## Example
 

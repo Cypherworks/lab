@@ -1,0 +1,11 @@
+---
+# Runs the role on the three members. compaction.yml calls this as a separate
+# run, so an expected failure can't end the test.
+- name: Converge the etcd members
+  hosts: all
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Run the etcd role
+      ansible.builtin.include_role:
+        name: etcd

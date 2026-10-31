@@ -1,0 +1,32 @@
+---
+# Runs once per member, in turn. A member that can't rejoin ends the run, so
+# the ones after it keep serving and quorum holds.
+- name: Restart this member and wait for the whole cluster
+  when:
+    - inventory_hostname == etcd_restart_member
+    - _etcd_needs_restart
+  any_errors_fatal: true
+  block:
+    - name: Restart etcd
+      become: true
+      ansible.builtin.systemd_service:
+        name: etcd
+        state: restarted
+        daemon_reload: true
+
+    - name: Wait for every member to be healthy
+      become: true
+      ansible.builtin.command:
+        argv:
+          - etcdctl
+          - "--endpoints=http://{{ etcd_bind_ip }}:2379"
+          - endpoint
+          - health
+          - --cluster
+      environment:
+        ETCDCTL_API: "3"
+      register: _etcd_health
+      until: _etcd_health.rc == 0
+      retries: "{{ etcd_restart_retries }}"
+      delay: 5
+      changed_when: false
