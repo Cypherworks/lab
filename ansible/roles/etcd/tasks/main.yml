@@ -115,7 +115,7 @@
     - inventory_hostname not in (_etcd_live_members.stdout | default(''))
   changed_when: true
 
-# Only fresh/joining nodes render (and thus start from) this file — see above.
+# Rendered on every member: etcd ignores initial-cluster-state once it has data.
 - name: Render the etcd config
   become: true
   ansible.builtin.template:
@@ -124,8 +124,7 @@
     owner: root
     group: etcd
     mode: "0640"
-  when: not _etcd_member_dir.stat.exists
-  notify: Restart etcd
+  register: _etcd_config
 
 - name: Install the etcd systemd unit
   become: true
@@ -135,9 +134,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify:
-    - Reload systemd
-    - Restart etcd
+  register: _etcd_unit
 
 - name: Enable and start etcd
   become: true
@@ -146,3 +143,14 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Note whether a running member has changes to pick up
+  ansible.builtin.set_fact:
+    _etcd_needs_restart: "{{ _etcd_member_dir.stat.exists and (_etcd_config.changed or _etcd_unit.changed) }}"
+
+# A fresh cluster has to start together; a running one must keep quorum.
+- name: Restart running members one at a time
+  ansible.builtin.include_tasks: rolling_restart.yml
+  loop: "{{ ansible_play_hosts }}"
+  loop_control:
+    loop_var: etcd_restart_member
