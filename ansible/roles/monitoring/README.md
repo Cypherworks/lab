@@ -124,6 +124,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 |----------|---------|-------------|
 | `monitoring_go2rtc_api_port` | `1984` | go2rtc HTTP port (MSE/HLS/UI). |
 | `monitoring_go2rtc_video_transcode` | `false` | Transcode camera video to H.264, for H.265 cameras or sources with no parameter sets in their SDP, which MSE draws at 4:3. Software transcode, costs CPU on the host. |
+| `monitoring_go2rtc_video_fps` | `0` | Frame rate limit on the transcode; `0` keeps the camera's rate. go2rtc keyframes every 50 frames, so 10 fps delays a feed's first picture by up to about 5 seconds. |
 | `monitoring_go2rtc_front_url` | `""` | SOPS — front camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_garage_carport_url` | `""` | SOPS — garage/carport camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_username` | `""` | Optional go2rtc Basic auth username. Empty leaves auth off. |

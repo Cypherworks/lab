@@ -19,13 +19,15 @@ api:
 streams:
   front:
 {% if monitoring_go2rtc_video_transcode %}
-    - ffmpeg:front_source#video=h264
+    - ffmpeg:front_source#video=h264{% if monitoring_go2rtc_video_fps %}#raw=-r {{ monitoring_go2rtc_video_fps }}{% endif %}
+
   front_source:
 {% endif %}
     - ${GO2RTC_FRONT_URL}
   garage_carport:
 {% if monitoring_go2rtc_video_transcode %}
-    - ffmpeg:garage_carport_source#video=h264
+    - ffmpeg:garage_carport_source#video=h264{% if monitoring_go2rtc_video_fps %}#raw=-r {{ monitoring_go2rtc_video_fps }}{% endif %}
+
   garage_carport_source:
 {% endif %}
     - ${GO2RTC_GARAGE_CARPORT_URL}
