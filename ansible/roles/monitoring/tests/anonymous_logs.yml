@@ -1,0 +1,200 @@
+---
+# Anonymous Viewer exists for the wall kiosk, but Grafana's datasource proxy
+# hands a Viewer any datasource. Boots real Grafana as it was deployed, with
+# VictoriaLogs provisioned, and proves an anonymous query gets through. Then
+# applies the role's template to the same data volume, as an upgrade would:
+# dropping the entry alone leaves the datasource in Grafana's database. Also
+# proves VictoriaLogs' own UI answers, since that's the read path that replaces
+# it. Needs Docker and internet for images and the plugin. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/anonymous_logs.yml
+- name: Verify anonymous Viewer can't reach the logs
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    monitoring_scrape_interval: 15s
+    _net: grafana-anon-test
+    _dir: "{{ playbook_dir }}/.anonymous_logs"
+    _defaults: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../defaults/main.yml') | from_yaml }}"
+    _compose: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../templates/compose.yaml.j2') }}"
+    _dashboards: "{{ query('ansible.builtin.fileglob', playbook_dir ~ '/../templates/dashboards/*') }}"
+    _curl: [docker, run, --rm, --network, "{{ _net }}", curlimages/curl:8.11.1, -s]
+    _query_url: http://grafana:3000/api/datasources/proxy/uid/victorialogs/select/logsql/query
+    _ds_query_body: >-
+      {"queries":[{"refId":"A","datasource":{"uid":"victorialogs"},
+      "expr":"_time:1h | stats count() as n","queryType":"instant"}],
+      "from":"now-1h","to":"now"}
+    _deployed_datasources: |
+      apiVersion: 1
+      datasources:
+        - name: VictoriaMetrics
+          uid: victoriametrics
+          type: prometheus
+          access: proxy
+          url: http://vmsingle:8428
+          isDefault: true
+        - name: VictoriaLogs
+          uid: victorialogs
+          type: victoriametrics-logs-datasource
+          access: proxy
+          url: http://victorialogs:9428
+    _grafana_run: >-
+      docker run -d --name grafana-anon-grafana --network {{ _net }}
+      --network-alias grafana -v grafana-anon-data:/var/lib/grafana
+      -v {{ _dir }}/datasources:/etc/grafana/provisioning/datasources:ro
+      -e GF_AUTH_ANONYMOUS_ENABLED=true -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      -e GF_SECURITY_ADMIN_USER=admin -e GF_SECURITY_ADMIN_PASSWORD=test-only
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f grafana-anon-grafana grafana-anon-logs 2>/dev/null;
+        docker volume rm grafana-anon-data 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}/datasources"
+        state: directory
+        mode: "0755"
+
+    - name: Write the datasources as deployed
+      ansible.builtin.copy:
+        content: "{{ _deployed_datasources }}"
+        dest: "{{ _dir }}/datasources/datasource.yml"
+        mode: "0644"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start VictoriaLogs
+      ansible.builtin.command: >-
+        docker run -d --name grafana-anon-logs --network {{ _net }}
+        --network-alias victorialogs {{ _defaults.monitoring_victorialogs_image }}
+        --httpListenAddr=:9428
+      changed_when: true
+
+    - name: Start Grafana as deployed
+      ansible.builtin.command: >-
+        {{ _grafana_run }} -e GF_INSTALL_PLUGINS=victoriametrics-logs-datasource
+        {{ _defaults.monitoring_grafana_image }}
+      changed_when: true
+
+    - name: Wait for Grafana as deployed
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-o', '/dev/null', '-w', '%{http_code}', 'http://grafana:3000/api/health'] }}"
+      register: _up
+      until: _up.stdout == '200'
+      retries: 40
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Ask for the logs anonymously, as deployed
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-G', '-o', '/dev/null', '-w', '%{http_code}', _query_url, '--data-urlencode', 'query=_time:1h | stats count() as n'] }}"
+      register: _before
+      until: _before.stdout == '200'
+      retries: 10
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Render the role's datasources
+      ansible.builtin.template:
+        src: ../templates/grafana-datasource.yml.j2
+        dest: "{{ _dir }}/datasources/datasource.yml"
+        mode: "0644"
+
+    - name: Replace Grafana, keeping its data
+      ansible.builtin.shell: >-
+        docker rm -f grafana-anon-grafana &&
+        {{ _grafana_run }} {{ _defaults.monitoring_grafana_image }}
+      changed_when: true
+
+    - name: Wait for the upgraded Grafana
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-o', '/dev/null', '-w', '%{http_code}', 'http://grafana:3000/api/health'] }}"
+      register: _up_again
+      until: _up_again.stdout == '200'
+      retries: 40
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Ask for the logs anonymously through the proxy
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-G', '-o', '/dev/null', '-w', '%{http_code}', _query_url, '--data-urlencode', 'query=_time:1h | stats count() as n'] }}"
+      register: _proxy
+      changed_when: false
+      failed_when: false
+
+    - name: Ask for the logs anonymously through the query API
+      ansible.builtin.command:
+        argv: >-
+          {{ _curl + ['-o', '/dev/null', '-w', '%{http_code}', '-H', 'Content-Type: application/json',
+          '-X', 'POST', 'http://grafana:3000/api/ds/query', '-d', _ds_query_body] }}
+      register: _ds_query
+      changed_when: false
+      failed_when: false
+
+    - name: List the datasources as admin
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-u', 'admin:test-only', 'http://grafana:3000/api/datasources'] }}"
+      register: _listed
+      changed_when: false
+      failed_when: false
+
+    - name: Open VictoriaLogs' own UI
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-L', '-o', '/dev/null', '-w', '%{http_code}', 'http://victorialogs:9428/select/vmui/'] }}"
+      register: _ui
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f grafana-anon-grafana grafana-anon-logs;
+        docker volume rm grafana-anon-data;
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert today's anonymous read reproduces
+      ansible.builtin.assert:
+        that: _before.stdout == '200'
+        fail_msg: "As deployed, the anonymous query gave {{ _before.stdout }}."
+
+    - name: Assert anonymous Viewer gets no logs after the change
+      ansible.builtin.assert:
+        that:
+          - _proxy.stdout != '200'
+          - _ds_query.stdout != '200'
+        fail_msg: "proxy {{ _proxy.stdout }}, ds/query {{ _ds_query.stdout }}"
+
+    - name: Assert the datasource and plugin are gone, and metrics stay
+      ansible.builtin.assert:
+        that:
+          - _listed.stdout | from_json | map(attribute='uid') | list == ['victoriametrics']
+          - _compose is not search('GF_INSTALL_PLUGINS')
+        fail_msg: "Datasources: {{ _listed.stdout }}"
+
+    - name: Assert no dashboard needs the logs datasource
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.file', item) is not search('victorialogs')
+        quiet: true
+      loop: "{{ _dashboards }}"
+      loop_control:
+        label: "{{ item | basename }}"
+
+    - name: Assert the replacement read path answers
+      ansible.builtin.assert:
+        that: _ui.stdout == '200'
+        fail_msg: "/select/vmui/ gave {{ _ui.stdout }}."

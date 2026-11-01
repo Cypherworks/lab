@@ -19,7 +19,7 @@ sinks:
       - {{ f.id }}
 {% endfor %}
     endpoints:
-      - "http://{{ vector_victorialogs_endpoint }}/insert/elasticsearch/"
+      - "{{ vector_victorialogs_scheme }}://{{ vector_victorialogs_endpoint }}/insert/elasticsearch/"
     api_version: v8
     compression: gzip
     healthcheck:

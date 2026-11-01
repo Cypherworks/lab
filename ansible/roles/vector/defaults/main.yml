@@ -15,6 +15,8 @@ vector_deb_checksums:
 
 # VictoriaLogs ingestion endpoint (host:port), e.g. 10.200.30.50:9428. Set by the deploy.
 vector_victorialogs_endpoint: ""
+# https for a host that reaches it through a TLS proxy, not on its own port.
+vector_victorialogs_scheme: http
 
 # Fields VictoriaLogs groups streams by — host + the systemd unit give one stream per
 # service per host.

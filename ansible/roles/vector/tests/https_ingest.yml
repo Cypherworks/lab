@@ -1,0 +1,173 @@
+---
+# Ships a journal line with the role's rendered config over HTTPS, through the
+# caddy role's Caddyfile narrowed to the ingest path, into real VictoriaLogs.
+# That's the path for a host on an untrusted VLAN: VictoriaLogs answers queries
+# on its ingest port, so the host gets Caddy, not the port. journalctl is a
+# stub printing one entry. Needs Docker and internet for images. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/vector/tests/https_ingest.yml
+- name: Verify HTTPS ingest
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: vector-https-test
+    _dir: "{{ playbook_dir }}/.https_ingest"
+    _caddy_ip: 172.30.95.10
+    _client_ip: 172.30.95.20
+    _vector_ip: 172.30.95.30
+    _probe: vector-https-probe
+    _logs_image: victoriametrics/victoria-logs:v1.51.0
+    _vector_image: timberio/vector:0.56.0-debian
+    vector_victorialogs_scheme: https
+    vector_victorialogs_endpoint: logs.vector.test:443
+    vector_stream_fields: host,_SYSTEMD_UNIT
+    vector_file_sources: []
+    caddy_domain: vector.test
+    caddy_acme_email: test@vector.test
+    caddy_l4_proxies: []
+    caddy_allowed_sources: [172.30.95.0/24]
+    caddy_routes:
+      - name: logs
+        host: logs.vector.test
+        upstream: "http://victorialogs:9428"
+        sources: [172.30.95.16/28]
+        paths: [/insert/elasticsearch/_bulk]
+    _journalctl: |
+      #!/bin/sh
+      case "$*" in *--version*) echo "systemd 255 (255.4-1ubuntu8)"; exit 0;; esac
+      id='"__CURSOR":"c1","_BOOT_ID":"b1","_HOSTNAME":"probe-host"'
+      entry='"_SYSTEMD_UNIT":"probe.service","MESSAGE":"{{ _probe }}"'
+      echo "{$id,$entry,\"__REALTIME_TIMESTAMP\":\"$(date +%s)000000\"}"
+      exec sleep 600
+  tasks:
+    - name: Assert a host with no override stays on plain HTTP
+      ansible.builtin.assert:
+        that: lookup('ansible.builtin.file', playbook_dir ~ '/../defaults/main.yml') is search('(?m)^vector_victorialogs_scheme. http$')
+
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f vector-https-logs vector-https-caddy vector-https-agent
+        2>/dev/null; docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the Caddyfile
+      ansible.builtin.template:
+        src: ../../caddy/templates/Caddyfile.j2
+        dest: "{{ _dir }}/Caddyfile"
+        mode: "0644"
+
+    - name: Swap DNS-01 for an internal issuer
+      ansible.builtin.replace:
+        path: "{{ _dir }}/Caddyfile"
+        regexp: 'dns route53'
+        replace: 'issuer internal'
+
+    - name: Render the Vector config
+      ansible.builtin.template:
+        src: ../templates/vector.yaml.j2
+        dest: "{{ _dir }}/vector.yaml"
+        mode: "0644"
+
+    - name: Write the journalctl stub
+      ansible.builtin.copy:
+        content: "{{ _journalctl }}"
+        dest: "{{ _dir }}/journalctl"
+        mode: "0755"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.95.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Start VictoriaLogs
+      ansible.builtin.command: >-
+        docker run -d --name vector-https-logs --network {{ _net }}
+        --network-alias victorialogs {{ _logs_image }} --httpListenAddr=:9428
+      changed_when: true
+
+    - name: Start Caddy
+      ansible.builtin.command: >-
+        docker run -d --name vector-https-caddy --network {{ _net }} --ip {{ _caddy_ip }}
+        -v {{ _dir }}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2
+      changed_when: true
+
+    - name: Wait for Caddy's internal CA
+      ansible.builtin.command: docker exec vector-https-caddy cat /data/caddy/pki/authorities/local/root.crt
+      register: _root
+      until: _root.rc == 0
+      retries: 20
+      delay: 2
+      changed_when: false
+
+    - name: Trust that CA in the agent, as a host trusts the public one
+      ansible.builtin.copy:
+        content: "{{ _root.stdout }}\n"
+        dest: "{{ _dir }}/root.crt"
+        mode: "0644"
+
+    - name: Start Vector with the rendered config
+      ansible.builtin.command: >-
+        docker run -d --name vector-https-agent --network {{ _net }} --ip {{ _vector_ip }}
+        --add-host logs.vector.test:{{ _caddy_ip }} -e SSL_CERT_FILE=/root.crt
+        -v {{ _dir }}/root.crt:/root.crt:ro
+        -v {{ _dir }}/journalctl:/usr/local/bin/journalctl:ro
+        -v {{ _dir }}/vector.yaml:/etc/vector/vector.yaml:ro
+        {{ _vector_image }} --config /etc/vector/vector.yaml
+      changed_when: true
+
+    - name: Ask VictoriaLogs for the journal line
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} curlimages/curl:8.11.1 -s
+        http://victorialogs:9428/select/logsql/query --data-urlencode query={{ _probe }}
+      register: _stored
+      until: _probe in _stored.stdout
+      retries: 20
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Ask for the query API from the host's own address, through Caddy
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip {{ _client_ip }} curlimages/curl:8.11.1
+        -sk --resolve logs.vector.test:443:{{ _caddy_ip }}
+        https://logs.vector.test/select/logsql/query --data-urlencode query={{ _probe }}
+      register: _query_through_caddy
+      changed_when: false
+      failed_when: false
+
+    - name: Keep Vector's log for a failure message
+      ansible.builtin.command: docker logs --tail 15 vector-https-agent
+      register: _agent_log
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f vector-https-logs vector-https-caddy vector-https-agent;
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the line arrived with its host and unit
+      ansible.builtin.assert:
+        that:
+          - _probe in _stored.stdout
+          - "'probe-host' in _stored.stdout"
+          - "'probe.service' in _stored.stdout"
+        fail_msg: "{{ _agent_log.stdout }}{{ _agent_log.stderr }}"
+
+    - name: Assert the query API isn't reachable through the ingest route
+      ansible.builtin.assert:
+        that:
+          - _query_through_caddy.stdout == 'lab ingress'

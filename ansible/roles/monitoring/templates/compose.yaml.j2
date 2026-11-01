@@ -127,7 +127,6 @@ services:
     restart: unless-stopped
     env_file: ./.env
     environment:
-      GF_INSTALL_PLUGINS: "victoriametrics-logs-datasource"
       GF_SERVER_ROOT_URL: "{{ monitoring_grafana_root_url }}"
 {% if monitoring_grafana_anonymous_enabled %}
       # Anonymous view-only for the wall kiosk. Grafana is lab-only (no external /
@@ -159,10 +158,9 @@ services:
       - "3000:3000"
     depends_on:
       - vmsingle
-      - victorialogs
 
   # Central log store. Vector agents on every host/container ship journald here via the
-  # Elasticsearch bulk endpoint; Grafana queries it through the VictoriaLogs datasource.
+  # Elasticsearch bulk endpoint; read it in its own UI, not Grafana (anonymous Viewer).
   # Port published so off-box agents on VLAN 20/30 can reach it.
   victorialogs:
     image: {{ monitoring_victorialogs_image }}

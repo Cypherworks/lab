@@ -129,6 +129,35 @@
         that:
           - _unlisted.stdout_lines == ['ii ', 'cron-kept']
 
+    # A host with no use for the rest of base: a station with no lab_ip.
+    - name: Run the removal alone, for one tool
+      ansible.builtin.include_role:
+        name: base
+        tasks_from: absent_packages
+      vars:
+        base_absent_packages: [aide, aide-common]
+        base_absent_units: []
+        base_absent_paths: [/etc/cron.d/aide_cron]
+
+    - name: Read the host after the removal alone
+      ansible.builtin.shell: |
+        for p in aide ipmitool; do
+          echo "$p: $(dpkg-query -W -f='${db:Status-Abbrev}' $p 2>/dev/null)"
+        done
+        grep '^Package:' /etc/apt/preferences.d/base-absent-packages
+        test -e /etc/cron.d/aide_cron && echo cron-kept
+      register: _alone
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the removal alone does what it's told and no more
+      ansible.builtin.assert:
+        that:
+          - "_alone.stdout is search('aide: *(un|pn)? *$', multiline=True)"
+          - "_alone.stdout is search('ipmitool: ii')"
+          - "'Package: aide aide-common' in _alone.stdout_lines"
+          - "'cron-kept' not in _alone.stdout_lines"
+
     - name: Leave an upload in flight, as a connect stuck on a dead address does
       ansible.builtin.shell: |
         set -e

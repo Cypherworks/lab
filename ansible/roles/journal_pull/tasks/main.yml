@@ -1,0 +1,70 @@
+---
+# Export the journal, pull it to the control host as
+# <host>-journal-<UTC time>.json.gz, and keep the newest journal_pull_keep.
+- name: Make a private scratch dir on the host
+  become: true
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .journal
+  register: _journal_scratch
+
+- name: Export and pull the journal
+  block:
+    - name: Export the journal
+      become: true
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        journalctl --output=json --no-pager
+        | gzip > {{ _journal_scratch.path }}/journal.json.gz
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Create the pull directory on the control host
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ journal_pull_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Pull the journal to the control host
+      become: true
+      ansible.builtin.fetch:
+        src: "{{ _journal_scratch.path }}/journal.json.gz"
+        dest: "{{ journal_pull_dir }}/{{ inventory_hostname }}-journal-{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}.json.gz"
+        flat: true
+      register: _journal_pulled
+
+    - name: Make the pulled journal private
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ _journal_pulled.dest }}"
+        mode: "0600"
+  always:
+    - name: Remove the scratch dir on the host
+      become: true
+      ansible.builtin.file:
+        path: "{{ _journal_scratch.path }}"
+        state: absent
+
+- name: List this host's pulls on the control host
+  delegate_to: localhost
+  become: false
+  ansible.builtin.find:
+    paths: "{{ journal_pull_dir }}"
+    patterns: "{{ inventory_hostname }}-journal-*.json.gz"
+  register: _journal_pulls
+
+- name: Remove all but the newest pulls
+  delegate_to: localhost
+  become: false
+  vars:
+    # The UTC timestamps in the names sort oldest first.
+    _oldest_first: "{{ _journal_pulls.files | map(attribute='path') | sort }}"
+    _drop_count: "{{ [_oldest_first | length - journal_pull_keep | int, 0] | max }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ _oldest_first[: _drop_count | int] }}"

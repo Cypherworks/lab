@@ -30,7 +30,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_blackbox_image` | `prom/blackbox-exporter:v0.25.0` | Blackbox exporter (https probes). |
 | `monitoring_snmp_exporter_image` | `prom/snmp-exporter:v0.26.0` | SNMP exporter. |
 | `monitoring_go2rtc_image` | `alexxit/go2rtc:1.9.14` | go2rtc CCTV restream. |
-| `monitoring_victorialogs_image` | `victoriametrics/victoria-logs:v1.51.0` | VictoriaLogs (log storage + query). |
+| `monitoring_victorialogs_image` | `victoriametrics/victoria-logs:v1.51.0` | VictoriaLogs (log storage + query). Not a Grafana datasource: Viewer can query any datasource, and anonymous Viewer can be on. Read it in its own UI at `/select/vmui/`, behind your proxy's login. |
 
 ### Retention and scrape
 
