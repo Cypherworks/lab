@@ -1414,7 +1414,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(node_btrfs_device_errors_total) + (count(smartmon_device_smart_healthy == 0) or vector(0)) + (count(synology_disk_status != 1) or vector(0))",
+          "expr": "sum(node_btrfs_device_errors_total) + (count(smartmon_device_smart_healthy == 0) or vector(0)) + (count(nvme_critical_warning != 0 or nvme_media_errors_total > 0) or vector(0)) + (count(synology_disk_status != 1) or vector(0))",
           "instant": true
         }
       ]

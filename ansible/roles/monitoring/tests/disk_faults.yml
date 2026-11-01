@@ -1,0 +1,76 @@
+---
+# Runs the kiosk's Disk faults query on the role's real VictoriaMetrics, over
+# series shaped like the collectors' files, so a failing drive has to show.
+# Needs Docker, and internet to pull the image once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/disk_faults.yml
+- name: Verify the Disk faults tile
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    monitoring_go2rtc_public_url: https://cctv.example.test
+    monitoring_power_sensors:
+      rack_now: sensor.rack_now
+      rack_day: sensor.rack_day
+      rack_month: sensor.rack_month
+      desk_now: sensor.desk_now
+      desk_day: sensor.desk_day
+      desk_month: sensor.desk_month
+      office_now: sensor.office_now
+      office_day: sensor.office_day
+      office_month: sensor.office_month
+    _vmsingle: monitoring-disk-faults-vmsingle
+    _port: 15408
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, query, and clean up
+      block:
+        - name: Render the kiosk dashboard
+          ansible.builtin.template:
+            src: ../templates/dashboards/lab-kiosk.json.j2
+            dest: "{{ _scratch.path }}/lab-kiosk.json"
+            mode: "0644"
+
+        - name: Start VictoriaMetrics
+          ansible.builtin.command: >-
+            docker run -d --name {{ _vmsingle }} -p 127.0.0.1:{{ _port }}:8428
+            {{ monitoring_vmsingle_image }}
+          changed_when: true
+
+        - name: Wait for VictoriaMetrics
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _port }}/health"
+          register: _health
+          retries: 10
+          delay: 1
+          until: _health.status == 200
+
+        - name: Check each disk fault shows on the tile
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/disk_faults_checks.py"
+              - "{{ _scratch.path }}/lab-kiosk.json"
+              - "http://127.0.0.1:{{ _port }}"
+          changed_when: false
+      always:
+        - name: Remove VictoriaMetrics
+          ansible.builtin.command: docker rm -f {{ _vmsingle }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent
