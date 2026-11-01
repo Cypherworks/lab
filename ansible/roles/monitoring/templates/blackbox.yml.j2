@@ -13,6 +13,24 @@ modules:
       tls_config:
         insecure_skip_verify: true
 {% endif %}
+{% if monitoring_blackbox_icmp_targets %}
+  icmp_ping:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: "ip4"
+{% endif %}
+{% if monitoring_blackbox_node_tls_targets %}
+  tls_cert:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      tls: true
+      preferred_ip_protocol: "ip4"
+      tls_config:
+        server_name: "{{ monitoring_blackbox_node_tls_server_name }}"
+        insecure_skip_verify: true
+{% endif %}
 {% if monitoring_blackbox_dns_targets %}
   dns_lookup:
     prober: dns

@@ -1,0 +1,83 @@
+---
+# Checks the per-node cert probe in the rendered configs. HA nodes behind a VIP
+# each hold their own cert, so the standby's can't be read through the VIP.
+# From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/cert_probe.yml
+- name: Verify the per-node cert probe
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render and check, then clean up
+      block:
+        - name: Render with no node targets
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/off-{{ item }}"
+            mode: "0644"
+          loop: [blackbox.yml, scrape.yml]
+
+        - name: Add node targets
+          ansible.builtin.set_fact:
+            monitoring_blackbox_node_tls_server_name: site.example.test
+            monitoring_blackbox_node_tls_targets:
+              - { target: "192.0.2.1:443", instance: node-1 }
+              - { target: "192.0.2.2:443", instance: node-2 }
+
+        - name: Render with node targets
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/on-{{ item }}"
+            mode: "0644"
+          loop: [blackbox.yml, scrape.yml]
+
+        - name: Assert no probe is configured without node targets
+          vars:
+            _modules: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/off-blackbox.yml') | from_yaml).modules }}"
+            _scrape: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/off-scrape.yml') | from_yaml }}"
+          ansible.builtin.assert:
+            that:
+              - "'tls_cert' not in _modules"
+              - _scrape.scrape_configs | default([], true) | selectattr('job_name', 'eq', 'blackbox-tls') | list | length == 0
+
+        - name: Assert the probe reads a cert that fails verification
+          vars:
+            _module: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/on-blackbox.yml') | from_yaml).modules.tls_cert }}"
+          ansible.builtin.assert:
+            that:
+              - _module.prober == 'tcp'
+              - _module.tcp.tls
+              - _module.tcp.tls_config.server_name == 'site.example.test'
+              - _module.tcp.tls_config.insecure_skip_verify
+            fail_msg: "{{ _module | to_json }}"
+
+        - name: Assert the scrape job names each node
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on-scrape.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'blackbox-tls') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _job.metrics_path == '/probe'
+              - _job.params.module == ['tls_cert']
+              - _job.static_configs[0].targets == ['192.0.2.1:443']
+              - _job.static_configs[0].labels.instance == 'node-1'
+              - _job.static_configs[1].labels.instance == 'node-2'
+            fail_msg: "{{ _job | to_json }}"
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

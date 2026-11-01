@@ -35,6 +35,7 @@
     - { src: grafana-datasource.yml.j2, dest: grafana/provisioning/datasources/datasource.yml }
     - { src: grafana-dashboards.yml.j2, dest: grafana/provisioning/dashboards/dashboards.yml }
     - { src: dashboards/lab-overview.json.j2, dest: grafana/dashboards/lab-overview.json }
+    - { src: dashboards/lab-kiosk.json.j2, dest: grafana/dashboards/lab-kiosk.json }
   notify: Restart monitoring
 
 - name: Remove dropped provisioned dashboards

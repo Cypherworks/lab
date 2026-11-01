@@ -54,6 +54,10 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_redis_targets` | `[]` | redis endpoints (`:6379`) via redis_exporter. |
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
 | `monitoring_blackbox_targets` | `[]` | Plain list of https URLs for cert-expiry probes; the URL becomes the `instance` label. |
+| `monitoring_blackbox_icmp_targets` | `[]` | Addresses pinged once per scrape. Scraped as job `icmp`; a failed probe is one lost packet. |
+| `monitoring_blackbox_node_tls_targets` | `[]` | HA nodes to read a cert from directly, past their VIP: `{target: "ip:443", instance}`. Scraped as job `blackbox-tls`. |
+| `monitoring_blackbox_node_tls_server_name` | `""` | SNI name those nodes are asked for. |
+| `monitoring_blackbox_tls_skip_verify` | `false` | Skip verification on https probes. A cert that fails verification reports no expiry at all, so set this to see an expired cert. |
 | `monitoring_cert_expiry_warn_days` | `14` | `CertExpiringSoon` fires under this many days left. `CertNotProbed` fires when fewer targets report a cert than are configured. |
 | `monitoring_blackbox_dns_targets` | `[]` | DNS resolvers to probe, as `{target: "ip:53", instance}`. Scraped as job `dns`; `probe_success` is 1 when one answers. |
 | `monitoring_blackbox_dns_query` | `""` | The name each resolver is asked. Choose one it answers itself, so the check survives an upstream outage. |
@@ -117,7 +121,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `monitoring_go2rtc_api_port` | `1984` | go2rtc HTTP port (MSE/HLS/UI). |
-| `monitoring_go2rtc_video_transcode` | `false` | Transcode camera video to H.264 (browser MSE needs it for H.265 cameras); software transcode, costs CPU on the host. |
+| `monitoring_go2rtc_video_transcode` | `false` | Transcode camera video to H.264, for H.265 cameras or sources with no parameter sets in their SDP, which MSE draws at 4:3. Software transcode, costs CPU on the host. |
 | `monitoring_go2rtc_front_url` | `""` | SOPS — front camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_garage_carport_url` | `""` | SOPS — garage/carport camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_username` | `""` | Optional go2rtc Basic auth username. Empty leaves auth off. |
@@ -136,7 +140,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 
 ## What it does
 
-Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config, ntfy config, the ntfy-alert template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the dashboard JSON. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`) so Grafana stops serving them. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. It then brings the stack up with `docker_compose_v2`.
+Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config, ntfy config, the ntfy-alert template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the dashboard JSON (`lab-overview`, plus `lab-kiosk` laid out for a 1080p wall screen). It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`) so Grafana stops serving them. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. It then brings the stack up with `docker_compose_v2`.
 
 After the stack is up it runs one API-driven, idempotent provisioning step: ntfy starts deny-all, so the role waits for it, then creates the `alertmanager` (write-only) and human subscriber (read-only) users and sets their topic ACLs. Re-adding an existing user is tolerated.
 

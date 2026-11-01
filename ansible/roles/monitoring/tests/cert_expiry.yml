@@ -1,7 +1,7 @@
 ---
 # Runs the role's rendered alert rules through promtool against made-up probe
-# data: a cert close to expiry, one with plenty of time, and a target whose
-# probe has stopped reporting. Needs Docker, and internet to pull the image
+# data: a cert close to expiry, on a URL and on a node, one with plenty of
+# time, and a target whose probe has stopped reporting. Needs Docker, and internet to pull the image
 # once. From ansible/:
 #
 #   ansible-playbook -i localhost, roles/monitoring/tests/cert_expiry.yml
@@ -26,6 +26,8 @@
               values: '{{ 10 * _day }}+0x180'
             - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.example.test"}'
               values: '{{ 45 * _day }}+0x180'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="node-1"}'
+              values: '{{ 45 * _day }}+0x180'
           alert_rule_test:
             - eval_time: 2h
               alertname: CertExpiringSoon
@@ -39,10 +41,32 @@
                     description: "Under {{ monitoring_cert_expiry_warn_days }} days left, so renewal has been failing."
             - eval_time: 2h
               alertname: CertNotProbed
-        - name: a target that stops reporting fires
+        - name: a node's cert inside the window fires under the node's name
+          interval: 1m
+          input_series:
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://soon.example.test"}'
+              values: '{{ 45 * _day }}+0x180'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.example.test"}'
+              values: '{{ 45 * _day }}+0x180'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="node-1"}'
+              values: '{{ 10 * _day }}+0x180'
+          alert_rule_test:
+            - eval_time: 2h
+              alertname: CertExpiringSoon
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                    instance: node-1
+                    host: node-1
+                  exp_annotations:
+                    summary: "TLS cert expiring soon: node-1"
+                    description: "Under {{ monitoring_cert_expiry_warn_days }} days left, so renewal has been failing."
+        - name: a target that stops reporting fires, counting node targets
           interval: 1m
           input_series:
             - series: 'probe_ssl_earliest_cert_expiry{instance="https://fine.example.test"}'
+              values: '{{ 45 * _day }}+0x180'
+            - series: 'probe_ssl_earliest_cert_expiry{instance="node-1"}'
               values: '{{ 45 * _day }}+0x180'
           alert_rule_test:
             - eval_time: 2h
@@ -58,9 +82,11 @@
       ansible.builtin.include_vars:
         file: ../defaults/main.yml
 
-    - name: Point the role at two targets
+    - name: Point the role at two URLs and a node
       ansible.builtin.set_fact:
         monitoring_blackbox_targets: ["https://soon.example.test", "https://fine.example.test"]
+        monitoring_blackbox_node_tls_targets:
+          - { target: "192.0.2.1:443", instance: node-1 }
 
     - name: Create the working directory
       ansible.builtin.file:

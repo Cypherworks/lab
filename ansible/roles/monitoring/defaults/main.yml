@@ -44,6 +44,13 @@ monitoring_speedtest_targets: []     # speedtest-tracker native /prometheus (:80
 # blackbox_exporter https probes (cert expiry). Plain list of https URLs; the URL
 # becomes the `instance` label (blackbox standard pattern).
 monitoring_blackbox_targets: []      # e.g. ["https://grafana.example.com"]
+# Addresses pinged once per scrape, to count packet loss between scrapes of the
+# 6-hourly speedtest. Plain list; the address becomes the `instance` label.
+monitoring_blackbox_icmp_targets: []
+# Cert expiry on each HA node directly, as {target: "ip:443", instance}. A node
+# behind a VIP holds its own cert, so its server_name decides which it presents.
+monitoring_blackbox_node_tls_targets: []
+monitoring_blackbox_node_tls_server_name: ""
 # ACME renews at about 30 days left, so this means renewal has been failing.
 monitoring_cert_expiry_warn_days: 14
 
@@ -126,7 +133,8 @@ monitoring_snmp_v3_priv_protocol: "AES"
 # the embed plays MSE (pure HTTP/WS, proxies cleanly). WebRTC would need direct
 # UDP/TCP 8555 so it's left for on-LAN use only — not published here.
 monitoring_go2rtc_api_port: 1984
-# Transcode camera video to H.264 (for H.265 cameras — browser MSE needs H.264).
+# Transcode camera video to H.264: for H.265 cameras (browser MSE needs H.264),
+# or sources with no parameter sets in their SDP (MSE would draw them at 4:3).
 # Software transcode via go2rtc's ffmpeg, so it costs CPU on the monitoring host.
 monitoring_go2rtc_video_transcode: false
 monitoring_go2rtc_front_url: ""              # rtsp://...  (SOPS — has an access token)
