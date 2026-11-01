@@ -1,0 +1,243 @@
+---
+# Starts sssd on a host booted like a real Ubuntu one, with the responders
+# named in `services =` and the package's sockets enabled as a fresh install
+# leaves them. That is the failed state the lab's hosts sit in, so the role
+# has to clear it on a running host and keep it clear through a reboot and a
+# package upgrade. Needs Docker, community.docker, and internet for the image
+# and its apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/sssd/tests/responder_sockets.yml
+- name: Boot a host with sssd's sockets enabled
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: sssd-role-test
+    _boot: >-
+      apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+      python3 sudo ca-certificates && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Ubuntu 24.04, as the hosts run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - ubuntu:24.04
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Make a throwaway CA for the role to trust
+      ansible.builtin.shell: >-
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout /dev/null -days 1
+        -subj /CN=sssd-role-test 2>/dev/null
+      register: _ca
+      changed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: sssd_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+        sssd_ldap_ca_cert: "{{ _ca.stdout }}"
+
+- name: Clear the failed sockets, and keep them clear
+  hosts: sssd_target
+  gather_facts: false
+  vars:
+    sssd_ldap_uris: ["ldaps://ldap.example.test:636"]
+    sssd_ldap_base_dn: dc=example,dc=test
+    sssd_ldap_bind_dn: cn=ldap-search,ou=users,dc=example,dc=test
+    ldap_search_password: test-only
+    sssd_enable_pam_auth: true
+    _sockets: [sssd-nss.socket, sssd-pam.socket, sssd-pam-priv.socket]
+    _check: /usr/libexec/sssd/sssd_check_socket_activated_responders
+    _read_sockets: >-
+      for s in {{ _sockets | join(' ') }}; do
+      echo "$s $(systemctl is-enabled $s) $(systemctl is-failed $s)"; done
+  tasks:
+    - name: Run the role
+      ansible.builtin.include_role:
+        name: sssd
+
+    - name: Ask the check about each responder as configured
+      ansible.builtin.command: "{{ _check }} -r {{ item }}"
+      loop: [nss, pam]
+      register: _named
+      changed_when: false
+      failed_when: false
+
+    - name: Take the responders off the services line
+      ansible.builtin.lineinfile:
+        path: /etc/sssd/sssd.conf
+        regexp: "^services ="
+        state: absent
+
+    - name: Ask the check again with the line gone
+      ansible.builtin.command: "{{ _check }} -r {{ item }}"
+      loop: [nss, pam]
+      register: _unnamed
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the services line is what the check refuses
+      ansible.builtin.assert:
+        that:
+          - _named.results | map(attribute='rc') | list == [17, 17]
+          - _unnamed.results | map(attribute='rc') | list == [0, 0]
+
+    - name: Put a host in the state the lab's are in
+      ansible.builtin.shell: |
+        set -e
+        sed -i '/^\[sssd\]/a services = nss, pam' /etc/sssd/sssd.conf
+        systemctl enable {{ _sockets | join(' ') }}
+        systemctl restart sssd
+        sleep 3
+      changed_when: true
+
+    - name: Read the failed state
+      ansible.builtin.shell: "{{ _read_sockets }}"  # noqa command-instead-of-shell
+      register: _before
+      changed_when: false
+
+    - name: Assert the failure reproduces
+      ansible.builtin.assert:
+        that:
+          - _before.stdout is search('sssd-nss.socket enabled failed')
+          - _before.stdout is search('sssd-pam-priv.socket enabled failed')
+
+    - name: Run the role on the running host
+      ansible.builtin.include_role:
+        name: sssd
+
+    - name: Read the sockets and the responders, no reboot yet
+      ansible.builtin.shell: |
+        {{ _read_sockets }}
+        systemctl is-active sssd
+        pgrep -c sssd_nss
+        pgrep -c sssd_pam
+        test -S /var/lib/sss/pipes/nss && echo nss-pipe
+        test -S /var/lib/sss/pipes/pam && echo pam-pipe
+      register: _cleared
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the running host is clear and sssd still answers
+      ansible.builtin.assert:
+        that:
+          - _cleared.stdout is not search('failed')
+          - _cleared.stdout is search('sssd-nss.socket disabled inactive')
+          - _cleared.stdout is search('sssd-pam.socket disabled inactive')
+          - _cleared.stdout is search('sssd-pam-priv.socket disabled inactive')
+          - _cleared.stdout_lines[3] == 'active'
+          - _cleared.stdout is search('nss-pipe')
+          - _cleared.stdout is search('pam-pipe')
+
+    - name: Upgrade the package as unattended-upgrades would
+      ansible.builtin.command: apt-get install -y -qq --reinstall sssd-common  # noqa command-instead-of-module
+      changed_when: true
+
+    - name: Read the sockets after the upgrade
+      ansible.builtin.shell: "{{ _read_sockets }}"  # noqa command-instead-of-shell
+      register: _upgraded
+      changed_when: false
+
+    - name: Assert the upgrade leaves the sockets disabled
+      ansible.builtin.assert:
+        that:
+          - _upgraded.stdout is not search('enabled')
+          - _upgraded.stdout is not search(' failed')
+
+    - name: Enable the PAM sockets again for the identity-only run
+      ansible.builtin.command: systemctl enable sssd-pam.socket sssd-pam-priv.socket  # noqa command-instead-of-module
+      changed_when: true
+
+    - name: Run the role with PAM off
+      ansible.builtin.include_role:
+        name: sssd
+      vars:
+        sssd_enable_pam_auth: false
+
+    - name: Read the sockets with PAM off
+      ansible.builtin.shell: "{{ _read_sockets }}"  # noqa command-instead-of-shell
+      register: _identity
+      changed_when: false
+
+    - name: Assert only the configured responder's socket is disabled
+      ansible.builtin.assert:
+        that:
+          - _identity.stdout is search('sssd-nss.socket disabled')
+          - _identity.stdout is search('sssd-pam.socket enabled')
+          - _identity.stdout is search('sssd-pam-priv.socket enabled')
+
+    - name: Run the role with PAM back on
+      ansible.builtin.include_role:
+        name: sssd
+
+- name: Reboot the target
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: sssd-role-test
+  tasks:
+    - name: Restart the container
+      ansible.builtin.command: docker restart {{ _target }}
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _rebooted
+      until: _rebooted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Read what booted
+      ansible.builtin.shell: |
+        docker exec {{ _target }} systemctl --failed --no-legend --plain
+        echo "sssd: $(docker exec {{ _target }} systemctl is-active sssd)"
+        echo "nss: $(docker exec {{ _target }} pgrep -c sssd_nss)"
+        echo "pam: $(docker exec {{ _target }} pgrep -c sssd_pam)"
+      register: _boot_state
+      changed_when: false
+      failed_when: false
+
+    - name: Clean up
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: true
+
+    - name: Assert a boot runs the responders with no failed socket
+      ansible.builtin.assert:
+        that:
+          - _boot_state.stdout is not search('sssd-')
+          - _boot_state.stdout is search('sssd. active')
+          - _boot_state.stdout is search('nss. 1')
+          - _boot_state.stdout is search('pam. 1')

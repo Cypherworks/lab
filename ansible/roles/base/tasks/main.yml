@@ -13,6 +13,54 @@
     # Any non-zero cache_valid_time makes apt refresh, update_cache or not.
     cache_valid_time: "{{ 3600 if base_apt_update_cache else 0 }}"
 
+# Pinned as well as removed: a later Recommends would bring them straight back.
+- name: Refuse the packages this host must not have
+  become: true
+  ansible.builtin.copy:
+    content: |
+      Package: {{ base_absent_packages | join(' ') }}
+      Pin: version *
+      Pin-Priority: -1
+    dest: /etc/apt/preferences.d/base-absent-packages
+    owner: root
+    group: root
+    mode: "0644"
+  when: base_absent_packages | length > 0
+
+# A purge can leave these running, to fail after the reset below.
+- name: Stop what those packages run
+  become: true
+  ansible.builtin.command:  # noqa command-instead-of-module
+    cmd: "systemctl stop {{ item }}"
+  loop: "{{ base_absent_units }}"
+  register: base_stop_absent
+  changed_when: false
+  failed_when: base_stop_absent.rc != 0 and 'not loaded' not in base_stop_absent.stderr
+
+- name: Remove the packages this host must not have
+  become: true
+  ansible.builtin.apt:
+    name: "{{ base_absent_packages }}"
+    state: absent
+    purge: true
+  when: base_absent_packages | length > 0
+
+- name: Clear the failure those packages left behind
+  become: true
+  ansible.builtin.command: "systemctl reset-failed {{ item }}"
+  loop: "{{ base_absent_units }}"
+  register: base_reset_failed
+  changed_when: false
+  # systemd drops a healthy unit it has no reason to keep loaded.
+  failed_when: base_reset_failed.rc != 0 and 'not loaded' not in base_reset_failed.stderr
+
+- name: Remove what those packages leave behind
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ base_absent_paths }}"
+
 - name: Set timezone
   become: true
   community.general.timezone:
@@ -42,3 +90,22 @@
   # Hosts without a lab static IP (e.g. the cloud-hosted Headscale EC2) keep their
   # platform-assigned networking.
   when: lab_ip is defined
+
+# The installer's netplan keeps wait-online waiting for the NIC's old name.
+- name: Stop cloud-init managing the network
+  become: true
+  ansible.builtin.copy:
+    content: "network: {config: disabled}\n"
+    dest: /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+    owner: root
+    group: root
+    mode: "0644"
+  when: lab_netplan_replaces_cloud_init | bool
+
+- name: Remove cloud-init's netplan
+  become: true
+  ansible.builtin.file:
+    path: /etc/netplan/50-cloud-init.yaml
+    state: absent
+  notify: Check the network again
+  when: lab_netplan_replaces_cloud_init | bool

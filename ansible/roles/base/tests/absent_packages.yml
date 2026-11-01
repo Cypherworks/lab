@@ -1,0 +1,209 @@
+---
+# Builds the lab's failed state with the real packages: node_exporter's
+# collectors pull in ipmitool, which pulls in openipmi, and journal-upload is
+# enabled at an address nothing answers on. The role has to remove them, clear
+# what they left failed, and stop a later install bringing them back. Needs
+# Docker, community.docker, and internet for the image and its apt packages.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/base/tests/absent_packages.yml
+- name: Boot a host with the unwanted packages installed
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: base-absent-test
+    _boot: >-
+      apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+      python3 sudo prometheus-node-exporter systemd-journal-remote aide
+      && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Ubuntu 24.04, as the hosts run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - ubuntu:24.04
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: absent_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Remove the packages and keep them gone
+  hosts: absent_target
+  gather_facts: false
+  vars:
+    timezone: Etc/UTC
+    ansible_user: root
+    base_absent_packages:
+      - ipmitool
+      - openipmi
+      - libopenipmi0t64
+      - libfreeipmi17
+      - freeipmi-common
+      - systemd-journal-remote
+      - aide
+      - aide-common
+    base_absent_units:
+      - openipmi.service
+      - systemd-journal-upload.service
+    base_absent_paths:
+      - /etc/cron.d/aide_cron
+      - /etc/aide
+      - /var/lib/aide
+      - /var/log/aide
+  tasks:
+    - name: Put the host in the state the lab's are in
+      ansible.builtin.shell: |
+        set -e
+        sed -i 's/^#\?URL=.*/URL=198.51.100.100/' /etc/systemd/journal-upload.conf
+        systemctl mask systemd-journal-remote.socket systemd-journal-remote.service
+        systemctl enable systemd-journal-upload
+        echo '0 5 * * * root /usr/bin/aide --check' > /etc/cron.d/aide_cron
+        mkdir -p /etc/aide/aide.conf.d /var/lib/aide /var/log/aide
+        touch /etc/aide/aide.conf.d/99_exclude_incus /var/lib/aide/aide.db /var/log/aide/aideinit.log
+        systemctl restart openipmi || true
+        systemctl restart systemd-journal-upload || true
+        sleep 2
+        systemctl show -p ActiveState --value openipmi
+        dpkg-query -W -f='${Package}\n' ipmitool openipmi
+      register: _before
+      changed_when: true
+
+    - name: Assert the failure reproduces
+      ansible.builtin.assert:
+        that:
+          - _before.stdout_lines[0] == 'failed'
+          - "'ipmitool' in _before.stdout_lines"
+          - "'openipmi' in _before.stdout_lines"
+
+    - name: Run the role with nothing listed
+      ansible.builtin.include_role:
+        name: base
+      vars:
+        base_absent_packages: []
+        base_absent_units: []
+        base_absent_paths: []
+
+    - name: Read the host after a run with nothing listed
+      ansible.builtin.shell: |
+        dpkg-query -W -f='${db:Status-Abbrev}\n' ipmitool
+        test -e /etc/apt/preferences.d/base-absent-packages && echo pinned
+        test -e /etc/cron.d/aide_cron && echo cron-kept
+      register: _unlisted
+      changed_when: false
+      failed_when: false
+
+    - name: Assert an empty list touches nothing
+      ansible.builtin.assert:
+        that:
+          - _unlisted.stdout_lines == ['ii ', 'cron-kept']
+
+    - name: Leave an upload in flight, as a connect stuck on a dead address does
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /etc/systemd/system/systemd-journal-upload.service.d
+        printf '[Service]\nExecStart=\nExecStart=/bin/sh -c "trap \\"\\" TERM; sleep 60; exit 1"\nTimeoutStopSec=3\nRestart=no\n' \
+          > /etc/systemd/system/systemd-journal-upload.service.d/in-flight.conf
+        systemctl daemon-reload
+        systemctl reset-failed systemd-journal-upload
+        systemctl restart systemd-journal-upload
+      changed_when: true
+
+    - name: Run the role
+      ansible.builtin.include_role:
+        name: base
+
+    - name: Outlast the upload the role found in flight
+      ansible.builtin.pause:
+        seconds: 65
+
+    - name: Read the failed units before a second run can clear them
+      ansible.builtin.shell: |
+        echo "failed: $(systemctl --failed --no-legend --plain | grep -E 'openipmi|journal-upload')"
+      register: _in_flight
+      changed_when: false
+
+    - name: Assert one run leaves nothing failed, even with an upload in flight
+      ansible.builtin.assert:
+        that:
+          - "_in_flight.stdout is search('failed: *$', multiline=True)"
+
+    - name: Run the role again
+      ansible.builtin.include_role:
+        name: base
+
+    - name: Install the collectors fresh, Recommends and all
+      ansible.builtin.shell: |
+        set -e
+        apt-get purge -y -qq prometheus-node-exporter-collectors
+        apt-get install -y -qq prometheus-node-exporter-collectors
+      changed_when: true
+
+    - name: Read the host
+      ansible.builtin.shell: |
+        for p in ipmitool openipmi systemd-journal-remote aide aide-common; do
+          echo "$p: $(dpkg-query -W -f='${db:Status-Abbrev}' $p 2>/dev/null)"
+        done
+        for p in /etc/cron.d/aide_cron /etc/aide /var/lib/aide /var/log/aide; do
+          test -e "$p" && echo "left behind: $p"
+        done
+        echo "collectors: $(dpkg-query -W -f='${db:Status-Abbrev}' prometheus-node-exporter-collectors)"
+        echo "nvme: $(dpkg-query -W -f='${db:Status-Abbrev}' nvme-cli)"
+        test -e /etc/systemd/journal-upload.conf && echo upload-conf-present
+        echo "failed: $(systemctl --failed --no-legend --plain | grep -E 'openipmi|journal-upload')"
+      register: _after
+      changed_when: false
+      failed_when: false
+
+    - name: Clean up
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    - name: Assert they're gone, stay gone, and the collectors are untouched
+      ansible.builtin.assert:
+        that:
+          - "_after.stdout is search('ipmitool: *(un|pn)? *$', multiline=True)"
+          - "_after.stdout is search('openipmi: *(un|pn)? *$', multiline=True)"
+          - "_after.stdout is search('systemd-journal-remote: *(un|pn)? *$', multiline=True)"
+          - "_after.stdout is search('aide: *(un|pn)? *$', multiline=True)"
+          - "_after.stdout is search('aide-common: *(un|pn)? *$', multiline=True)"
+          - "_after.stdout is not search('left behind')"
+          - "_after.stdout is search('collectors: ii')"
+          - "_after.stdout is search('nvme: ii')"
+          - _after.stdout is not search('upload-conf-present')
+          - "_after.stdout is search('failed: *$', multiline=True)"

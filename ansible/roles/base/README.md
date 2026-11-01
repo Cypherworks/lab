@@ -21,6 +21,10 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `lab_nameservers` | `[1.1.1.1, 1.0.0.1]` | Resolver addresses written to the netplan config. Override per deployment. |
 | `lab_search` | `"{{ internal_subdomain }}"` | DNS search domain. Depends on inventory `internal_subdomain`. |
 | `lab_vlans` | `[]` | Optional tagged VLAN sub-interfaces. Each entry: `name`, `id`, `addresses`, and optional `link` (defaults to `lab_interface`). No gateway is assigned. |
+| `base_absent_packages` | `[]` | Packages this host must not have. Purged, and pinned out so a later `Recommends` can't bring them back. |
+| `base_absent_units` | `[]` | Units those packages leave failed, cleared with `systemctl reset-failed` because systemd keeps a failed unit after its package goes. |
+| `base_absent_paths` | `[]` | Files and directories those packages leave behind, such as a cron file another role wrote. Removed recursively, so list only what is safe to lose. |
+| `lab_netplan_replaces_cloud_init` | `false` | `true` disables cloud-init's network config and removes `/etc/netplan/50-cloud-init.yaml`. Set it on a host using `lab_interface_match`: the installer's netplan still names the NIC by its old name, and netplan then has wait-online wait for a link that no longer exists. |
 | `lab_netplan_apply` | `true` | `false` writes the netplan file without running `netplan apply`, so it takes effect at the next boot. For a host whose static address is on a network it isn't connected to yet (a VM moved between port groups). |
 | `ops_ssh_authorized_keys` | `[]` | SSH public keys authorised for the ansible user. Config, not secret; supplied by inventory. |
 
@@ -43,9 +47,10 @@ None.
 
 1. Sets the system hostname to `inventory_hostname`.
 2. Installs `base_packages` via apt (cache refreshed when `base_apt_update_cache`, `cache_valid_time: 3600`).
-3. Sets the timezone to `timezone`.
-4. Authorises each key in `ops_ssh_authorized_keys` for `ansible_user`.
-5. When `lab_ip` is defined, templates `lab-netplan.yaml.j2` to `/etc/netplan/60-lab.yaml` (root:root, mode `0600`): a static v4 address on `lab_interface` with DHCP disabled, a default route via `lab_gateway`, nameservers and search domain, plus any `lab_vlans` sub-interfaces. Changes to the file notify the `Apply netplan` handler, which runs `netplan apply`.
+3. Pins out and purges `base_absent_packages`, clears the failed state of `base_absent_units`, and removes `base_absent_paths`.
+4. Sets the timezone to `timezone`.
+5. Authorises each key in `ops_ssh_authorized_keys` for `ansible_user`.
+6. When `lab_ip` is defined, templates `lab-netplan.yaml.j2` to `/etc/netplan/60-lab.yaml` (root:root, mode `0600`): a static v4 address on `lab_interface` with DHCP disabled, a default route via `lab_gateway`, nameservers and search domain, plus any `lab_vlans` sub-interfaces. Changes to the file notify the `Apply netplan` handler, which runs `netplan apply`.
 
 NTP/time sync is deliberately not handled here. The CIS hardening layer (CIS 2.3.x) owns the single time daemon (chrony) and would remove anything base configured; NTP servers are set via `ubtu24cis_time_pool`/`servers` in the inventory.
 
