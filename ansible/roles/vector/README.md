@@ -31,6 +31,7 @@ packaged default config can't also load). Logs are grouped into VictoriaLogs str
 | `vector_arch` | derived | `amd64` on x86_64, else `arm64`. |
 | `vector_deb_checksums` | (per-arch) | SHA256 of each `.deb`, verified on download. |
 | `vector_victorialogs_endpoint` | `""` | VictoriaLogs `host:port` (e.g. `10.200.30.50:9428`). |
+| `vector_victorialogs_scheme` | `http` | `https` for a host that reaches VictoriaLogs through a TLS proxy. VictoriaLogs answers queries on its ingest port, so give a host on an untrusted network a proxy route limited to `/insert/elasticsearch/_bulk`, not the port. Set `vector_victorialogs_endpoint` to the proxy's `host:443`. |
 | `vector_stream_fields` | `host,_SYSTEMD_UNIT` | Fields VictoriaLogs groups streams by. |
 | `vector_file_sources` | `[]` | Extra file sources: `{ id, path }` (glob). |
 

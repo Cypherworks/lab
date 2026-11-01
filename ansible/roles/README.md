@@ -35,6 +35,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | `monitoring` | VictoriaMetrics, vmalert, Alertmanager, ntfy, Grafana, VictoriaLogs, and exporters. |
 | `node_exporter` | Prometheus node_exporter on bare-metal hosts. |
 | `vector` | Per-host log shipping of the systemd journal to VictoriaLogs. |
+| `journal_pull` | Copies a host's journal to the control host, for a host that can't ship its own. |
 | `unifi_controller` | Self-hosted UniFi Network controller and MongoDB. |
 | `vaultwarden` | Vaultwarden password manager. |
 | `speedtest` | Speedtest Tracker with a Prometheus endpoint. |

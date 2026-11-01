@@ -23,7 +23,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `lab_vlans` | `[]` | Optional tagged VLAN sub-interfaces. Each entry: `name`, `id`, `addresses`, and optional `link` (defaults to `lab_interface`). No gateway is assigned. |
 | `base_absent_packages` | `[]` | Packages this host must not have. Purged, and pinned out so a later `Recommends` can't bring them back. |
 | `base_absent_units` | `[]` | Units those packages leave failed, cleared with `systemctl reset-failed` because systemd keeps a failed unit after its package goes. |
-| `base_absent_paths` | `[]` | Files and directories those packages leave behind, such as a cron file another role wrote. Removed recursively, so list only what is safe to lose. |
+| `base_absent_paths` | `[]` | Files and directories those packages leave behind, such as a cron file another role wrote. Removed recursively, so list only what is safe to lose. A play with no use for the rest of the role can run these three with `tasks_from: absent_packages`. |
 | `lab_netplan_replaces_cloud_init` | `false` | `true` disables cloud-init's network config and removes `/etc/netplan/50-cloud-init.yaml`. Set it on a host using `lab_interface_match`: the installer's netplan still names the NIC by its old name, and netplan then has wait-online wait for a link that no longer exists. |
 | `lab_netplan_apply` | `true` | `false` writes the netplan file without running `netplan apply`, so it takes effect at the next boot. For a host whose static address is on a network it isn't connected to yet (a VM moved between port groups). |
 | `ops_ssh_authorized_keys` | `[]` | SSH public keys authorised for the ansible user. Config, not secret; supplied by inventory. |

@@ -1,0 +1,168 @@
+---
+# Pulls a real journal from systemd in a container. The marker has to arrive,
+# old pulls rotate out, the host keeps no scratch file, and a journalctl that
+# fails must fail the run. Needs Docker, community.docker, and internet for the
+# image. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/journal_pull/tests/pull.yml
+- name: Boot a host with a journal
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: journal-pull-test
+    _boot: >-
+      apt-get update -qq && apt-get install -y -qq systemd systemd-sysv python3
+      && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Ubuntu 24.04, as the hosts run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - ubuntu:24.04
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: pull_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Pull the journal
+  hosts: pull_target
+  gather_facts: false
+  vars:
+    ansible_user: root
+    journal_pull_dir: "{{ playbook_dir }}/.pull"
+    journal_pull_keep: 2
+    _marker: journal-pull-marker
+  tasks:
+    - name: Write a marker to the journal
+      ansible.builtin.shell: |
+        set -e
+        echo {{ _marker }} | systemd-cat -t pull-test
+        journalctl --sync --flush
+      changed_when: true
+
+    - name: Pull three times, so one rotates out
+      ansible.builtin.include_role:
+        name: journal_pull
+      loop: [1, 2, 3]
+      loop_control:
+        pause: 1
+
+    - name: List what was pulled
+      delegate_to: localhost
+      ansible.builtin.find:
+        paths: "{{ journal_pull_dir }}"
+        patterns: "{{ inventory_hostname }}-journal-*.json.gz"
+      register: _pulled
+
+    - name: Read the marker back from the newest pull
+      delegate_to: localhost
+      ansible.builtin.shell: >-
+        gzip -dc {{ _pulled.files | map(attribute='path') | sort | last }}
+        | python3 -c 'import json,sys;
+        print(*[json.loads(l).get("MESSAGE") for l in sys.stdin], sep="\n")'
+        | grep -c {{ _marker }}
+      register: _marker_found
+      changed_when: false
+      failed_when: false
+
+    - name: Look for scratch files on the host
+      ansible.builtin.shell: ls -d /tmp/ansible.*.journal 2>/dev/null | wc -l
+      register: _scratch_left
+      changed_when: false
+
+    - name: Make journalctl fail on the host
+      ansible.builtin.shell: |
+        set -e
+        mv /usr/bin/journalctl /usr/bin/journalctl.real
+        printf '#!/bin/sh\necho partial\nexit 1\n' > /usr/bin/journalctl
+        chmod +x /usr/bin/journalctl
+      changed_when: true
+
+    - name: Pull with a broken journalctl
+      block:
+        - name: Run the role
+          ansible.builtin.include_role:
+            name: journal_pull
+        - name: Note that it didn't fail
+          ansible.builtin.set_fact:
+            _broken_pull_failed: false
+      rescue:
+        - name: Note that it failed
+          ansible.builtin.set_fact:
+            _broken_pull_failed: true
+
+    - name: Count the scratch files after the failure
+      ansible.builtin.shell: ls -d /tmp/ansible.*.journal 2>/dev/null | wc -l
+      register: _scratch_after_failure
+      changed_when: false
+
+    - name: Count the pulls after the failure
+      delegate_to: localhost
+      ansible.builtin.find:
+        paths: "{{ journal_pull_dir }}"
+        patterns: "{{ inventory_hostname }}-journal-*.json.gz"
+      register: _pulled_after_failure
+
+    - name: Clean up the container
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    - name: Clean up the pulls
+      delegate_to: localhost
+      ansible.builtin.file:
+        path: "{{ journal_pull_dir }}"
+        state: absent
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+    - name: Assert the journal arrived, private, and old pulls rotated
+      ansible.builtin.assert:
+        that:
+          - _pulled.files | length == 2
+          - _pulled.files | map(attribute='mode') | unique == ['0600']
+          - _marker_found.stdout | int >= 1
+          - _scratch_left.stdout | trim == '0'
+
+    - name: Assert a failed journalctl fails the run and leaves nothing
+      ansible.builtin.assert:
+        that:
+          - _broken_pull_failed
+          - _scratch_after_failure.stdout | trim == '0'
+          - _pulled_after_failure.files | length == 2

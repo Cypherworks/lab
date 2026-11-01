@@ -1,0 +1,6 @@
+---
+# journal_pull — copies a host's journal to the control host, for a host with
+# no log path of its own. Each pull is the whole journal, so the newest holds
+# all the host still has; older ones hold what it has since rotated away.
+journal_pull_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/state/journal_pull"
+journal_pull_keep: 10

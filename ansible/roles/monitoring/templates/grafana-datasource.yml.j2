@@ -1,6 +1,10 @@
-{# Managed by the monitoring role. VictoriaMetrics as a Prometheus-type datasource,
-   VictoriaLogs via its Grafana plugin (installed through GF_INSTALL_PLUGINS). #}
+{# Managed by the monitoring role. VictoriaMetrics as a Prometheus-type datasource.
+   Anonymous Viewer can query any datasource, so VictoriaLogs isn't one. #}
 apiVersion: 1
+{# Dropping an entry leaves it in Grafana's database, still queryable. #}
+deleteDatasources:
+  - name: VictoriaLogs
+    orgId: 1
 datasources:
   - name: VictoriaMetrics
     uid: victoriametrics
@@ -10,8 +14,3 @@ datasources:
     isDefault: true
     jsonData:
       timeInterval: "{{ monitoring_scrape_interval }}"
-  - name: VictoriaLogs
-    uid: victorialogs
-    type: victoriametrics-logs-datasource
-    access: proxy
-    url: http://victorialogs:9428
