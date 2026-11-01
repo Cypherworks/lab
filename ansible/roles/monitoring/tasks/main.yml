@@ -14,6 +14,30 @@
     - "{{ monitoring_config_dir }}/grafana/provisioning/datasources"
     - "{{ monitoring_config_dir }}/grafana/provisioning/dashboards"
     - "{{ monitoring_config_dir }}/grafana/dashboards"
+    - "{{ monitoring_config_dir }}/alertmanager-templates"
+
+- name: Create the Alertmanager secrets directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ monitoring_config_dir }}/alertmanager-secrets"
+    state: directory
+    owner: "{{ monitoring_alertmanager_uid }}"
+    group: root
+    mode: "0500"
+
+- name: Write the URLs of the receivers outside the lab
+  become: true
+  ansible.builtin.copy:
+    content: "{{ item.url }}"
+    dest: "{{ monitoring_config_dir }}/alertmanager-secrets/{{ item.name }}"
+    owner: "{{ monitoring_alertmanager_uid }}"
+    group: root
+    mode: "0400"
+  loop: "{{ monitoring_alert_secret_files }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  notify: Restart monitoring
 
 - name: Render the monitoring config files
   become: true
@@ -27,6 +51,7 @@
     - { src: scrape.yml.j2, dest: scrape.yml }
     - { src: alert-rules.yml.j2, dest: alert-rules.yml }
     - { src: alertmanager.yml.j2, dest: alertmanager.yml }
+    - { src: alert-text.tmpl.j2, dest: alertmanager-templates/alert-text.tmpl }
     - { src: ntfy.yml.j2, dest: ntfy.yml }
     - { src: ntfy-alert.yml.j2, dest: ntfy-alert.yml }
     - { src: blackbox.yml.j2, dest: blackbox.yml }
