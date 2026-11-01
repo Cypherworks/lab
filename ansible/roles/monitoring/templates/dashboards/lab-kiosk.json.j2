@@ -1225,7 +1225,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)",
+          "expr": "count(ALERTS{alertstate=\"firing\",alertname!=\"Watchdog\"}) or vector(0)",
           "instant": true
         }
       ]
@@ -2394,7 +2394,7 @@
           "refId": "A",
           "instant": true,
           "format": "table",
-          "expr": "ALERTS{alertstate=\"firing\"}"
+          "expr": "ALERTS{alertstate=\"firing\",alertname!=\"Watchdog\"}"
         }
       ],
       "transformations": [

@@ -31,6 +31,8 @@ SPEEDTEST_LOSS = "speedtest_tracker_packet_loss_percent"
 HOURLY_LOSS = 'probe_success{job="icmp"}[1h]'
 SPEEDTEST_PING = "speedtest_tracker_ping_ms"
 LIVE_PING = 'probe_icmp_duration_seconds{job="icmp",phase="rtt"}'
+# Always firing by design, so counting it would keep the screen red.
+FIRING = 'ALERTS{alertstate="firing",alertname!="Watchdog"}'
 # Below this a tile's name and value stop being readable from a distance.
 MIN_WIDTH = 2
 MIN_HEIGHT = 2
@@ -121,6 +123,16 @@ def loss_failures(panels):
     return failures
 
 
+def alert_failures(panels):
+    exprs = [
+        target["expr"] for panel in panels
+        for target in panel.get("targets", []) if "ALERTS" in target["expr"]
+    ]
+    if len(exprs) != 2:
+        return [f"expected the tile and the table, found {len(exprs)} alert queries"]
+    return [f"counts the heartbeat: {expr}" for expr in exprs if FIRING not in expr]
+
+
 def is_shared(panel):
     text = json.dumps({k: v for k, v in panel.items() if k in ("targets", "options")})
     return any(marker in text for marker in SHARED_MARKERS)
@@ -159,6 +171,7 @@ def main():
     failures += cctv_failures(kiosk["panels"])
     failures += cert_failures(kiosk["panels"])
     failures += loss_failures(kiosk["panels"])
+    failures += alert_failures(kiosk["panels"])
     failures += shared_panel_failures(kiosk["panels"], overview["panels"])
 
     for failure in failures:
