@@ -68,6 +68,42 @@ scrape_configs:
       - target_label: __address__
         replacement: blackbox:9115
 {% endif %}
+{% if monitoring_blackbox_icmp_targets %}
+  # blackbox_exporter pings each target once per scrape, so a failed probe is
+  # one lost packet. The URL-style relabel: the address becomes `instance`.
+  - job_name: icmp
+    metrics_path: /probe
+    params:
+      module: [icmp_ping]
+    static_configs:
+      - targets: {{ monitoring_blackbox_icmp_targets | to_json }}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+{% endif %}
+{% if monitoring_blackbox_node_tls_targets %}
+  # blackbox_exporter TLS handshake with each HA node, past its VIP. A standby
+  # holds its own cert, which the VIP never shows.
+  - job_name: blackbox-tls
+    metrics_path: /probe
+    params:
+      module: [tls_cert]
+    static_configs:
+{% for t in monitoring_blackbox_node_tls_targets %}
+      - targets: ["{{ t.target }}"]
+        labels:
+          instance: "{{ t.instance }}"
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: blackbox:9115
+{% endif %}
 {% if monitoring_blackbox_dns_targets %}
   # blackbox_exporter DNS probes, one per resolver. Each keeps its own `instance`
   # label; __address__ is rewritten to the exporter.

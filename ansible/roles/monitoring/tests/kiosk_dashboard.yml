@@ -1,0 +1,52 @@
+---
+# Checks the rendered kiosk dashboard: it fills one 1080p screen without
+# scrolling and keeps Lab Overview's CCTV, power and NAS panels unchanged.
+# From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/kiosk_dashboard.yml
+- name: Verify the kiosk dashboard
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    monitoring_go2rtc_public_url: https://cctv.example.test
+    monitoring_power_sensors:
+      rack_now: sensor.rack_now
+      rack_day: sensor.rack_day
+      rack_month: sensor.rack_month
+      desk_now: sensor.desk_now
+      desk_day: sensor.desk_day
+      desk_month: sensor.desk_month
+      office_now: sensor.office_now
+      office_day: sensor.office_day
+      office_month: sensor.office_month
+  tasks:
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render and check, then clean up
+      block:
+        - name: Render both dashboards
+          ansible.builtin.template:
+            src: "../templates/dashboards/{{ item }}.json.j2"
+            dest: "{{ _scratch.path }}/{{ item }}.json"
+            mode: "0644"
+          loop: [lab-kiosk, lab-overview]
+
+        - name: Check the layout and the shared panels
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/kiosk_dashboard_checks.py"
+              - "{{ _scratch.path }}/lab-kiosk.json"
+              - "{{ _scratch.path }}/lab-overview.json"
+          changed_when: false
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

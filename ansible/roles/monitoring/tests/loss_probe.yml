@@ -1,0 +1,105 @@
+---
+# Checks the packet loss probe end to end: a real blackbox_exporter, on the
+# role's rendered config, pings an address that answers and one that doesn't.
+# Needs Docker, and internet to pull the image once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/loss_probe.yml
+- name: Verify the packet loss probe
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _blackbox: monitoring-loss-probe-blackbox
+    _port: 15406
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, probe, and clean up
+      block:
+        - name: Render with no targets
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/off-{{ item }}"
+            mode: "0644"
+          loop: [blackbox.yml, scrape.yml]
+
+        - name: Add targets
+          ansible.builtin.set_fact:
+            monitoring_blackbox_icmp_targets: ["192.0.2.1", "192.0.2.2"]
+
+        - name: Render with targets
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/on-{{ item }}"
+            mode: "0644"
+          loop: [blackbox.yml, scrape.yml]
+
+        - name: Assert nothing is configured without targets
+          vars:
+            _modules: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/off-blackbox.yml') | from_yaml).modules }}"
+            _scrape: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/off-scrape.yml') | from_yaml }}"
+          ansible.builtin.assert:
+            that:
+              - "'icmp_ping' not in _modules"
+              - _scrape.scrape_configs | default([], true) | selectattr('job_name', 'eq', 'icmp') | list | length == 0
+
+        - name: Assert the scrape job names each target
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on-scrape.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'icmp') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _job.metrics_path == '/probe'
+              - _job.params.module == ['icmp_ping']
+              - _job.static_configs[0].targets == ['192.0.2.1', '192.0.2.2']
+            fail_msg: "{{ _job | to_json }}"
+
+        - name: Start the exporter on the role's config
+          ansible.builtin.command: >-
+            docker run -d --name {{ _blackbox }} -p 127.0.0.1:{{ _port }}:9115
+            -v {{ _scratch.path }}/on-blackbox.yml:/etc/blackbox/blackbox.yml:ro
+            {{ monitoring_blackbox_image }} --config.file=/etc/blackbox/blackbox.yml
+          changed_when: true
+
+        - name: Probe an address that answers
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _port }}/probe?module=icmp_ping&target=127.0.0.1"
+            return_content: true
+          register: _answers
+          retries: 10
+          delay: 1
+          until: _answers.status == 200
+
+        - name: Probe an address that doesn't
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _port }}/probe?module=icmp_ping&target=192.0.2.1"
+            return_content: true
+            timeout: 15
+          register: _silent
+
+        - name: Assert a lost ping counts as a failed probe
+          ansible.builtin.assert:
+            that:
+              - "'probe_success 1' in _answers.content"
+              - "'probe_success 0' in _silent.content"
+              - "'probe_icmp_duration_seconds{phase=\"rtt\"}' in _answers.content"
+            fail_msg: "{{ _answers.content }} {{ _silent.content }}"
+      always:
+        - name: Remove the exporter
+          ansible.builtin.command: docker rm -f {{ _blackbox }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

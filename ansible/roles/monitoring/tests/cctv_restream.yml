@@ -1,0 +1,67 @@
+---
+# Checks the rendered go2rtc config: with transcoding on, viewers can only get
+# the re-encoded stream. A camera that already sends H.264 would otherwise be
+# served raw, with no parameter sets in its SDP, and MSE shows it at 4:3.
+# From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/cctv_restream.yml
+- name: Verify the CCTV restream
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render and check, then clean up
+      block:
+        - name: Render the config without transcoding
+          ansible.builtin.template:
+            src: ../templates/go2rtc.yaml.j2
+            dest: "{{ _scratch.path }}/plain.yaml"
+            mode: "0644"
+
+        - name: Turn transcoding on
+          ansible.builtin.set_fact:
+            monitoring_go2rtc_video_transcode: true
+
+        - name: Render the config with transcoding
+          ansible.builtin.template:
+            src: ../templates/go2rtc.yaml.j2
+            dest: "{{ _scratch.path }}/transcoded.yaml"
+            mode: "0644"
+
+        - name: Assert viewers get the camera directly without transcoding
+          vars:
+            _streams: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/plain.yaml') | from_yaml).streams }}"
+          ansible.builtin.assert:
+            that:
+              - _streams | length == 2
+              - _streams.front == ['${GO2RTC_FRONT_URL}']
+              - _streams.garage_carport == ['${GO2RTC_GARAGE_CARPORT_URL}']
+            fail_msg: "{{ _streams | to_json }}"
+
+        - name: Assert viewers only get the re-encoded stream with transcoding
+          vars:
+            _streams: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/transcoded.yaml') | from_yaml).streams }}"
+          ansible.builtin.assert:
+            that:
+              - _streams.front == ['ffmpeg:front_source#video=h264']
+              - _streams.front_source == ['${GO2RTC_FRONT_URL}']
+              - _streams.garage_carport == ['ffmpeg:garage_carport_source#video=h264']
+              - _streams.garage_carport_source == ['${GO2RTC_GARAGE_CARPORT_URL}']
+            fail_msg: "{{ _streams | to_json }}"
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent
