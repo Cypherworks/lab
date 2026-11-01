@@ -40,6 +40,16 @@
             dest: "{{ _scratch.path }}/transcoded.yaml"
             mode: "0644"
 
+        - name: Limit the frame rate
+          ansible.builtin.set_fact:
+            monitoring_go2rtc_video_fps: 10
+
+        - name: Render the config with a frame rate limit
+          ansible.builtin.template:
+            src: ../templates/go2rtc.yaml.j2
+            dest: "{{ _scratch.path }}/limited.yaml"
+            mode: "0644"
+
         - name: Assert viewers get the camera directly without transcoding
           vars:
             _streams: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/plain.yaml') | from_yaml).streams }}"
@@ -59,6 +69,15 @@
               - _streams.front_source == ['${GO2RTC_FRONT_URL}']
               - _streams.garage_carport == ['ffmpeg:garage_carport_source#video=h264']
               - _streams.garage_carport_source == ['${GO2RTC_GARAGE_CARPORT_URL}']
+            fail_msg: "{{ _streams | to_json }}"
+
+        - name: Assert the limit reaches ffmpeg for both cameras
+          vars:
+            _streams: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/limited.yaml') | from_yaml).streams }}"
+          ansible.builtin.assert:
+            that:
+              - _streams.front == ['ffmpeg:front_source#video=h264#raw=-r 10']
+              - _streams.garage_carport == ['ffmpeg:garage_carport_source#video=h264#raw=-r 10']
             fail_msg: "{{ _streams | to_json }}"
       always:
         - name: Remove the scratch dir
