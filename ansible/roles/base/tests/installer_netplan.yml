@@ -1,0 +1,188 @@
+---
+# Runs netplan's real generator on a host whose installer netplan still names
+# the NIC that 60-lab renames. Netplan lists that old name for wait-online, and
+# once the rename lands no such link exists, so every boot stalls for 120s and
+# leaves the unit failed. A dummy link stands in for the NIC under its old
+# name, as the generator sees it early in boot. Needs Docker, community.docker,
+# and internet for the image and its apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/base/tests/installer_netplan.yml
+- name: Boot a host with the installer's netplan in place
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: base-netplan-test
+    _boot: >-
+      apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+      python3 sudo netplan.io iproute2 cloud-init
+      && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Ubuntu 24.04, as the hosts run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - ubuntu:24.04
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: netplan_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Keep the renamed NIC out of the wait list
+  hosts: netplan_target
+  gather_facts: false
+  vars:
+    timezone: Etc/UTC
+    internal_subdomain: example.test
+    ansible_user: root
+    lab_ip: 198.51.100.21
+    lab_gateway: 198.51.100.1
+    lab_interface: lab0
+    lab_interface_match: "en*"
+    lab_netplan_apply: false
+    _drop_in: /run/systemd/system/systemd-networkd-wait-online.service.d/10-netplan.conf
+    _generate: |
+      netplan generate
+      cat {{ _drop_in }}
+  tasks:
+    # With an empty wait list a restart does nothing, so a bridge as 70-incus.
+    - name: Lay down the installer's netplan, the NIC it names, and a bridge
+      ansible.builtin.shell: |
+        printf 'network:\n  version: 2\n  ethernets:\n    enp0s31f6:\n      dhcp4: true\n' \
+          > /etc/netplan/50-cloud-init.yaml
+        printf 'network:\n  version: 2\n  ethernets:\n    brport0: {}\n  bridges:\n    br30:\n      interfaces: [brport0]\n      addresses: [198.51.100.30/24]\n' \
+          > /etc/netplan/70-bridge.yaml
+        chmod 600 /etc/netplan/50-cloud-init.yaml /etc/netplan/70-bridge.yaml
+        ip link add enp0s31f6 type dummy
+        ip link add brport0 type dummy
+        ip link set brport0 up
+      changed_when: true
+
+    - name: Run the role with the file left alone
+      ansible.builtin.include_role:
+        name: base
+
+    - name: Generate as a boot would
+      ansible.builtin.shell: "{{ _generate }}"  # noqa command-instead-of-shell
+      register: _left_alone
+      changed_when: false
+
+    - name: Assert the stale name is what wait-online would wait for
+      ansible.builtin.assert:
+        that:
+          - _left_alone.stdout is search('-i enp0s31f6:degraded')
+
+    - name: Run the role with it owning the network
+      ansible.builtin.include_role:
+        name: base
+      vars:
+        lab_netplan_replaces_cloud_init: true
+
+    - name: Generate as a boot would, and read what the role left
+      ansible.builtin.shell: |
+        {{ _generate }}
+        test -e /etc/netplan/50-cloud-init.yaml && echo installer-netplan-present
+        cat /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+      register: _replaced
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the role swaps the stale name for the real one
+      ansible.builtin.assert:
+        that:
+          - _replaced.stdout is not search('enp0s31f6')
+          - _replaced.stdout is search('-i lab0:degraded')
+          - _replaced.stdout is not search('installer-netplan-present')
+          - _replaced.stdout is search('network. .config. disabled')
+
+    - name: Fail wait-online on the stale name, as a running host has it
+      ansible.builtin.shell: |
+        printf 'network:\n  version: 2\n  ethernets:\n    enp0s31f6:\n      dhcp4: true\n' \
+          > /etc/netplan/50-cloud-init.yaml
+        chmod 600 /etc/netplan/50-cloud-init.yaml
+        mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+        printf '[Service]\nTimeoutStartSec=3\n' \
+          > /etc/systemd/system/systemd-networkd-wait-online.service.d/test.conf
+        netplan generate
+        systemctl daemon-reload
+        systemctl restart systemd-networkd-wait-online || true
+        rm /etc/systemd/system/systemd-networkd-wait-online.service.d/test.conf
+        systemctl is-failed systemd-networkd-wait-online
+      register: _failed_first
+      changed_when: true
+      failed_when: _failed_first.stdout != 'failed'
+
+    - name: Bring up the link the role's netplan names
+      ansible.builtin.shell: |
+        ip link set enp0s31f6 down
+        ip link set enp0s31f6 name lab0
+        ip link set lab0 up
+        networkctl reload
+      changed_when: true
+
+    # A fact, not include_role vars: the handler reads this too.
+    - name: Let the role touch the running network
+      ansible.builtin.set_fact:
+        lab_netplan_apply: true
+
+    - name: Run the role on the running host
+      ansible.builtin.include_role:
+        name: base
+      vars:
+        lab_netplan_replaces_cloud_init: true
+
+    - name: Flush the role's handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: Read wait-online on the running host
+      ansible.builtin.shell: |
+        echo "$(systemctl is-active systemd-networkd-wait-online)"
+        echo "$(systemctl is-failed systemd-networkd-wait-online)"
+      register: _running
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the role clears the failure on a running host
+      ansible.builtin.assert:
+        that:
+          - _running.stdout_lines[0] == 'active'
+          - _running.stdout is not search('failed')
+
+    - name: Clean up
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true

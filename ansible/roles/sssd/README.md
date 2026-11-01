@@ -34,6 +34,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `sssd_ssh_access_group` | `ssh-users` | LDAP group whose members may log in (PAM access filter on `memberOf`). |
 | `sssd_sudo_group` | `ssh-sudoers` | LDAP group granted passwordless (`NOPASSWD`) sudo; empty installs no sudo rule. |
 | `sssd_pam_profiles` | `[sss, mkhomedir]` | PAM profiles enabled via `pam-auth-update` when auth is on. |
+| `sssd_monitor_started_sockets` | `[sssd-nss.socket]`, plus the two PAM sockets when `sssd_enable_pam_auth` | Socket units of the responders named in `services =`. Derived, not usually set. |
 | `sssd_local_exempt_users` | `[root, ansible]` | Accounts SSSD must never resolve from LDAP; kept purely local. |
 
 Required site data with no usable default: `sssd_ldap_uris`, `sssd_ldap_base_dn`, `sssd_ldap_bind_dn`, `sssd_ldap_ca_cert`. `ldap_search_password` is a secret and must come from SOPS.
@@ -51,14 +52,15 @@ Identity path (always):
 3. Templates `sssd.conf.j2` to `/etc/sssd/sssd.conf` at mode `0600` (mandatory — SSSD refuses a looser config, and the file holds the bind password). Uses `ldap_schema = rfc2307bis` with `ldap_user_name = cn`, `auto_private_groups = hybrid`, `ldap_tls_reqcert = demand` against the CA.
 4. Points `passwd`/`group` in `/etc/nsswitch.conf` at `sss` via whole-line `lineinfile`. `shadow` is deliberately left alone (auth territory).
 5. Enables and starts the `sssd` service.
+6. Disables `sssd_monitor_started_sockets` and clears any failure they left. `services =` has the monitor start those responders, and the package's socket units refuse to run beside that: their `ExecStartPre` exits 17. Dropping the line for socket activation would also stop the failures, but it moves the login path, so the role keeps the responders under the monitor.
 
 Config/CA changes notify the `Restart sssd` handler, which restarts (not reloads) to clear the aggressive cache so stale identity data does not linger.
 
 PAM path (only when `sssd_enable_pam_auth | bool`):
 
-6. Ensures `libpam-sss` and `libpam-modules` are installed.
-7. Checks whether `pam_mkhomedir.so` is already active in `/etc/pam.d/common-session`, and runs `pam-auth-update --enable <profiles>` only when it is not (guarded for idempotency).
-8. Writes `/etc/sudoers.d/<sssd_sudo_group>` (mode `0440`) granting `%<sssd_sudo_group> ALL=(ALL:ALL) NOPASSWD: ALL`, validated with `visudo -cf` before install, and only when `sssd_sudo_group` is non-empty. The template also adds `auth_provider`/`access_provider`/`ldap_access_filter` to `sssd.conf` and the `pam` service.
+7. Ensures `libpam-sss` and `libpam-modules` are installed.
+8. Checks whether `pam_mkhomedir.so` is already active in `/etc/pam.d/common-session`, and runs `pam-auth-update --enable <profiles>` only when it is not (guarded for idempotency).
+9. Writes `/etc/sudoers.d/<sssd_sudo_group>` (mode `0440`) granting `%<sssd_sudo_group> ALL=(ALL:ALL) NOPASSWD: ALL`, validated with `visudo -cf` before install, and only when `sssd_sudo_group` is non-empty. The template also adds `auth_provider`/`access_provider`/`ldap_access_filter` to `sssd.conf` and the `pam` service.
 
 ## Example
 

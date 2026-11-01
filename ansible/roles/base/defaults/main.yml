@@ -9,6 +9,10 @@ base_packages:
   - htop
   - vim
   - python3
+# Packages this host must not have, plus the failed units and files they leave.
+base_absent_packages: []
+base_absent_units: []
+base_absent_paths: []
 # Refresh the apt cache first; false for a host with no mirror (airgapped).
 base_apt_update_cache: true
 
@@ -28,6 +32,9 @@ lab_vlans: []
 
 # false: write the netplan file but don't apply it (it takes effect at boot).
 lab_netplan_apply: true
+
+# true: 60-lab alone owns the network, so cloud-init's netplan goes.
+lab_netplan_replaces_cloud_init: false
 
 # SSH public keys authorised for the ansible user (config, not secret). Supplied
 # by the consuming inventory via ops_ssh_authorized_keys.

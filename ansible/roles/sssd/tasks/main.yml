@@ -55,6 +55,24 @@
     enabled: true
     state: started
 
+# These sockets exit 17 beside `services =`; see the README for why it stays.
+- name: Disable the sockets of the responders the monitor starts
+  become: true
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop: "{{ sssd_monitor_started_sockets }}"
+
+- name: Clear the failure those sockets left behind
+  become: true
+  ansible.builtin.command: "systemctl reset-failed {{ item }}"
+  loop: "{{ sssd_monitor_started_sockets }}"
+  register: sssd_reset_failed
+  changed_when: false
+  # systemd drops a healthy unit it has no reason to keep loaded.
+  failed_when: sssd_reset_failed.rc != 0 and 'not loaded' not in sssd_reset_failed.stderr
+
 # --- PAM login/sudo — CONNECTIVITY-SENSITIVE, only when explicitly enabled ----
 # Wires pam_sss (sudo password against Authentik, ssh-users access gate) and
 # pam_mkhomedir (auto home dirs). Local root/ansible are unaffected (unknown to

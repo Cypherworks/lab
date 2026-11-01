@@ -71,6 +71,10 @@ sssd_sudo_group: ssh-sudoers  # empty = no sudo rule installed
 sssd_pam_profiles:
   - sss
   - mkhomedir
+# Socket units of the responders the template names in `services =`.
+sssd_monitor_started_sockets: >-
+  {{ ['sssd-nss.socket']
+     + (['sssd-pam.socket', 'sssd-pam-priv.socket'] if sssd_enable_pam_auth | bool else []) }}
 # Accounts SSSD must never resolve from LDAP (kept local, always). root + the Ansible
 # login are here so a directory problem can't shadow them or block key-based SSH.
 sssd_local_exempt_users:

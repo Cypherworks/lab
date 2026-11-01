@@ -7,3 +7,12 @@
     cmd: netplan apply
   changed_when: true
   when: lab_netplan_apply | bool
+
+# Clears the failed boot. No netplan apply: the addresses haven't changed.
+- name: Check the network again
+  become: true
+  ansible.builtin.systemd_service:
+    name: systemd-networkd-wait-online
+    state: restarted
+    daemon_reload: true
+  when: lab_netplan_apply | bool
