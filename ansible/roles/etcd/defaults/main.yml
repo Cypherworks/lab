@@ -3,7 +3,7 @@
 # Members and their bind IPs come from the consuming inventory (etcd_members);
 # this role derives each host's bind address by matching inventory_hostname.
 
-etcd_version: "3.5.16"
+etcd_version: "3.5.35"
 # Per-arch download so the role works on both x86 and ARM hosts.
 etcd_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
 etcd_release_base: "https://github.com/etcd-io/etcd/releases/download"
