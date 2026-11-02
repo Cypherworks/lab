@@ -23,6 +23,13 @@
     checksum: "sha256:{{ etcd_release_base }}/v{{ etcd_version }}/SHA256SUMS"
     mode: "0644"
 
+- name: Read the installed etcd release
+  ansible.builtin.command: /usr/local/bin/etcd --version
+  register: _etcd_installed
+  changed_when: false
+  failed_when: false
+
+# Re-extract on a version change too, or a bump never reaches the hosts.
 - name: Extract etcd binaries
   become: true
   ansible.builtin.unarchive:
@@ -34,7 +41,8 @@
       - --wildcards
       - "*/etcd"
       - "*/etcdctl"
-    creates: "/usr/local/bin/etcd"
+  register: _etcd_binary
+  when: "(_etcd_installed.stdout_lines | first | default('')) != 'etcd Version: ' ~ etcd_version"
 
 - name: Ensure etcd binaries are executable
   become: true
@@ -146,7 +154,7 @@
 
 - name: Note whether a running member has changes to pick up
   ansible.builtin.set_fact:
-    _etcd_needs_restart: "{{ _etcd_member_dir.stat.exists and (_etcd_config.changed or _etcd_unit.changed) }}"
+    _etcd_needs_restart: "{{ _etcd_member_dir.stat.exists and (_etcd_binary.changed or _etcd_config.changed or _etcd_unit.changed) }}"
 
 # A fresh cluster has to start together; a running one must keep quorum.
 - name: Restart running members one at a time

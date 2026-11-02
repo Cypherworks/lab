@@ -15,7 +15,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `etcd_version` | `3.5.16` | Pinned etcd release to download. |
+| `etcd_version` | `3.5.35` | Pinned etcd release to download. Bumping it upgrades running members one at a time. |
 | `etcd_arch` | `arm64` if `ansible_architecture == aarch64` else `amd64` | Release architecture, derived per host. |
 | `etcd_release_base` | `https://github.com/etcd-io/etcd/releases/download` | Base URL for release downloads. |
 | `etcd_archive` | `etcd-v{{ etcd_version }}-linux-{{ etcd_arch }}.tar.gz` | Tarball filename. |
@@ -39,12 +39,12 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
 ## What it does
 
 1. Creates the `etcd` system group and user (nologin, home at the data dir, no home created).
-2. Downloads the pinned release tarball to `/tmp` and extracts only the `etcd` and `etcdctl` binaries into `/usr/local/bin` (guarded by `creates`).
+2. Downloads the pinned release tarball to `/tmp` and extracts only the `etcd` and `etcdctl` binaries into `/usr/local/bin` whenever the installed `etcd --version` isn't the pinned release.
 3. Sets the binaries executable and root-owned.
 4. Creates the config directory (`root:etcd`, 0750) and data directory (`etcd:etcd`, 0700).
 5. For a **fresh** node, probes the other members: if a live cluster answers it registers this node with `etcdctl member add` and starts it as an `existing` member; if none answer it bootstraps a `new` cluster. An already-initialised member skips this (its `initial-cluster*` are inert), so adding a node never bounces the running members.
-6. Renders `etcd.conf.yml` from `etcd_members` (fresh/joining nodes only), building `initial-cluster` from every member. The host binds its `etcd_members` IP, plus `127.0.0.1` for local clients.
-7. Installs the systemd unit and enables/starts etcd. A running member with a changed config or unit restarts one at a time, and each must leave the whole cluster healthy before the next. A member that can't rejoin ends the run.
+6. Renders `etcd.conf.yml` from `etcd_members` on every member, building `initial-cluster` from every member. The host binds its `etcd_members` IP, plus `127.0.0.1` for local clients.
+7. Installs the systemd unit and enables/starts etcd. A running member with a new binary, config or unit restarts one at a time, and each must leave the whole cluster healthy before the next. A member that can't rejoin ends the run.
 
 ## Example
 
@@ -63,5 +63,6 @@ None (no `meta/main.yml`). At runtime this role is the DCS that `postgres_patron
 
 - Adding a member is automatic: put it in `etcd_members` and converge — a fresh node joins a live cluster on its own (`member add` + `existing`), no manual per-host state flip. `etcd_initial_cluster_state` (`new`) is only the fallback for initial formation when no peer answers.
 - **Removing** a member is deliberate and manual: `etcdctl member remove <id>` against a healthy member, then drop it from `etcd_members`. The role never removes members, so a converge can't break quorum.
+- Upgrading is a bump of `etcd_version` and a converge. `tests/upgrade.yml` proves it for 3.5.16 to the pin. A jump across minor releases (3.5 to 3.6) needs etcd's upgrade guide first; the role doesn't check for one.
 - Quorum needs an odd count. The three-member layout gives a third vote so the cluster survives losing one node and Patroni can still elect a Postgres leader.
 - The client URL includes `127.0.0.1:2379` so local `etcdctl` works without hitting the network bind address.
