@@ -52,14 +52,11 @@
     - { src: alert-rules.yml.j2, dest: alert-rules.yml }
     - { src: alertmanager.yml.j2, dest: alertmanager.yml }
     - { src: alert-text.tmpl.j2, dest: alertmanager-templates/alert-text.tmpl }
-    - { src: ntfy.yml.j2, dest: ntfy.yml }
-    - { src: ntfy-alert.yml.j2, dest: ntfy-alert.yml }
     - { src: blackbox.yml.j2, dest: blackbox.yml }
     - { src: snmp.yml.j2, dest: snmp.yml }
     - { src: go2rtc.yaml.j2, dest: go2rtc.yaml }
     - { src: grafana-datasource.yml.j2, dest: grafana/provisioning/datasources/datasource.yml }
     - { src: grafana-dashboards.yml.j2, dest: grafana/provisioning/dashboards/dashboards.yml }
-    - { src: dashboards/lab-overview.json.j2, dest: grafana/dashboards/lab-overview.json }
     - { src: dashboards/lab-kiosk.json.j2, dest: grafana/dashboards/lab-kiosk.json }
   notify: Restart monitoring
 
@@ -71,7 +68,17 @@
   loop:
     - cctv.json
     - lab-services-nas.json
+    - lab-overview.json
   notify: Restart monitoring
+
+- name: Remove dropped config files
+  become: true
+  ansible.builtin.file:
+    path: "{{ monitoring_config_dir }}/{{ item }}"
+    state: absent
+  loop:
+    - ntfy.yml
+    - ntfy-alert.yml
 
 - name: Render the HASS scrape token (0600 — docker-secret source for vmsingle)
   become: true
@@ -127,54 +134,15 @@
     project_src: "{{ monitoring_compose_dir }}"
     state: present
     pull: missing
+    # Stops the container of any service the compose doesn't define.
+    remove_orphans: true
 
-# ntfy auth: deny-all by default, so provision the publisher + subscriber users and
-# their topic ACLs. Idempotent — re-adding an existing user is tolerated: the add
-# returns "already exists", which failed_when treats as success rather than an error.
-- name: Wait for ntfy to be ready
+# Compose names volumes after the project, which is the compose directory.
+- name: Remove dropped volumes
   become: true
-  ansible.builtin.command:
-    cmd: "docker compose -f {{ monitoring_compose_dir }}/compose.yaml exec -T ntfy ntfy user list"
-  register: monitoring_ntfy_users
-  retries: 10
-  delay: 3
-  until: monitoring_ntfy_users.rc == 0
-  changed_when: false
-
-- name: Create the ntfy users
-  become: true
-  ansible.builtin.command:
-    argv:
-      - docker
-      - compose
-      - -f
-      - "{{ monitoring_compose_dir }}/compose.yaml"
-      - exec
-      - -T
-      - -e
-      - "NTFY_PASSWORD={{ item.password }}"
-      - ntfy
-      - ntfy
-      - user
-      - add
-      - "{{ item.name }}"
+  community.docker.docker_volume:
+    name: "{{ monitoring_compose_dir | basename }}_{{ item }}"
+    state: absent
   loop:
-    - { name: alertmanager, password: "{{ monitoring_ntfy_alertmanager_password }}" }
-    - { name: "{{ monitoring_ntfy_user }}", password: "{{ monitoring_ntfy_user_password }}" }
-  loop_control:
-    label: "{{ item.name }}"
-  register: monitoring_ntfy_useradd
-  changed_when: monitoring_ntfy_useradd.rc == 0
-  failed_when: monitoring_ntfy_useradd.rc != 0 and 'already exists' not in monitoring_ntfy_useradd.stderr
-  no_log: true
-
-- name: Set the ntfy topic ACLs (least privilege)
-  become: true
-  ansible.builtin.command:
-    cmd: "docker compose -f {{ monitoring_compose_dir }}/compose.yaml exec -T ntfy ntfy access {{ item.user }} {{ monitoring_ntfy_topic }} {{ item.perm }}"
-  loop:
-    - { user: alertmanager, perm: write-only }
-    - { user: "{{ monitoring_ntfy_user }}", perm: read-only }
-  loop_control:
-    label: "{{ item.user }}"
-  changed_when: false
+    - ntfycache
+    - ntfydata

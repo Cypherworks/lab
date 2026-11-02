@@ -1,0 +1,119 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up probe
+# data. Needs Docker, and internet to pull the image once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/service_down.yml
+- name: Verify the service down alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.service_down"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a failing service and resolver fire after a minute
+          interval: 30s
+          input_series:
+            - series: 'probe_success{job="service-health",instance="auth"}'
+              values: '0x20'
+            - series: 'probe_success{job="dns",instance="pi-dns-1"}'
+              values: '0x20'
+          alert_rule_test:
+            - eval_time: 30s
+              alertname: ServiceDown
+            - eval_time: 90s
+              alertname: ServiceDown
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    job: service-health
+                    instance: auth
+                  exp_annotations:
+                    summary: "Service down: service-health / auth"
+                    description: "Health probe failing for a minute."
+                - exp_labels:
+                    severity: critical
+                    job: dns
+                    instance: pi-dns-1
+                  exp_annotations:
+                    summary: "Service down: dns / pi-dns-1"
+                    description: "Health probe failing for a minute."
+        - name: passing services stay quiet, and two failed probes don't fire
+          interval: 30s
+          input_series:
+            - series: 'probe_success{job="service-health",instance="vaultwarden"}'
+              values: '1x20'
+            - series: 'probe_success{job="dns",instance="pi-dns-2"}'
+              values: '1 1 0 0 1x16'
+          alert_rule_test:
+            - eval_time: 90s
+              alertname: ServiceDown
+            - eval_time: 5m
+              alertname: ServiceDown
+        - name: cert and packet loss probes aren't service health
+          interval: 30s
+          input_series:
+            - series: 'probe_success{job="blackbox-https",instance="https://headscale.example.test"}'
+              values: '0x20'
+            - series: 'probe_success{job="blackbox-tls",instance="caddy-1"}'
+              values: '0x20'
+            - series: 'probe_success{job="icmp",instance="192.0.2.1"}'
+              values: '0x20'
+          alert_rule_test:
+            - eval_time: 5m
+              alertname: ServiceDown
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alert behaves
+      ansible.builtin.assert:
+        that:
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"

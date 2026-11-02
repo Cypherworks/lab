@@ -1,0 +1,70 @@
+---
+# Checks the service health scrape job: it names each service, reuses the https
+# module, and keeps its cert series away from the cert tile and alerts. From
+# ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/service_probe.yml
+- name: Verify the service health probes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render and check, then clean up
+      block:
+        - name: Render with no services
+          ansible.builtin.template:
+            src: ../templates/scrape.yml.j2
+            dest: "{{ _scratch.path }}/off.yml"
+            mode: "0644"
+
+        - name: Add services
+          ansible.builtin.set_fact:
+            monitoring_blackbox_service_targets:
+              - { url: "https://auth.example.test/health", instance: auth }
+              - { url: "https://vault.example.test/alive", instance: vault }
+
+        - name: Render with services
+          ansible.builtin.template:
+            src: ../templates/scrape.yml.j2
+            dest: "{{ _scratch.path }}/on.yml"
+            mode: "0644"
+
+        - name: Assert no job exists without services
+          vars:
+            _scrape: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/off.yml') | from_yaml }}"
+          ansible.builtin.assert:
+            that:
+              - _scrape.scrape_configs | default([], true) | selectattr('job_name', 'eq', 'service-health') | list | length == 0
+
+        - name: Assert the job names each service and drops cert series
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'service-health') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _job.metrics_path == '/probe'
+              - _job.params.module == ['https_2xx']
+              - _job.static_configs | map(attribute='targets') | flatten == ['https://auth.example.test/health', 'https://vault.example.test/alive']
+              - _job.static_configs | map(attribute='labels.instance') | list == ['auth', 'vault']
+              - _job.relabel_configs[0].target_label == '__param_target'
+              - _job.relabel_configs[1].replacement == 'blackbox:9115'
+              - _job.metric_relabel_configs[0].regex == 'probe_ssl_.*'
+              - _job.metric_relabel_configs[0].action == 'drop'
+            fail_msg: "{{ _job | to_json }}"
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

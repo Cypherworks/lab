@@ -1,6 +1,6 @@
 # monitoring
 
-Deploys the lab observability stack (VictoriaMetrics, VictoriaLogs, vmalert, Alertmanager to ntfy, Grafana, plus exporters and a go2rtc CCTV restream) on one Incus host via docker compose.
+Deploys the lab observability stack (VictoriaMetrics, VictoriaLogs, vmalert, Alertmanager to Discord and healthchecks.io, Grafana, plus exporters and a go2rtc CCTV restream) on one Incus host via docker compose.
 
 Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a generic, parameterised role. Supply site data (IPs, secrets, hostnames) from your inventory and SOPS, not from the role.
 
@@ -8,7 +8,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 - `community.docker` collection.
 - A container/host the `docker` role can install Docker Engine and Compose v2 onto.
-- Secrets (Grafana admin/OIDC, ntfy passwords, SNMPv3 creds, go2rtc RTSP URLs, HASS token) supplied from SOPS.
+- Secrets (Grafana admin/OIDC, Discord and healthchecks.io URLs, SNMPv3 creds, go2rtc RTSP URLs, HASS token) supplied from SOPS.
 - An Authentik instance for Grafana OIDC.
 - Root via `become`.
 
@@ -25,7 +25,6 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_vmalert_image` | `victoriametrics/vmalert:v1.102.1` | vmalert (rule evaluation). |
 | `monitoring_alertmanager_image` | `prom/alertmanager:v0.34.2` | Alertmanager. `webhook_url_file` needs 0.28 or later. |
 | `monitoring_grafana_image` | `grafana/grafana:11.2.0` | Grafana. |
-| `monitoring_ntfy_image` | `binwiederhier/ntfy:v2.26.0` | Self-hosted ntfy. |
 | `monitoring_redis_exporter_image` | `oliver006/redis_exporter:v1.62.0` | Redis exporter. |
 | `monitoring_blackbox_image` | `prom/blackbox-exporter:v0.25.0` | Blackbox exporter (https probes). |
 | `monitoring_snmp_exporter_image` | `prom/snmp-exporter:v0.26.0` | SNMP exporter. |
@@ -55,14 +54,16 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
 | `monitoring_blackbox_targets` | `[]` | Plain list of https URLs for cert-expiry probes; the URL becomes the `instance` label. |
 | `monitoring_blackbox_icmp_targets` | `[]` | Addresses pinged once per scrape. Scraped as job `icmp`; a failed probe is one lost packet. |
+| `monitoring_blackbox_service_targets` | `[]` | Health URLs for the kiosk's up/down tiles: `{url, instance}`. Scraped as job `service-health`; its cert series are dropped. `ServiceDown` fires when one fails for a minute. |
 | `monitoring_blackbox_node_tls_targets` | `[]` | HA nodes to read a cert from directly, past their VIP: `{target: "ip:443", instance}`. Scraped as job `blackbox-tls`. |
 | `monitoring_blackbox_node_tls_server_name` | `""` | SNI name those nodes are asked for. |
 | `monitoring_blackbox_tls_skip_verify` | `false` | Skip verification on https probes. A cert that fails verification reports no expiry at all, so set this to see an expired cert. |
 | `monitoring_cert_expiry_warn_days` | `14` | `CertExpiringSoon` fires under this many days left. `CertNotProbed` fires when fewer targets report a cert than are configured. |
-| `monitoring_blackbox_dns_targets` | `[]` | DNS resolvers to probe, as `{target: "ip:53", instance}`. Scraped as job `dns`; `probe_success` is 1 when one answers. |
+| `monitoring_blackbox_dns_targets` | `[]` | DNS resolvers to probe, as `{target: "ip:53", instance}`. Scraped as job `dns`; `probe_success` is 1 when one answers, and `ServiceDown` fires when one fails for a minute. |
 | `monitoring_blackbox_dns_query` | `""` | The name each resolver is asked. Choose one it answers itself, so the check survives an upstream outage. |
 | `monitoring_snmp_targets` | `[]` | SNMPv3 targets (the Synology NAS): `{target: "ip:161", instance}`. |
 | `monitoring_incus_metrics_targets` | `[]` | Incus cluster `/1.0/metrics` over mTLS: `{target: "member-ip:8444", instance}`. Empty omits the job. |
+| `monitoring_incus_instances` | `[]` | Instance names that should be running. `InstanceNotRunning` fires when Incus reports nothing for one for a minute, as it drops every series of a stopped instance. Empty leaves the rule out. |
 | `monitoring_incus_metrics_cert` | `""` | Metrics scraper client cert (PEM); the TF-generated keypair, mounted as a docker secret. |
 | `monitoring_incus_metrics_key` | `""` | Metrics scraper client key (PEM); mounted as a docker secret. |
 | `monitoring_headscale_target` | `""` | Headscale control-plane `/metrics` over the overlay (`tailnet-ip:9090`). |
@@ -91,21 +92,13 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_grafana_oidc_client_id` | `""` | SOPS. |
 | `monitoring_grafana_oidc_client_secret` | `""` | SOPS. |
 
-### ntfy
+### Alert receivers
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `monitoring_ntfy_base_url` | `""` | Public base URL ntfy serves on. |
-| `monitoring_ntfy_topic` | `"lab-alerts"` | Alert topic. |
-| `monitoring_ntfy_upstream_base_url` | `"https://ntfy.sh"` | Upstream ntfy that relays the wake-up push (APNS/FCM) so the phone app gets instant delivery; only a poll trigger leaves the lab. Empty disables. |
-| `monitoring_ntfy_alert_priority` | `"high"` | Alert notification priority (high = sound/vibrate). |
-| `monitoring_ntfy_alert_tags` | `"warning"` | Alert notification tags. |
 | `monitoring_alertmanager_repeat_interval` | `"24h"` | How often Alertmanager re-notifies a still-firing alert. |
 | `monitoring_discord_critical_webhook_url` / `monitoring_discord_warning_webhook_url` | `""` | Secrets. Discord webhooks by severity, written to files. Text sent there goes through `alert-text.tmpl`, which strips URLs, FQDNs and addresses. Empty leaves Discord out. |
 | `monitoring_healthchecks_ping_url` | `""` | Secret. Set, a `Watchdog` alert pings it every minute, so an outside service can notice the lab has gone. A period of 2 minutes with 1 of grace alerts about 3 minutes after the last ping. |
-| `monitoring_ntfy_user` | `""` | Human username (web UI + phone app), from the deploy. |
-| `monitoring_ntfy_alertmanager_password` | `""` | SOPS — the alertmanager publisher user. |
-| `monitoring_ntfy_user_password` | `""` | SOPS — the human subscriber user. |
 | `monitoring_redis_password` | `""` | SOPS — redis_exporter connection password. |
 
 ### SNMPv3 (Synology NAS, authPriv)
@@ -135,7 +128,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `monitoring_power_sensors` | *map of nine `""` keys* | HASS power/energy sensor entity IDs for the lab-overview power matrix (now W plus day/month kWh, per location: rack, desk, office). Site-specific; empty leaves those blocks with no data. |
+| `monitoring_power_sensors` | *map of nine `""` keys* | HASS power/energy sensor entity IDs for the kiosk's power tiles (now W plus day/month kWh, per location: rack, desk, office). Site-specific; empty leaves those blocks with no data. |
 
 ## Dependencies
 
@@ -143,9 +136,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 
 ## What it does
 
-Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config, ntfy config, the ntfy-alert template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the dashboard JSON (`lab-overview`, plus `lab-kiosk` laid out for a 1080p wall screen). It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`) so Grafana stops serving them. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. It then brings the stack up with `docker_compose_v2`.
-
-After the stack is up it runs one API-driven, idempotent provisioning step: ntfy starts deny-all, so the role waits for it, then creates the `alertmanager` (write-only) and human subscriber (read-only) users and sets their topic ACLs. Re-adding an existing user is tolerated.
+Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config and its text template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the `lab-kiosk` dashboard laid out for a 1080p wall screen. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`, `lab-overview.json`) so Grafana stops serving them, and the dropped ntfy config files. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. It then brings the stack up with `docker_compose_v2`, removing the container of any service the compose doesn't define, and deletes the dropped ntfy volumes, which held its user database.
 
 vmsingle is used instead of Prometheus for lighter storage and better compaction on the resource- and heat-constrained rig; it is PromQL-compatible, so Grafana treats it as a Prometheus datasource. Any config, env, or compose change restarts the stack.
 
@@ -160,7 +151,6 @@ vmsingle is used instead of Prometheus for lighter storage and better compaction
         monitoring_grafana_admin_password: "{{ vault_grafana_admin_password }}"
         monitoring_grafana_oidc_client_id: "{{ vault_grafana_oidc_client_id }}"
         monitoring_grafana_oidc_client_secret: "{{ vault_grafana_oidc_client_secret }}"
-        monitoring_ntfy_base_url: "https://ntfy.example.com"
         monitoring_node_targets:
           - { target: "10.0.30.11:9100", instance: "node-a" }
           - { target: "10.0.30.12:9100", instance: "node-b" }

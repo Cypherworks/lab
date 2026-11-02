@@ -1,7 +1,7 @@
 ---
 # Observability stack on one monitoring Incus instance, via docker compose:
 # VictoriaMetrics (vmsingle) for storage + scraping, vmalert for rules, Alertmanager
-# posting to a self-hosted ntfy via ntfy's built-in alertmanager template, and Grafana.
+# posting to Discord and healthchecks.io, and Grafana.
 # vmsingle over Prometheus deliberately — lighter + better compaction on the
 # resource/heat-constrained rig. PromQL-compatible, so Grafana treats it as a
 # Prometheus datasource.
@@ -15,7 +15,6 @@ monitoring_vmsingle_image: "victoriametrics/victoria-metrics:v1.102.1"
 monitoring_vmalert_image: "victoriametrics/vmalert:v1.102.1"
 monitoring_alertmanager_image: "prom/alertmanager:v0.34.2"
 monitoring_grafana_image: "grafana/grafana:11.2.0"
-monitoring_ntfy_image: "binwiederhier/ntfy:v2.26.0"
 monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
 monitoring_blackbox_image: "prom/blackbox-exporter:v0.25.0"
 monitoring_snmp_exporter_image: "prom/snmp-exporter:v0.26.0"
@@ -47,6 +46,8 @@ monitoring_blackbox_targets: []      # e.g. ["https://grafana.example.com"]
 # Addresses pinged once per scrape, to count packet loss between scrapes of the
 # 6-hourly speedtest. Plain list; the address becomes the `instance` label.
 monitoring_blackbox_icmp_targets: []
+# Health URLs for the kiosk's tiles and ServiceDown, as {url, instance}.
+monitoring_blackbox_service_targets: []
 # Cert expiry on each HA node directly, as {target: "ip:443", instance}. A node
 # behind a VIP holds its own cert, so its server_name decides which it presents.
 monitoring_blackbox_node_tls_targets: []
@@ -66,6 +67,8 @@ monitoring_snmp_targets: []
 # state. {target: "member-ip:8444", instance: member}. Empty omits the job. The
 # cert+key are the TF-generated metrics scraper keypair (mounted as docker secrets).
 monitoring_incus_metrics_targets: []
+# Instance names InstanceNotRunning watches; empty leaves the rule out.
+monitoring_incus_instances: []
 monitoring_incus_metrics_cert: ""
 monitoring_incus_metrics_key: ""
 
@@ -94,18 +97,6 @@ monitoring_grafana_oidc_signout_url: ""      # https://auth.cw/application/o/gra
 # (i.e. grafana-users, who are the only ones the app lets in) → Editor.
 monitoring_grafana_role_path: "contains(groups[*], 'grafana-admins') && 'Admin' || 'Editor'"
 
-# ntfy
-monitoring_ntfy_base_url: ""                 # public base URL ntfy serves on
-monitoring_ntfy_topic: "lab-alerts"
-monitoring_ntfy_user: ""                     # human username (web UI + phone app), from deploy
-# Relays a wake-up push through ntfy.sh's APNS/FCM so the phone app gets INSTANT
-# notifications from a self-hosted server (iOS can't hold a background connection).
-# Only a poll trigger is sent upstream — message content never leaves the lab. Set to
-# "" to disable (Android can instead use the app's per-topic "instant delivery").
-monitoring_ntfy_upstream_base_url: "https://ntfy.sh"
-# Alert notification priority + tags (ntfy). high = sound/vibrate so it isn't missed.
-monitoring_ntfy_alert_priority: "high"
-monitoring_ntfy_alert_tags: "warning"
 # How often Alertmanager re-notifies an alert that is still firing. 24h so an ongoing
 # outage (e.g. a host down) reminds once a day rather than every few hours.
 monitoring_alertmanager_repeat_interval: "24h"
@@ -128,8 +119,6 @@ monitoring_grafana_admin_password: ""
 monitoring_grafana_oidc_client_id: ""
 monitoring_grafana_oidc_client_secret: ""
 monitoring_redis_password: ""
-monitoring_ntfy_alertmanager_password: ""    # alertmanager ntfy user (publish to the topic)
-monitoring_ntfy_user_password: ""            # human ntfy user (subscribe)
 
 # SNMPv3 (authPriv) creds for the Synology NAS — from SOPS (deploy). The DSM side
 # uses SHA auth + AES privacy (set explicitly on both ends).
@@ -167,9 +156,7 @@ monitoring_go2rtc_password: ""
 # the internal compose port. Set from the deploy (e.g. https://cctv.example.com).
 monitoring_go2rtc_public_url: ""
 
-# Home Assistant power/energy sensor entity IDs for the lab-overview power matrix
-# (now W + today/week/month kWh, per location). Site-specific — set from the deploy;
-# empty leaves those blocks with no data. Kept out of this public repo on purpose.
+# HASS sensor IDs for the kiosk's power tiles; site data, set from the deploy.
 monitoring_power_sensors:
   rack_now: ""
   rack_day: ""

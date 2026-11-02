@@ -1178,8 +1178,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 0,
-        "y": 19
+        "x": 2,
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {
@@ -1241,7 +1241,7 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 2,
+        "x": 4,
         "y": 19
       },
       "fieldConfig": {
@@ -1305,7 +1305,7 @@
         "h": 3,
         "w": 2,
         "x": 4,
-        "y": 19
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -1367,8 +1367,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 6,
-        "y": 19
+        "x": 4,
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {
@@ -1430,39 +1430,23 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 8,
+        "x": 2,
         "y": 19
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "short",
           "decimals": 0,
-          "displayName": "NVMe wear",
+          "displayName": "Instances",
           "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 70
-              },
-              {
-                "color": "red",
-                "value": 90
-              }
-            ]
+            "mode": "fixed",
+            "fixedColor": "blue"
           }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "textMode": "value_and_name",
@@ -1481,7 +1465,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "100 * max(nvme_percentage_used_ratio)",
+          "expr": "count(count by (name) (incus_procs_total)) or vector(0)",
           "instant": true
         }
       ]
@@ -1495,9 +1479,9 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 6,
+        "h": 3,
         "w": 5,
-        "x": 10,
+        "x": 14,
         "y": 19
       },
       "fieldConfig": {
@@ -1575,7 +1559,7 @@
           "fields": "",
           "values": false
         },
-        "orientation": "horizontal",
+        "orientation": "vertical",
         "text": {
           "titleSize": 14,
           "valueSize": 14
@@ -1584,62 +1568,476 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "label_replace((probe_ssl_earliest_cert_expiry - time()) / 86400, \"cert\", \"$1\", \"instance\", \"(?:https://)?(.+)\")",
+          "expr": "label_replace((probe_ssl_earliest_cert_expiry - time()) / 86400, \"cert\", \"$1\", \"instance\", \"(?:https://)?([^.]+).*\")",
           "instant": true
         }
       ]
     },
     {
-      "id": 210,
-      "type": "timeseries",
-      "title": "Power",
+      "id": 218,
+      "type": "stat",
+      "title": "",
       "datasource": {
         "type": "prometheus",
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 9,
-        "w": 4,
-        "x": 15,
+        "h": 3,
+        "w": 2,
+        "x": 6,
         "y": 19
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "watt",
-          "min": 0,
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 10,
-            "showPoints": "never"
-          }
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "Auth",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "none"
+        "text": {
+          "titleSize": 16,
+          "valueSize": 40
         }
       },
       "targets": [
         {
-          "refId": "Total",
-          "expr": "hass_sensor_power_w{entity=\"{{ monitoring_power_sensors.office_now }}\"}",
-          "legendFormat": "Total"
+          "refId": "A",
+          "expr": "probe_success{job=\"service-health\",instance=\"auth\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 219,
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 8,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "Ingress",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ]
         },
-        {
-          "refId": "Desk",
-          "expr": "hass_sensor_power_w{entity=\"{{ monitoring_power_sensors.desk_now }}\"}",
-          "legendFormat": "Desk"
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
+        "text": {
+          "titleSize": 16,
+          "valueSize": 40
+        }
+      },
+      "targets": [
         {
-          "refId": "Rack",
-          "expr": "hass_sensor_power_w{entity=\"{{ monitoring_power_sensors.rack_now }}\"}",
-          "legendFormat": "Rack"
+          "refId": "A",
+          "expr": "clamp_max(sum(probe_success{job=\"blackbox-tls\"}), 1)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 220,
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 8,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "Headscale",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "text": {
+          "titleSize": 16,
+          "valueSize": 40
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "probe_success{job=\"service-health\",instance=\"headscale\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 221,
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 10,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "OpenBao",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "text": {
+          "titleSize": 16,
+          "valueSize": 40
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "probe_success{job=\"service-health\",instance=\"openbao\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 222,
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 12,
+        "y": 25
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "Vaultwarden",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "text": {
+          "titleSize": 16,
+          "valueSize": 40
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "probe_success{job=\"service-health\",instance=\"vaultwarden\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 223,
+      "type": "stat",
+      "title": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 2,
+        "x": 8,
+        "y": 22
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "Home Assistant",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "text": {
+          "titleSize": 16,
+          "valueSize": 40
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"hass\"}",
+          "instant": true
         }
       ]
     },
@@ -1698,7 +2096,7 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 0,
+        "x": 12,
         "y": 22
       },
       "fieldConfig": {
@@ -1717,8 +2115,12 @@
                 "value": null
               },
               {
-                "color": "green",
+                "color": "orange",
                 "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
               }
             ]
           },
@@ -1731,6 +2133,10 @@
                   "color": "red"
                 },
                 "1": {
+                  "text": "DEGR",
+                  "color": "orange"
+                },
+                "2": {
                   "text": "OK",
                   "color": "green"
                 }
@@ -1760,7 +2166,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "clamp_max(count(redis_instance_info{role=\"master\"}), 1)",
+          "expr": "(clamp_max(count(redis_instance_info{role=\"master\"}), 1) or vector(0)) * (1 + (min(redis_up) or vector(0)))",
           "instant": true
         }
       ]
@@ -1776,8 +2182,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 2,
-        "y": 22
+        "x": 6,
+        "y": 25
       },
       "fieldConfig": {
         "defaults": {
@@ -1795,8 +2201,12 @@
                 "value": null
               },
               {
-                "color": "green",
+                "color": "orange",
                 "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
               }
             ]
           },
@@ -1809,6 +2219,10 @@
                   "color": "red"
                 },
                 "1": {
+                  "text": "DEGR",
+                  "color": "orange"
+                },
+                "2": {
                   "text": "OK",
                   "color": "green"
                 }
@@ -1838,7 +2252,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "clamp_max(max(etcd_server_has_leader), 1)",
+          "expr": "(clamp_max(max(etcd_server_has_leader), 1) or vector(0)) * (1 + (min(up{job=\"etcd\"}) or vector(0)))",
           "instant": true
         }
       ]
@@ -1854,8 +2268,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 4,
-        "y": 22
+        "x": 12,
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -1873,8 +2287,12 @@
                 "value": null
               },
               {
-                "color": "green",
+                "color": "orange",
                 "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
               }
             ]
           },
@@ -1887,6 +2305,10 @@
                   "color": "red"
                 },
                 "1": {
+                  "text": "DEGR",
+                  "color": "orange"
+                },
+                "2": {
                   "text": "OK",
                   "color": "green"
                 }
@@ -1916,7 +2338,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "clamp_max(sum(patroni_primary), 1)",
+          "expr": "(clamp_max(sum(patroni_primary), 1) or vector(0)) * (1 + (min(up{job=\"patroni\"}) or vector(0)))",
           "instant": true
         }
       ]
@@ -1951,8 +2373,12 @@
                 "value": null
               },
               {
-                "color": "green",
+                "color": "orange",
                 "value": 1
+              },
+              {
+                "color": "green",
+                "value": 2
               }
             ]
           },
@@ -1965,6 +2391,10 @@
                   "color": "red"
                 },
                 "1": {
+                  "text": "DEGR",
+                  "color": "orange"
+                },
+                "2": {
                   "text": "OK",
                   "color": "green"
                 }
@@ -1994,7 +2424,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "clamp_max(sum(probe_success{job=\"dns\"}), 1)",
+          "expr": "(clamp_max(sum(probe_success{job=\"dns\"}), 1) or vector(0)) * (1 + (min(probe_success{job=\"dns\"}) or vector(0)))",
           "instant": true
         }
       ]
@@ -2010,8 +2440,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 8,
-        "y": 22
+        "x": 10,
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -2088,8 +2518,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 0,
-        "y": 25
+        "x": 10,
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {
@@ -2166,8 +2596,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 2,
-        "y": 25
+        "x": 0,
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -2217,8 +2647,8 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 4,
-        "y": 25
+        "x": 0,
+        "y": 22
       },
       "fieldConfig": {
         "defaults": {
@@ -2268,7 +2698,7 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 6,
+        "x": 0,
         "y": 25
       },
       "fieldConfig": {
@@ -2319,7 +2749,7 @@
       "gridPos": {
         "h": 3,
         "w": 2,
-        "x": 8,
+        "x": 2,
         "y": 25
       },
       "fieldConfig": {
@@ -2384,10 +2814,10 @@
         "uid": "victoriametrics"
       },
       "gridPos": {
-        "h": 3,
+        "h": 6,
         "w": 5,
-        "x": 10,
-        "y": 25
+        "x": 14,
+        "y": 22
       },
       "targets": [
         {
