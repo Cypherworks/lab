@@ -24,7 +24,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_vmsingle_image` | `victoriametrics/victoria-metrics:v1.102.1` | VictoriaMetrics single-node (storage + scraping). |
 | `monitoring_vmalert_image` | `victoriametrics/vmalert:v1.102.1` | vmalert (rule evaluation). |
 | `monitoring_alertmanager_image` | `prom/alertmanager:v0.34.2` | Alertmanager. `webhook_url_file` needs 0.28 or later. |
-| `monitoring_grafana_image` | `grafana/grafana:11.2.0` | Grafana. |
+| `monitoring_grafana_image` | `grafana/grafana:13.3.0` | Grafana. 13.0 moves dashboards into unified storage with a one-way migration, so roll back from a snapshot, not by pinning an older image. Grafana runs only the plugins the image ships: startup plugin installs are off and the plugins directory is an empty read-only mount. |
 | `monitoring_redis_exporter_image` | `oliver006/redis_exporter:v1.62.0` | Redis exporter. |
 | `monitoring_blackbox_image` | `prom/blackbox-exporter:v0.25.0` | Blackbox exporter (https probes). |
 | `monitoring_snmp_exporter_image` | `prom/snmp-exporter:v0.26.0` | SNMP exporter. |

@@ -1,0 +1,253 @@
+---
+# Boots Grafana 11.2.0, the release live ran before this upgrade, with the
+# role's provisioning and Grafana settings, then swaps in the pinned image on
+# the same data volume, as the role's compose change does. The pinned release
+# has to be past the public-dashboard DoS fix, migrate that database, and keep
+# serving the kiosk dashboard to anonymous Viewers with the CCTV iframe
+# allowed. In between it runs the pinned image on Grafana's own defaults, as
+# live first did, which download plugins from grafana.com into the volume; the
+# role's settings must then run only the plugins the image ships, and fetch
+# none. Needs Docker and internet for the images and plugins. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/grafana_upgrade.yml
+- name: Verify Grafana upgrades to the pinned release
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    monitoring_scrape_interval: 15s
+    monitoring_go2rtc_public_url: https://cctv.example.test
+    monitoring_power_sensors:
+      rack_now: sensor.rack_now
+      rack_day: sensor.rack_day
+      rack_month: sensor.rack_month
+      desk_now: sensor.desk_now
+      desk_day: sensor.desk_day
+      desk_month: sensor.desk_month
+      office_now: sensor.office_now
+      office_day: sensor.office_day
+      office_month: sensor.office_month
+    _old_image: grafana/grafana:11.2.0
+    _defaults: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../defaults/main.yml') | from_yaml }}"
+    _new_image: "{{ _defaults.monitoring_grafana_image }}"
+    _new_version: "{{ _new_image.split(':') | last }}"
+    _role_tasks: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../tasks/main.yml') | from_yaml }}"
+    _role_dirs: "{{ (_role_tasks | selectattr('name', 'eq', 'Create the monitoring directories') | first).loop }}"
+    _grafana_dirs: "{{ _role_dirs | select('search', '/grafana/') | map('regex_replace', '^.*/grafana/', '') | list }}"
+    # GHSA-3w66-95m3-8jxg is fixed in 13.0.2 on the 13 line.
+    _fixed_in: "13.0.2"
+    _net: grafana-upgrade-test
+    _dir: "{{ playbook_dir }}/.grafana_upgrade"
+    _curl: [docker, run, --rm, --network, "{{ _net }}", curlimages/curl:8.11.1, -s]
+    _grafana_run: >-
+      docker run -d --name grafana-upgrade-grafana --network {{ _net }}
+      --network-alias grafana -v grafana-upgrade-data:/var/lib/grafana
+      -v {{ _dir }}/provisioning:/etc/grafana/provisioning:ro
+      -v {{ _dir }}/dashboards:/var/lib/grafana/dashboards:ro
+      -e GF_SERVER_ROOT_URL=https://grafana.example.test
+      -e GF_AUTH_ANONYMOUS_ENABLED=true -e GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      -e GF_SECURITY_ADMIN_USER=admin -e GF_SECURITY_ADMIN_PASSWORD=test-only
+      -e GF_AUTH_GENERIC_OAUTH_ENABLED=true -e GF_AUTH_GENERIC_OAUTH_NAME=Authentik
+      -e GF_AUTH_GENERIC_OAUTH_CLIENT_ID=test-only
+      -e GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET=test-only
+      -e "GF_AUTH_GENERIC_OAUTH_SCOPES=openid profile email"
+      -e GF_AUTH_GENERIC_OAUTH_AUTH_URL=https://auth.example.test/application/o/authorize/
+      -e GF_AUTH_GENERIC_OAUTH_TOKEN_URL=https://auth.example.test/application/o/token/
+      -e GF_AUTH_GENERIC_OAUTH_API_URL=https://auth.example.test/application/o/userinfo/
+      -e "GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH={{ _defaults.monitoring_grafana_role_path }}"
+      -e GF_PANELS_DISABLE_SANITIZE_HTML=true
+    _role_plugin_args: >-
+      -v {{ _dir }}/plugins:/var/lib/grafana/plugins:ro
+      -e GF_PLUGINS_PREINSTALL_DISABLED=true
+    _compose: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../templates/compose.yaml.j2') }}"
+  tasks:
+    - name: Assert the pin is past the public-dashboard DoS fix
+      ansible.builtin.assert:
+        that:
+          - _new_version is version(_fixed_in, '>=')
+        fail_msg: "role pins {{ _new_image }}, the fix is in {{ _fixed_in }}"
+
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f grafana-upgrade-grafana 2>/dev/null;
+        docker volume rm grafana-upgrade-data 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Create the Grafana directories the role creates
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: "{{ _grafana_dirs }}"
+
+    - name: Render the role's Grafana provisioning
+      ansible.builtin.template:
+        src: "../templates/{{ item.src }}"
+        dest: "{{ _dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: grafana-datasource.yml.j2, dest: provisioning/datasources/datasource.yml }
+        - { src: grafana-dashboards.yml.j2, dest: provisioning/dashboards/dashboards.yml }
+        - { src: dashboards/lab-kiosk.json.j2, dest: dashboards/lab-kiosk.json }
+
+    - name: Count the rendered kiosk's panels
+      ansible.builtin.set_fact:
+        _rendered_panels: "{{ (lookup('ansible.builtin.file', _dir ~ '/dashboards/lab-kiosk.json') | from_json).panels | length }}"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start Grafana on the release live ran
+      ansible.builtin.command: "{{ _grafana_run }} {{ _old_image }}"
+      changed_when: true
+
+    - name: Wait for the old Grafana to serve the kiosk anonymously
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-o', '/dev/null', '-w', '%{http_code}', 'http://grafana:3000/api/dashboards/uid/lab-kiosk'] }}"
+      register: _old_kiosk
+      until: _old_kiosk.stdout == '200'
+      retries: 40
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Run the pinned release on Grafana's own plugin defaults
+      ansible.builtin.shell: >-
+        docker rm -f grafana-upgrade-grafana &&
+        {{ _grafana_run }} {{ _new_image }}
+      changed_when: true
+
+    - name: Wait for it to download prometheus into the volume
+      ansible.builtin.command: docker exec grafana-upgrade-grafana test -f /var/lib/grafana/plugins/prometheus/plugin.json
+      register: _downloaded
+      until: _downloaded.rc == 0
+      retries: 40
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Replace Grafana with the pinned release on the role's settings
+      ansible.builtin.shell: >-
+        docker rm -f grafana-upgrade-grafana &&
+        {{ _grafana_run }} {{ _role_plugin_args }} {{ _new_image }}
+      changed_when: true
+
+    - name: Read the prometheus plugin the image ships
+      ansible.builtin.command: >-
+        docker run --rm --entrypoint cat {{ _new_image }}
+        /usr/share/grafana/data/plugins-bundled/prometheus/plugin.json
+      register: _bundled
+      changed_when: false
+
+    - name: Wait for the upgraded Grafana
+      ansible.builtin.command:
+        argv: "{{ _curl + ['http://grafana:3000/api/health'] }}"
+      register: _health
+      until: _health.stdout is search('"database"\s*:\s*"ok"')
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Read the kiosk dashboard anonymously
+      ansible.builtin.command:
+        argv: "{{ _curl + ['http://grafana:3000/api/dashboards/uid/lab-kiosk'] }}"
+      register: _kiosk
+      until: _kiosk.stdout is search('Lab Kiosk')
+      retries: 20
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: List the dashboards anonymously
+      ansible.builtin.command:
+        argv: "{{ _curl + ['http://grafana:3000/api/search?type=dash-db'] }}"
+      register: _search
+      changed_when: false
+      failed_when: false
+
+    - name: Read the frontend settings anonymously
+      ansible.builtin.command:
+        argv: "{{ _curl + ['http://grafana:3000/api/frontend/settings'] }}"
+      register: _frontend
+      changed_when: false
+      failed_when: false
+
+    - name: List the datasources as admin
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-u', 'admin:test-only', 'http://grafana:3000/api/datasources'] }}"
+      register: _datasources
+      changed_when: false
+      failed_when: false
+
+    - name: Read the prometheus plugin Grafana loaded
+      ansible.builtin.command:
+        argv: "{{ _curl + ['-u', 'admin:test-only', 'http://grafana:3000/api/plugins/prometheus/settings'] }}"
+      register: _loaded
+      changed_when: false
+      failed_when: false
+
+    - name: Give a background plugin install time to start
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Read the upgraded Grafana's plugin installs and error log lines
+      ansible.builtin.shell: >-
+        docker logs grafana-upgrade-grafana 2>&1 |
+        grep -E 'level=error|msg="Installing plugin' || true
+      register: _errors
+      changed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f grafana-upgrade-grafana;
+        docker volume rm grafana-upgrade-data;
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the old release served the kiosk before the upgrade
+      ansible.builtin.assert:
+        that: _old_kiosk.stdout == '200'
+        fail_msg: "11.2.0 gave {{ _old_kiosk.stdout }} for the kiosk."
+
+    - name: Assert Grafana runs the image's plugins and fetches none
+      vars:
+        _bundled_version: "{{ (_bundled.stdout | from_json).info.version }}"
+        _loaded_version: "{{ (_loaded.stdout | from_json).info.version }}"
+      ansible.builtin.assert:
+        that:
+          - _downloaded.rc == 0
+          - _loaded_version == _bundled_version
+          - _compose is search('GF_PLUGINS_PREINSTALL_DISABLED. "true"')
+          - _compose is search('/grafana/plugins:/var/lib/grafana/plugins:ro')
+        fail_msg: >-
+          downloaded rc {{ _downloaded.rc }} / loaded {{ _loaded_version }},
+          image ships {{ _bundled_version }}
+
+    - name: Assert the upgrade migrated and serves the kiosk as before
+      vars:
+        _dash: "{{ (_kiosk.stdout | from_json).dashboard }}"
+        _settings: "{{ _frontend.stdout | from_json }}"
+      ansible.builtin.assert:
+        that:
+          - (_health.stdout | from_json).version == _new_version
+          - _dash.title == 'Lab Kiosk'
+          - _dash.panels | length == _rendered_panels | int
+          - _search.stdout | from_json | map(attribute='uid') | list == ['lab-kiosk']
+          - _settings.disableSanitizeHtml
+          - _settings.anonymousEnabled
+          - _datasources.stdout | from_json | map(attribute='uid') | list == ['victoriametrics']
+          - _errors.stdout_lines == []
+        fail_msg: >-
+          health {{ _health.stdout }} / panels {{ _dash.panels | length }} of
+          {{ _rendered_panels }} / sanitize off
+          {{ _settings.disableSanitizeHtml }}, anonymous {{ _settings.anonymousEnabled }} / search {{ _search.stdout }} /
+          datasources {{ _datasources.stdout }} / errors {{ _errors.stdout_lines }}
