@@ -13,7 +13,11 @@
     - "{{ monitoring_config_dir }}"
     - "{{ monitoring_config_dir }}/grafana/provisioning/datasources"
     - "{{ monitoring_config_dir }}/grafana/provisioning/dashboards"
+    # Empty, but Grafana logs an error at every start if they're missing.
+    - "{{ monitoring_config_dir }}/grafana/provisioning/plugins"
+    - "{{ monitoring_config_dir }}/grafana/provisioning/alerting"
     - "{{ monitoring_config_dir }}/grafana/dashboards"
+    - "{{ monitoring_config_dir }}/grafana/plugins"
     - "{{ monitoring_config_dir }}/alertmanager-templates"
 
 - name: Create the Alertmanager secrets directory

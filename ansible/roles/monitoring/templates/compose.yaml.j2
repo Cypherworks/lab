@@ -134,10 +134,14 @@ services:
       # panel only; Grafana stays behind Authentik OIDC. Not allow_embedding — that's
       # for embedding Grafana elsewhere, which we don't do.
       GF_PANELS_DISABLE_SANITIZE_HTML: "true"
+      # Run only the plugins the pinned image ships; fetch none at startup.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
     volumes:
       - grafanadata:/var/lib/grafana
       - {{ monitoring_config_dir }}/grafana/provisioning:/etc/grafana/provisioning:ro
       - {{ monitoring_config_dir }}/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Empty and read-only: hides plugins already downloaded into the volume.
+      - {{ monitoring_config_dir }}/grafana/plugins:/var/lib/grafana/plugins:ro
     ports:
       - "3000:3000"
     depends_on:
