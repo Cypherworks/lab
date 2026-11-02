@@ -32,7 +32,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | `vcenter_oidc` | vCenter identity provider federation against an external OIDC provider. |
 | `openbao` | OpenBao secrets manager — PKI, KMS auto-unseal, OIDC, SSH CA, snapshots. |
 | `authentik_app` | Authentik app tier against an external HA database, with an LDAP outpost. |
-| `monitoring` | VictoriaMetrics, vmalert, Alertmanager, ntfy, Grafana, VictoriaLogs, and exporters. |
+| `monitoring` | VictoriaMetrics, vmalert, Alertmanager, Grafana, VictoriaLogs, and exporters. |
 | `node_exporter` | Prometheus node_exporter on bare-metal hosts. |
 | `vector` | Per-host log shipping of the systemd journal to VictoriaLogs. |
 | `journal_pull` | Copies a host's journal to the control host, for a host that can't ship its own. |

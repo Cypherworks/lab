@@ -1,0 +1,102 @@
+---
+# Checks how fast an outage reaches a receiver: rules run every 30 seconds,
+# TargetDown waits a minute, and Alertmanager sends a new group after 10
+# seconds and a resolve within 30. Needs Docker, and internet to pull the
+# image once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/alert_timing.yml
+- name: Verify the alert timing
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.alert_timing"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a target down for a minute fires
+          interval: 30s
+          input_series:
+            - series: 'up{job="node",instance="node-1"}'
+              values: '0x20'
+          alert_rule_test:
+            - eval_time: 30s
+              alertname: TargetDown
+            - eval_time: 90s
+              alertname: TargetDown
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    job: node
+                    instance: node-1
+                  exp_annotations:
+                    summary: "Target down: node / node-1"
+                    description: "No metrics scraped for a minute."
+        - name: two missed scrapes don't fire
+          interval: 30s
+          input_series:
+            - series: 'up{job="node",instance="node-1"}'
+              values: '1 1 0 0 1x16'
+          alert_rule_test:
+            - eval_time: 90s
+              alertname: TargetDown
+            - eval_time: 5m
+              alertname: TargetDown
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules and Alertmanager config
+      ansible.builtin.template:
+        src: "../templates/{{ item }}.j2"
+        dest: "{{ _dir }}/{{ item }}"
+        mode: "0644"
+      loop: [alert-rules.yml, alertmanager.yml]
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Read the rendered configs
+      ansible.builtin.slurp:
+        src: "{{ _dir }}/{{ item }}"
+      register: _rendered
+      loop: [alert-rules.yml, alertmanager.yml]
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the timing
+      vars:
+        _rules: "{{ _rendered.results[0].content | b64decode | from_yaml }}"
+        _routing: "{{ _rendered.results[1].content | b64decode | from_yaml }}"
+      ansible.builtin.assert:
+        that:
+          - _rules.groups[0].interval == '30s'
+          - _routing.route.group_wait == '10s'
+          - _routing.route.group_interval == '30s'
+          - _promtool.rc == 0
+        fail_msg: "{{ _rules.groups[0] | dict2items | rejectattr('key', 'eq', 'rules') | items2dict }} {{ _routing.route }} {{ _promtool.stdout }} {{ _promtool.stderr }}"

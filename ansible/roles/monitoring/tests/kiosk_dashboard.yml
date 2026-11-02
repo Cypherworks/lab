@@ -1,7 +1,8 @@
 ---
 # Checks the rendered kiosk dashboard: it fills one 1080p screen without
-# scrolling and keeps Lab Overview's CCTV, power and NAS panels unchanged.
-# From ansible/:
+# scrolling, in the chosen layout, and its tiles query the right things.
+# Runs the clustered tiles' queries through promtool against made-up data.
+# Needs Docker, and internet to pull the image once. From ansible/:
 #
 #   ansible-playbook -i localhost, roles/monitoring/tests/kiosk_dashboard.yml
 - name: Verify the kiosk dashboard
@@ -21,6 +22,124 @@
       office_now: sensor.office_now
       office_day: sensor.office_day
       office_month: sensor.office_month
+    _image: prom/prometheus:v2.53.4
+    # 2 is OK, 1 DEGR, 0 DOWN. Values are quoted, as YAML reads 0x3 as hex.
+    _cases:
+      - tile: Redis
+        name: a master and every member up
+        want: 2
+        series:
+          - { series: 'redis_instance_info{instance="redis-1",role="master"}', values: "1x3" }
+          - { series: 'redis_up{instance="redis-1"}', values: "1x3" }
+          - { series: 'redis_up{instance="redis-2"}', values: "1x3" }
+      - tile: Redis
+        name: a replica down
+        want: 1
+        series:
+          - { series: 'redis_instance_info{instance="redis-1",role="master"}', values: "1x3" }
+          - { series: 'redis_up{instance="redis-1"}', values: "1x3" }
+          - { series: 'redis_up{instance="redis-2"}', values: "0x3" }
+      - tile: Redis
+        name: no master
+        want: 0
+        series:
+          - { series: 'redis_up{instance="redis-1"}', values: "0x3" }
+          - { series: 'redis_up{instance="redis-2"}', values: "0x3" }
+      - tile: Redis
+        name: nothing reporting
+        want: 0
+        series: []
+      - tile: Patroni
+        name: a primary and every member up
+        want: 2
+        series:
+          - { series: 'patroni_primary{instance="pg-1"}', values: "1x3" }
+          - { series: 'patroni_primary{instance="pg-2"}', values: "0x3" }
+          - { series: 'up{job="patroni",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",instance="pg-2"}', values: "1x3" }
+      - tile: Patroni
+        name: a replica down
+        want: 1
+        series:
+          - { series: 'patroni_primary{instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",instance="pg-2"}', values: "0x3" }
+      - tile: Patroni
+        name: no primary
+        want: 0
+        series:
+          - { series: 'patroni_primary{instance="pg-1"}', values: "0x3" }
+          - { series: 'patroni_primary{instance="pg-2"}', values: "0x3" }
+          - { series: 'up{job="patroni",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",instance="pg-2"}', values: "1x3" }
+      - tile: Patroni
+        name: nothing reporting
+        want: 0
+        series: []
+      - tile: etcd
+        name: a leader and every member up
+        want: 2
+        series:
+          - { series: 'etcd_server_has_leader{instance="etcd-1"}', values: "1x3" }
+          - { series: 'etcd_server_has_leader{instance="etcd-2"}', values: "1x3" }
+          - { series: 'up{job="etcd",instance="etcd-1"}', values: "1x3" }
+          - { series: 'up{job="etcd",instance="etcd-2"}', values: "1x3" }
+      - tile: etcd
+        name: a member down
+        want: 1
+        series:
+          - { series: 'etcd_server_has_leader{instance="etcd-1"}', values: "1x3" }
+          - { series: 'up{job="etcd",instance="etcd-1"}', values: "1x3" }
+          - { series: 'up{job="etcd",instance="etcd-2"}', values: "0x3" }
+      - tile: etcd
+        name: no leader
+        want: 0
+        series:
+          - { series: 'etcd_server_has_leader{instance="etcd-1"}', values: "0x3" }
+          - { series: 'etcd_server_has_leader{instance="etcd-2"}', values: "0x3" }
+          - { series: 'up{job="etcd",instance="etcd-1"}', values: "1x3" }
+          - { series: 'up{job="etcd",instance="etcd-2"}', values: "1x3" }
+      - tile: etcd
+        name: nothing reporting
+        want: 0
+        series: []
+      - tile: DNS
+        name: every resolver answers
+        want: 2
+        series:
+          - { series: 'probe_success{job="dns",instance="pi-dns-1"}', values: "1x3" }
+          - { series: 'probe_success{job="dns",instance="pi-dns-2"}', values: "1x3" }
+      - tile: DNS
+        name: one resolver fails
+        want: 1
+        series:
+          - { series: 'probe_success{job="dns",instance="pi-dns-1"}', values: "1x3" }
+          - { series: 'probe_success{job="dns",instance="pi-dns-2"}', values: "0x3" }
+      - tile: DNS
+        name: every resolver fails
+        want: 0
+        series:
+          - { series: 'probe_success{job="dns",instance="pi-dns-1"}', values: "0x3" }
+          - { series: 'probe_success{job="dns",instance="pi-dns-2"}', values: "0x3" }
+      - tile: DNS
+        name: nothing reporting
+        want: 0
+        series: []
+    _spec: |
+      rule_files: []
+      evaluation_interval: 1m
+      tests:
+      {% for case in _cases %}
+        - name: "{{ case.tile }}: {{ case.name }}"
+          interval: 1m
+          input_series: {{ case.series | to_json }}
+          promql_expr_test:
+            - expr: {{ _exprs[case.tile] | to_json }}
+              eval_time: 2m
+              exp_samples:
+                - labels: "{}"
+                  value: {{ case.want }}
+      {% endfor %}
   tasks:
     - name: Make a scratch dir
       ansible.builtin.tempfile:
@@ -30,21 +149,39 @@
 
     - name: Render and check, then clean up
       block:
-        - name: Render both dashboards
+        - name: Render the dashboard
           ansible.builtin.template:
-            src: "../templates/dashboards/{{ item }}.json.j2"
-            dest: "{{ _scratch.path }}/{{ item }}.json"
+            src: ../templates/dashboards/lab-kiosk.json.j2
+            dest: "{{ _scratch.path }}/lab-kiosk.json"
             mode: "0644"
-          loop: [lab-kiosk, lab-overview]
 
-        - name: Check the layout and the shared panels
+        - name: Check the layout and the queries
           ansible.builtin.command:
             argv:
               - "{{ ansible_playbook_python }}"
               - "{{ playbook_dir }}/kiosk_dashboard_checks.py"
               - "{{ _scratch.path }}/lab-kiosk.json"
-              - "{{ _scratch.path }}/lab-overview.json"
           changed_when: false
+
+        - name: Read each tile's query
+          vars:
+            _stats: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/lab-kiosk.json') | from_json).panels | selectattr('type', 'eq', 'stat') }}"
+          ansible.builtin.set_fact:
+            _exprs: "{{ dict(_stats | map(attribute='fieldConfig.defaults.displayName', default='') | zip(_stats | map(attribute='targets.0.expr'))) }}"
+
+        - name: Write the test cases
+          ansible.builtin.copy:
+            content: "{{ _spec }}"
+            dest: "{{ _scratch.path }}/tiles_test.yml"
+            mode: "0644"
+
+        - name: Run promtool on the clustered tiles
+          ansible.builtin.command: >-
+            docker run --rm -v {{ _scratch.path }}:/work -w /work --entrypoint promtool
+            {{ _image }} test rules tiles_test.yml
+          register: _promtool
+          changed_when: false
+          failed_when: _promtool.rc != 0
       always:
         - name: Remove the scratch dir
           ansible.builtin.file:

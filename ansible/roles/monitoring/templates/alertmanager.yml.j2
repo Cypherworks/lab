@@ -1,19 +1,9 @@
-{# Managed by the monitoring role. Alerts POST to ntfy with the role's custom
-   "lab" template (see ntfy-alert.yml) for a glanceable one-line title + summary.
-   Needs ntfy >= v2.14 for server-side templates.
-   Discord and healthchecks.io are outside the lab, so their URLs are secrets
-   read from files, and what they're sent goes through alert-text.tmpl. #}
+{# Managed by the monitoring role. Alerts go to Discord, the heartbeat to
+   healthchecks.io. Both are outside the lab, so their URLs are secrets read
+   from files, and what they're sent goes through alert-text.tmpl. A receiver
+   with no URL set receives nothing. #}
 {% macro receiver(name, webhook_url) %}
   - name: {{ name }}
-    webhook_configs:
-      # priority raises it to a sound/vibrate push; tags add an icon. Both are ntfy
-      # publish params applied alongside the alertmanager template.
-      - url: "http://ntfy/{{ monitoring_ntfy_topic }}?template=lab&priority={{ monitoring_ntfy_alert_priority }}&tags={{ monitoring_ntfy_alert_tags }}"
-        send_resolved: true
-        http_config:
-          basic_auth:
-            username: alertmanager
-            password: "{{ monitoring_ntfy_alertmanager_password }}"
 {% if webhook_url %}
     discord_configs:
       - webhook_url_file: /etc/alertmanager/secrets/discord-{{ name }}
@@ -27,8 +17,9 @@ templates:
 route:
   receiver: warning
   group_by: [alertname, instance]
-  group_wait: 30s
-  group_interval: 5m
+  group_wait: 10s
+  # A group holds one alert, so this only holds back its resolve and repeats.
+  group_interval: 30s
   repeat_interval: {{ monitoring_alertmanager_repeat_interval }}
   routes:
 {% if monitoring_healthchecks_ping_url %}

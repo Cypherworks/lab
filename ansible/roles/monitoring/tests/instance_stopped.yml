@@ -1,0 +1,133 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up Incus
+# metrics, and checks the rule is left out when no instances are listed. Needs
+# Docker, and internet to pull the image once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/instance_stopped.yml
+- name: Verify the instance not running alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.instance_stopped"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a listed instance with no metrics fires after a minute
+          interval: 1m
+          input_series:
+            - series: 'incus_procs_total{instance="node-1",name="web-1"}'
+              values: '5x10'
+          alert_rule_test:
+            - eval_time: 30s
+              alertname: InstanceNotRunning
+            - eval_time: 90s
+              alertname: InstanceNotRunning
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    name: db-1
+                    instance: db-1
+                  exp_annotations:
+                    summary: "Instance not running: db-1"
+                    description: "Incus has reported nothing for it for a minute."
+        - name: every listed instance running stays quiet
+          interval: 1m
+          input_series:
+            - series: 'incus_procs_total{instance="node-1",name="web-1"}'
+              values: '5x10'
+            - series: 'incus_procs_total{instance="node-2",name="db-1"}'
+              values: '3x10'
+          alert_rule_test:
+            - eval_time: 5m
+              alertname: InstanceNotRunning
+        - name: an instance stopping fires, and one coming back clears
+          interval: 1m
+          input_series:
+            - series: 'incus_procs_total{instance="node-1",name="web-1"}'
+              values: '5x10'
+            - series: 'incus_procs_total{instance="node-2",name="db-1"}'
+              values: '3 3 _x10 3x5'
+          alert_rule_test:
+            - eval_time: 10m
+              alertname: InstanceNotRunning
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    name: db-1
+                    instance: db-1
+                  exp_annotations:
+                    summary: "Instance not running: db-1"
+                    description: "Incus has reported nothing for it for a minute."
+            - eval_time: 13m
+              alertname: InstanceNotRunning
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules with no instances listed
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Read the rules rendered with no instances listed
+      ansible.builtin.slurp:
+        src: "{{ _dir }}/alert-rules.yml"
+      register: _unlisted
+
+    - name: List two instances
+      ansible.builtin.set_fact:
+        monitoring_incus_instances: [web-1, db-1]
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alert behaves
+      ansible.builtin.assert:
+        that:
+          - "'InstanceNotRunning' not in (_unlisted.content | b64decode)"
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"

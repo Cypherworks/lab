@@ -1,8 +1,9 @@
 ---
 # Runs real Alertmanager on the role's rendered config, with a stub standing in
-# for Discord, healthchecks.io and ntfy. Sends alerts stuffed with URLs, FQDNs
-# and IP addresses, and checks what would leave the lab. Needs Docker, and
-# internet to pull the images once. From ansible/:
+# for Discord and healthchecks.io, and answering as ntfy to catch any post
+# there. Sends alerts stuffed with URLs, FQDNs and IP addresses, and checks
+# what would leave the lab. Needs Docker, and internet to pull the images once.
+# From ansible/:
 #
 #   ansible-playbook -i localhost, roles/monitoring/tests/discord.yml
 - name: Verify the alert routes and what they send
@@ -181,7 +182,7 @@
         _critical: "sent: {{ _sent | selectattr('path', 'equalto', '/discord-critical') | map(attribute='body') | join(' ') }}"
         _warning: "sent: {{ _sent | selectattr('path', 'equalto', '/discord-warning') | map(attribute='body') | join(' ') }}"
         _heartbeats: "{{ _sent | selectattr('path', 'equalto', '/heartbeat') | list }}"
-        _ntfy: "{{ _sent | selectattr('path', 'search', '^/lab-alerts') | list }}"
+        _elsewhere: "{{ _sent | map(attribute='path') | reject('in', ['/discord-critical', '/discord-warning', '/heartbeat']) | list }}"
         _discord: "{{ _critical }} {{ _warning }}"
       ansible.builtin.assert:
         that:
@@ -194,5 +195,5 @@
           - "'198.51' not in _discord"
           - "'Heartbeat' not in _discord"
           - _heartbeats | length >= 3
-          - _ntfy | length >= 2
+          - _elsewhere | length == 0
         fail_msg: "{{ _hits.stdout }} {{ _am_logs.stderr }} {{ _vmalert.stderr }}"

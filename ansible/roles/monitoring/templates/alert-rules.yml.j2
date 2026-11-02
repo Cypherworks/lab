@@ -2,6 +2,8 @@
    templating ({{ '{{ ... }}' }}) is escaped so it survives to the rendered file. #}
 groups:
   - name: lab
+    # Twice vmalert's default, so an outage reaches a receiver sooner.
+    interval: 30s
     rules:
 {% if monitoring_healthchecks_ping_url %}
       # Always firing. healthchecks.io alerts when these stop arriving.
@@ -24,12 +26,36 @@ groups:
 
       - alert: TargetDown
         expr: up == 0
-        for: 2m
+        for: 1m
         labels:
           severity: critical
         annotations:
           summary: "Target down: {{ '{{ $labels.job }} / {{ $labels.instance }}' }}"
-          description: "No metrics scraped for 2 minutes."
+          description: "No metrics scraped for a minute."
+
+      # `up` only proves blackbox answered, so TargetDown can't see these.
+      - alert: ServiceDown
+        expr: probe_success{job=~"service-health|dns"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service down: {{ '{{ $labels.job }} / {{ $labels.instance }}' }}"
+          description: "Health probe failing for a minute."
+{% if monitoring_incus_instances %}
+
+      # Incus drops every series of a stopped instance, so look for none.
+      - alert: InstanceNotRunning
+        expr: '{% for name in monitoring_incus_instances %}absent(incus_procs_total{name="{{ name }}"}){{ " or " if not loop.last }}{% endfor %}'
+        for: 1m
+        labels:
+          severity: critical
+          # Alertmanager groups and the kiosk lists alerts by instance.
+          instance: "{{ '{{ $labels.name }}' }}"
+        annotations:
+          summary: "Instance not running: {{ '{{ $labels.name }}' }}"
+          description: "Incus has reported nothing for it for a minute."
+{% endif %}
 
       - alert: DiskFilling
         expr: 100 * (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes) > {{ monitoring_disk_used_percent }}

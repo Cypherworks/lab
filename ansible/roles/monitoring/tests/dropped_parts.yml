@@ -1,0 +1,68 @@
+---
+# Checks the role ships neither ntfy nor the Lab Overview dashboard, and
+# clears both from a host that has them. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/dropped_parts.yml
+- name: Verify ntfy and Lab Overview are gone
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _role: "{{ playbook_dir }}/.."
+    _tasks: "{{ lookup('ansible.builtin.file', _role ~ '/tasks/main.yml') | from_yaml }}"
+    _task: "{{ dict(_tasks | map(attribute='name') | zip(_tasks)) }}"
+    _rendered: "{{ _task['Render the monitoring config files'].loop | map(attribute='dest') | join(' ') }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, check, and clean up
+      block:
+        - name: Render the compose and Alertmanager configs
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/{{ item }}"
+            mode: "0644"
+          loop: [compose.yaml, alertmanager.yml]
+
+        - name: Find any ntfy or Lab Overview templates in the role
+          ansible.builtin.find:
+            paths: "{{ _role }}/templates"
+            patterns: ["ntfy*", "lab-overview*"]
+            recurse: true
+          register: _leftovers
+
+        - name: Assert neither ships, and a host that has them is cleared
+          vars:
+            _compose: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/compose.yaml') | from_yaml }}"
+            _routing: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/alertmanager.yml') }}"
+            _cleared: "{{ _task['Remove dropped provisioned dashboards'].loop }}"
+            _configs: "{{ (_task['Remove dropped config files'] | default({})).loop | default([]) }}"
+            _volumes: "{{ (_task['Remove dropped volumes'] | default({})).loop | default([]) }}"
+          ansible.builtin.assert:
+            that:
+              - _leftovers.files | length == 0
+              - "'ntfy' not in _rendered and 'lab-overview' not in _rendered"
+              - "'ntfy' not in _compose.services"
+              - "_compose.volumes | default({}) | select('search', 'ntfy') | list | length == 0"
+              - "'ntfy' not in _routing"
+              - "_tasks | map(attribute='name') | select('search', 'ntfy') | list | length == 0"
+              - "lookup('ansible.builtin.file', _role ~ '/defaults/main.yml') is not search('monitoring_ntfy_')"
+              - "'lab-overview.json' in _cleared"
+              - "_configs | sort == ['ntfy-alert.yml', 'ntfy.yml']"
+              - "_volumes | sort == ['ntfycache', 'ntfydata']"
+              - _task['Start the monitoring stack']['community.docker.docker_compose_v2'].remove_orphans | default(false)
+            fail_msg: "templates left: {{ _leftovers.files | map(attribute='path') | list }}; rendered: {{ _rendered }}"
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

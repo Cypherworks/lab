@@ -76,7 +76,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 
 | Role | Purpose |
 |------|---------|
-| [`monitoring`](ansible/roles/monitoring) | VictoriaMetrics, vmalert, Alertmanager, ntfy, Grafana, VictoriaLogs, and exporters on one host. |
+| [`monitoring`](ansible/roles/monitoring) | VictoriaMetrics, vmalert, Alertmanager, Grafana, VictoriaLogs, and exporters on one host. |
 | [`node_exporter`](ansible/roles/node_exporter) | Prometheus node_exporter on bare-metal hosts. |
 | [`vector`](ansible/roles/vector) | Per-host log-shipping agent: ships the systemd journal to VictoriaLogs over the Elasticsearch bulk endpoint. |
 
