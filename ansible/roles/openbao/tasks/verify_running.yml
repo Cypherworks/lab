@@ -3,9 +3,9 @@
 # initialised server that can't reach KMS stays sealed. Either fails the run.
 - name: Confirm the pinned OpenBao is running and unsealed
   vars:
-    openbao_status: "{{ (openbao_running.stdout | default('', true) or '{}') | from_json }}"
-    openbao_is_pinned: "{{ openbao_status.version | default('') == openbao_version }}"
-    openbao_is_unsealed: "{{ not (openbao_status.initialized | default(false)) or not (openbao_status.sealed | default(true)) }}"
+    openbao_running_status: "{{ (openbao_running.stdout | default('', true) or '{}') | from_json }}"
+    openbao_is_pinned: "{{ openbao_running_status.version | default('') == openbao_version }}"
+    openbao_is_unsealed: "{{ not (openbao_running_status.initialized | default(false)) or not (openbao_running_status.sealed | default(true)) }}"
   block:
     - name: Wait for the pinned OpenBao
       environment:
