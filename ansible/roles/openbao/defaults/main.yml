@@ -105,6 +105,8 @@ openbao_recovery_shares: 5
 openbao_recovery_threshold: 3
 openbao_ssm_recovery_param: ""    # recovery-keys SSM path (recovery CMK)
 openbao_ssm_provisioner_param: ""  # AppRole-creds SSM path (unseal CMK)
+# Snapshot on the host to restore into a fresh node (README: restore mode).
+openbao_restore_snapshot: ""
 openbao_recovery_kms_key_id: ""   # dedicated recovery CMK id
 # aws CLI env for SSM I/O — the host's unseal identity from state.
 openbao_aws_cli_env:
