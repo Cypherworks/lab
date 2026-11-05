@@ -16,6 +16,12 @@ api:
    then gives MSE a placeholder 128x96 header, and the browser draws 4:3. The
    camera is a separate stream because beside a raw H.264 source the ffmpeg one
    is never picked. #}
+{% if monitoring_go2rtc_video_transcode and monitoring_go2rtc_video_fps %}
+{# go2rtc's h264 with 2s keyframes; its MSE player only keeps 5s. #}
+ffmpeg:
+  h264: "-c:v libx264 -g {{ (monitoring_go2rtc_video_fps | int) * 2 }} -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p"
+
+{% endif %}
 streams:
   front:
 {% if monitoring_go2rtc_video_transcode %}
