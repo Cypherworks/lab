@@ -79,6 +79,25 @@
               - _streams.front == ['ffmpeg:front_source#video=h264#raw=-r 10']
               - _streams.garage_carport == ['ffmpeg:garage_carport_source#video=h264#raw=-r 10']
             fail_msg: "{{ _streams | to_json }}"
+
+        # The MSE player keeps 5s and drops a whole keyframe group at a time.
+        - name: Assert a limited rate keeps keyframes 2 seconds apart
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/limited.yaml') | from_yaml }}"
+          ansible.builtin.assert:
+            that:
+              - _config.ffmpeg.h264 == '-c:v libx264 -g 20 -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p'
+            fail_msg: "{{ _config | to_json }}"
+
+        - name: Assert the camera's own rate keeps go2rtc's keyframe interval
+          vars:
+            _plain: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/plain.yaml') | from_yaml }}"
+            _transcoded: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/transcoded.yaml') | from_yaml }}"
+          ansible.builtin.assert:
+            that:
+              - "'ffmpeg' not in _plain"
+              - "'ffmpeg' not in _transcoded"
+            fail_msg: "{{ [_plain, _transcoded] | to_json }}"
       always:
         - name: Remove the scratch dir
           ansible.builtin.file:
