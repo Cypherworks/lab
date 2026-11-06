@@ -1,0 +1,17 @@
+---
+# Runs the role's tailnet collector on metrics.yml's target, where Headscale
+# already serves under systemd.
+- name: Converge the tailnet collector
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Read the run's settings
+      ansible.builtin.include_vars:
+        file: "{{ settings }}"
+
+    - name: Hold the tailnet collector
+      ansible.builtin.include_role:
+        name: headscale
+        tasks_from: metrics

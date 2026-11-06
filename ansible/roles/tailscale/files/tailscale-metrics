@@ -1,0 +1,73 @@
+#!/usr/bin/python3 -I
+"""Write this node's tailnet peer counts for node_exporter's textfile collector.
+
+Reads `tailscale status --json` and counts the peers this node sent a packet
+to in the last two minutes (Active), and how many of those it has no direct
+address for (CurAddr empty), so their traffic goes through DERP or nowhere.
+Idle peers have no CurAddr either, which is why only active ones count.
+Replaces OUT in one rename. On any failure it removes OUT, so a stale count
+never passes for a live one, and exits 1.
+
+  tailscale-metrics --out DIR/tailscale.prom
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+
+def counts():
+    done = subprocess.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=30)
+    if done.returncode != 0:
+        raise RuntimeError(f"tailscale status: {(done.stderr or done.stdout).strip()[:300]}")
+    status = json.loads(done.stdout)
+    if status.get("BackendState") != "Running":
+        raise RuntimeError(f"tailscale is {status.get('BackendState')}")
+    active = [p for p in (status.get("Peer") or {}).values() if p.get("Active")]
+    return len(active), sum(1 for p in active if not p.get("CurAddr"))
+
+
+def textfile(active, not_direct):
+    return "\n".join([
+        "# HELP tailscale_peers_active Peers this node sent a packet to in the last two minutes.",
+        "# TYPE tailscale_peers_active gauge",
+        f"tailscale_peers_active {active}",
+        "# HELP tailscale_peers_active_not_direct Active peers with no direct address, so through DERP or nowhere.",
+        "# TYPE tailscale_peers_active_not_direct gauge",
+        f"tailscale_peers_active_not_direct {not_direct}",
+    ]) + "\n"
+
+
+def write(path, content):
+    folder = os.path.dirname(path) or "."
+    fd, scratch = tempfile.mkstemp(dir=folder, prefix=".tailscale.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.chmod(scratch, 0o644)
+        os.replace(scratch, path)
+    except BaseException:
+        os.unlink(scratch)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--out", required=True, help="the .prom file node_exporter reads")
+    args = parser.parse_args()
+    try:
+        write(args.out, textfile(*counts()))
+    except Exception as err:
+        try:
+            os.unlink(args.out)
+        except FileNotFoundError:
+            pass
+        print(f"tailscale-metrics: {err}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

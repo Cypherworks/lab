@@ -1,0 +1,17 @@
+---
+# Runs the role's peer collector on metrics.yml's target, where tailscaled
+# already runs under systemd.
+- name: Converge the peer collector
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Read the run's settings
+      ansible.builtin.include_vars:
+        file: "{{ settings }}"
+
+    - name: Hold the peer collector
+      ansible.builtin.include_role:
+        name: tailscale
+        tasks_from: metrics

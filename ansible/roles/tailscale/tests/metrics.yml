@@ -1,0 +1,348 @@
+---
+# Exercises the peer collector end to end on a host booted like a router:
+# systemd runs in a privileged Debian 13 container with Tailscale's own
+# package, joined to a throwaway Headscale with two peers, one on the
+# router's network and one it can't reach directly. Checks that the timer
+# writes a textfile node_exporter can read with the active and not-direct
+# counts, that a second converge changes nothing, that a stopped tailscaled
+# leaves no count, and that turning it off removes it. Needs Docker,
+# community.docker, and internet for the images and the apt packages.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/tailscale/tests/metrics.yml
+- name: Boot a tailnet with a router
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # headscale/headscale:0.26.1, as the control server runs.
+    _headscale: headscale/headscale@sha256:ea9b5ee06274d757a4d52103de56cd11a9c393acb19d9a35f4b9fe52ada410de
+    # tailscale/tailscale:v1.98.8, as the routers run.
+    _tailscale: tailscale/tailscale@sha256:d54b2e6a9c09f0e5ec52e82b9ad4af3d446b54a7c08075e92f11c39dd410105f
+    _target: tailscale-metrics-router
+    _server: tailscale-metrics-headscale
+    _near: tailscale-metrics-near
+    _far: tailscale-metrics-far
+    _net: tailscale-metrics-test
+    _far_net: tailscale-metrics-far
+    _dir: "{{ playbook_dir }}/.metrics"
+    _join: >-
+      docker run -d -e TS_USERSPACE=true -e TS_STATE_DIR=/var/lib/tailscale
+  tasks:
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ [_target, _server, _near, _far] | join(' ') }} 2>/dev/null;
+        docker network rm {{ _net }} {{ _far_net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the router's network and one it can't reach
+      ansible.builtin.command: docker network create --subnet {{ item.subnet }} {{ item.name }}
+      changed_when: true
+      loop:
+        - { name: "{{ _net }}", subnet: 172.30.102.0/24 }
+        - { name: "{{ _far_net }}", subnet: 172.30.103.0/24 }
+
+    - name: Make the settings directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Write the control server's config
+      ansible.builtin.copy:
+        dest: "{{ _dir }}/headscale.yaml"
+        mode: "0644"
+        content: |
+          server_url: http://172.30.102.10:8080
+          listen_addr: 0.0.0.0:8080
+          metrics_listen_addr: 127.0.0.1:9090
+          grpc_listen_addr: 127.0.0.1:50443
+          noise:
+            private_key_path: /var/lib/headscale/noise_private.key
+          prefixes:
+            v4: 100.64.0.0/10
+            v6: fd7a:115c:a1e0::/48
+          derp:
+            server:
+              enabled: true
+              region_id: 999
+              region_code: lab
+              region_name: Lab Embedded DERP
+              stun_listen_addr: 0.0.0.0:3478
+              private_key_path: /var/lib/headscale/derp_server_private.key
+              automatically_add_embedded_derp_region: true
+            urls: []
+            auto_update_enabled: false
+          database:
+            type: sqlite
+            sqlite:
+              path: /var/lib/headscale/db.sqlite
+          dns:
+            magic_dns: false
+            base_domain: ts.example.test
+            override_local_dns: false
+
+    - name: Start the control server on both networks
+      ansible.builtin.shell: >-
+        docker run -d --name {{ _server }} --network {{ _net }} --ip 172.30.102.10
+        -v {{ _dir }}/headscale.yaml:/etc/headscale/config.yaml:ro {{ _headscale }} serve
+        && docker network connect --ip 172.30.103.10 {{ _far_net }} {{ _server }}
+      changed_when: true
+
+    # A public resolver, as filtering ones may block Tailscale's package host.
+    - name: Boot systemd in Debian 13, as the routers run
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host --dns 1.1.1.1
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} --ip 172.30.102.20
+        --entrypoint sh debian:13 -c
+        'apt-get update -qq && apt-get install -y -qq python3 python3-debian sudo systemd systemd-sysv ca-certificates
+        && exec /usr/lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for the control server's CLI
+      ansible.builtin.command: docker exec {{ _server }} headscale users list -o json
+      register: _ready
+      until: _ready.rc == 0
+      retries: 30
+      delay: 1
+      changed_when: false
+
+    - name: Add the tailnet's user
+      ansible.builtin.command: docker exec {{ _server }} headscale users create lab
+      changed_when: true
+
+    - name: Mint a reusable key for the joins
+      ansible.builtin.command: docker exec {{ _server }} headscale preauthkeys create -u 1 --reusable -e 1h
+      register: _key
+      changed_when: true
+      no_log: true
+
+    - name: Join the near and far peers
+      ansible.builtin.command: >-
+        {{ _join }} --name {{ item.name }} --hostname {{ item.name }} --network {{ item.net }}
+        -e TS_AUTHKEY={{ _key.stdout_lines | last }}
+        -e TS_EXTRA_ARGS=--login-server=http://{{ item.server }}:8080 {{ _tailscale }}
+      changed_when: true
+      loop:
+        - { name: "{{ _near }}", net: "{{ _net }}", server: 172.30.102.10 }
+        - { name: "{{ _far }}", net: "{{ _far_net }}", server: 172.30.103.10 }
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Write the converge settings, with the collector on and off
+      ansible.builtin.copy:
+        content: "{{ item.settings | to_json }}"
+        dest: "{{ _dir }}/{{ item.name }}.json"
+        mode: "0600"
+      loop:
+        - { name: "on", settings: { tailscale_metrics: true } }
+        - { name: "off", settings: { tailscale_metrics: false } }
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Address the router through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: metrics_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+        _authkey: "{{ _key.stdout_lines | last }}"
+      no_log: true
+
+- name: Count the router's peers
+  hosts: metrics_target
+  gather_facts: false
+  vars:
+    _dir: "{{ playbook_dir }}/.metrics"
+    _prom: /var/lib/prometheus/node-exporter/tailscale.prom
+    _converge: >-
+      ansible-playbook -i {{ inventory_hostname }}, -c community.docker.docker
+      {{ playbook_dir }}/metrics_converge.yml -e settings={{ _dir }}
+    _collect: systemctl start tailscale-metrics.service
+  tasks:
+    - name: Count, break, remove, and clean up
+      block:
+        - name: Add Tailscale's apt repository
+          ansible.builtin.deb822_repository:
+            name: tailscale
+            types: [deb]
+            uris: https://pkgs.tailscale.com/stable/debian
+            suites: trixie
+            components: [main]
+            signed_by: https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
+
+        - name: Install Tailscale
+          ansible.builtin.apt:
+            name: tailscale
+            update_cache: true
+
+        - name: Start tailscaled
+          ansible.builtin.systemd_service:
+            name: tailscaled
+            state: started
+
+        - name: Join the router
+          ansible.builtin.command: >-
+            tailscale up --timeout 60s --login-server http://172.30.102.10:8080
+            --authkey {{ _authkey }} --hostname {{ inventory_hostname }}
+          changed_when: true
+          no_log: true
+
+        - name: Wait for both peers
+          ansible.builtin.command: tailscale status --json
+          register: _status
+          until: (_status.stdout | from_json).Peer | default({}, true) | length == 2
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Make node_exporter's textfile directory, as its package does
+          ansible.builtin.file:
+            path: /var/lib/prometheus/node-exporter
+            state: directory
+            mode: "0755"
+
+        - name: Converge with the collector on
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: &control_host
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          environment: &roles
+            ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../.."
+            ANSIBLE_DISPLAY_OK_HOSTS: "false"
+            ANSIBLE_DISPLAY_SKIPPED_HOSTS: "false"
+          changed_when: true
+
+        - name: Converge again with nothing changed
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _again
+          changed_when: false
+
+        - name: Read whether the timer runs
+          ansible.builtin.systemd_service:
+            name: tailscale-metrics.timer
+          register: _timer
+
+        - name: Send each peer traffic, so both count as active
+          ansible.builtin.command: tailscale ping -c 2 --timeout 3s {{ item }}
+          changed_when: false
+          failed_when: false
+          loop: "{{ (_status.stdout | from_json).Peer.values() | map(attribute='TailscaleIPs') | map('first') | list }}"
+
+        - name: Collect once
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read the textfile
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _textfile
+
+        - name: Read how the textfile is kept
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _textfile_stat
+
+        - name: Assert the router counts two active peers, one not direct
+          vars:
+            _lines: "{{ (_textfile.content | b64decode).splitlines() }}"
+            _samples: "{{ _lines | reject('match', '#') | list }}"
+          ansible.builtin.assert:
+            that:
+              - "'changed=0' in _again.stdout"
+              - _timer.status.UnitFileState == 'enabled'
+              - _timer.status.ActiveState == 'active'
+              - "'tailscale_peers_active 2' in _samples"
+              - "'tailscale_peers_active_not_direct 1' in _samples"
+              - _samples | length == 2
+              - "'# TYPE tailscale_peers_active gauge' in _lines"
+              - "'# TYPE tailscale_peers_active_not_direct gauge' in _lines"
+              - _textfile_stat.stat.mode == '0644'
+            fail_msg: >-
+              {{ _lines }}
+              {{ _again.stdout | regex_findall('TASK \[[^\]]*\]|changed: .*') | join(' ') }}
+
+        - name: Stop tailscaled
+          ansible.builtin.systemd_service:
+            name: tailscaled
+            state: stopped
+
+        - name: Collect without it
+          ansible.builtin.command: "{{ _collect }}"
+          register: _broken
+          changed_when: true
+          failed_when: false
+
+        - name: Read whether a textfile is left
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _broken_stat
+
+        - name: Converge with the collector off
+          ansible.builtin.command: "{{ _converge }}/off.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          changed_when: true
+
+        - name: Read what the collector left
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: _left
+          loop:
+            - /etc/systemd/system/tailscale-metrics.timer
+            - /etc/systemd/system/tailscale-metrics.service
+            - /usr/local/sbin/tailscale-metrics
+            - "{{ _prom }}"
+
+        - name: Assert a stopped tailscaled leaves no count, and turning it off removes the collector
+          ansible.builtin.assert:
+            that:
+              - _broken.rc != 0
+              - not _broken_stat.stat.exists
+              - _left.results | selectattr('stat.exists') | list | length == 0
+            fail_msg: "{{ _broken.rc }} {{ _left.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: >-
+            docker rm -f {{ inventory_hostname }} tailscale-metrics-headscale
+            tailscale-metrics-near tailscale-metrics-far
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test networks
+          ansible.builtin.command: docker network rm tailscale-metrics-test tailscale-metrics-far
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the settings
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
+          delegate_to: localhost
+          connection: local
+          vars: *control_host

@@ -1,0 +1,11 @@
+{# Managed by Ansible (headscale). #}
+[Unit]
+Description=Push the tailnet's state from Headscale on a timer
+
+[Timer]
+OnBootSec={{ headscale_metrics_push_interval }}
+OnUnitActiveSec={{ headscale_metrics_push_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

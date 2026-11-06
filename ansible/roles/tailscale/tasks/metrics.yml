@@ -1,0 +1,63 @@
+---
+# A timer writes this node's tailnet peer counts into node_exporter's
+# textfile directory. Turned off, the collector and its count are removed.
+- name: Install the peer collector
+  when: tailscale_metrics | bool
+  become: true
+  block:
+    - name: Install the collector script
+      ansible.builtin.copy:
+        src: tailscale-metrics
+        dest: /usr/local/sbin/tailscale-metrics
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the collector's units
+      ansible.builtin.template:
+        src: "tailscale-metrics.{{ item }}.j2"
+        dest: "/etc/systemd/system/tailscale-metrics.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: _tailscale_metrics_units
+
+    - name: Run the collector on its timer
+      ansible.builtin.systemd_service:
+        name: tailscale-metrics.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ _tailscale_metrics_units is changed }}"
+
+- name: Remove the peer collector
+  when: not tailscale_metrics | bool
+  become: true
+  block:
+    - name: Read whether the timer is installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/tailscale-metrics.timer
+      register: _tailscale_metrics_timer
+
+    - name: Stop the timer
+      ansible.builtin.systemd_service:
+        name: tailscale-metrics.timer
+        enabled: false
+        state: stopped
+      when: _tailscale_metrics_timer.stat.exists
+
+    - name: Remove the collector and its count
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/tailscale-metrics.timer
+        - /etc/systemd/system/tailscale-metrics.service
+        - /usr/local/sbin/tailscale-metrics
+        - "{{ tailscale_metrics_dir }}/tailscale.prom"
+      register: _tailscale_metrics_removed
+
+    - name: Forget the removed units
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: _tailscale_metrics_removed is changed

@@ -1,0 +1,403 @@
+---
+# Exercises the tailnet collector end to end on a host booted like the EC2:
+# systemd runs in a privileged Ubuntu 24.04 container with the pinned
+# Headscale package, three Tailscale nodes join it, and a real vmsingle takes
+# the push. Checks what each node, route and key reports, that no key secret
+# reaches VictoriaMetrics, that a second converge changes nothing, that a
+# failed read pushes nothing, and that turning it off removes it. Needs
+# Docker, community.docker, and internet for the images, the package and apt.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/headscale/tests/metrics.yml
+- name: Boot a control server and a metrics store
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: headscale-metrics-target
+    _vm_name: headscale-metrics-vm
+    # victoriametrics/victoria-metrics:v1.102.1, as monitoring runs.
+    _vm: victoriametrics/victoria-metrics@sha256:8d34a7572df2ef57ef3e55257c112b1ba1c3ca0fecb138fea5cfed882c0cdb07
+    _nodes: [headscale-metrics-router, headscale-metrics-peer, headscale-metrics-gone]
+    _net: headscale-metrics-test
+    _dir: "{{ playbook_dir }}/.metrics"
+  tasks:
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ ([_target, _vm_name] + _nodes) | join(' ') }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.99.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Boot systemd in Ubuntu 24.04, as the EC2 runs
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} --ip 172.30.99.10
+        --entrypoint sh ubuntu:24.04 -c
+        'apt-get update -qq && apt-get install -y -qq python3 python3-apt sudo systemd systemd-sysv ca-certificates
+        && exec /usr/lib/systemd/systemd'
+      changed_when: true
+
+    - name: Start the metrics store
+      ansible.builtin.command: >-
+        docker run -d --name {{ _vm_name }} --network {{ _net }} --ip 172.30.99.30 {{ _vm }}
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Make the settings directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Write the converge settings, with the collector on and off
+      ansible.builtin.copy:
+        content: "{{ item.settings | to_json }}"
+        dest: "{{ _dir }}/{{ item.name }}.json"
+        mode: "0600"
+      loop:
+        - name: "on"
+          settings:
+            headscale_metrics_push_url: http://172.30.99.30:8428/api/v1/import/prometheus
+        - name: "off"
+          settings:
+            headscale_metrics_push_url: ""
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: metrics_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Push the tailnet's state
+  hosts: metrics_target
+  gather_facts: false
+  vars:
+    _dir: "{{ playbook_dir }}/.metrics"
+    _net: headscale-metrics-test
+    _vm_name: headscale-metrics-vm
+    # tailscale/tailscale:v1.98.8, as the routers run.
+    _tailscale: tailscale/tailscale@sha256:d54b2e6a9c09f0e5ec52e82b9ad4af3d446b54a7c08075e92f11c39dd410105f
+    _export: http://172.30.99.30:8428/api/v1/export?match[]={job="headscale"}
+    _converge: >-
+      ansible-playbook -i {{ inventory_hostname }}, -c community.docker.docker
+      {{ playbook_dir }}/metrics_converge.yml -e settings={{ _dir }}
+    _collect: systemctl start headscale-metrics.service
+    _join: >-
+      docker run -d --network {{ _net }} -e TS_USERSPACE=true -e TS_STATE_DIR=/var/lib/tailscale
+  tasks:
+    - name: Push, break, remove, and clean up
+      block:
+        - name: Read the role's package pin
+          ansible.builtin.include_vars:
+            file: "{{ playbook_dir }}/../defaults/main.yml"
+
+        - name: Download the pinned Headscale package
+          ansible.builtin.get_url:
+            url: "{{ headscale_deb_url }}"
+            dest: /tmp/headscale.deb
+            checksum: "{{ headscale_checksum }}"
+            mode: "0644"
+
+        - name: Install Headscale
+          ansible.builtin.apt:
+            deb: /tmp/headscale.deb
+
+        - name: Serve plain HTTP on the test network, as no ACME can answer here
+          ansible.builtin.copy:
+            dest: /etc/headscale/config.yaml
+            mode: "0644"
+            content: |
+              server_url: http://172.30.99.10:8080
+              listen_addr: 0.0.0.0:8080
+              metrics_listen_addr: 127.0.0.1:9090
+              grpc_listen_addr: 127.0.0.1:50443
+              noise:
+                private_key_path: /var/lib/headscale/noise_private.key
+              prefixes:
+                v4: 100.64.0.0/10
+                v6: fd7a:115c:a1e0::/48
+              derp:
+                server:
+                  enabled: true
+                  region_id: 999
+                  region_code: lab
+                  region_name: Lab Embedded DERP
+                  stun_listen_addr: 0.0.0.0:3478
+                  private_key_path: /var/lib/headscale/derp_server_private.key
+                  automatically_add_embedded_derp_region: true
+                urls: []
+                auto_update_enabled: false
+              database:
+                type: sqlite
+                sqlite:
+                  path: /var/lib/headscale/db.sqlite
+              dns:
+                magic_dns: false
+                base_domain: ts.example.test
+                override_local_dns: false
+
+        - name: Start Headscale
+          ansible.builtin.systemd_service:
+            name: headscale
+            state: restarted
+
+        - name: Wait for the CLI to reach the server
+          ansible.builtin.command: headscale users list -o json
+          register: _ready
+          until: _ready.rc == 0
+          retries: 30
+          delay: 1
+          changed_when: false
+
+        - name: Add the tailnet's user
+          ansible.builtin.command: headscale users create lab
+          changed_when: true
+
+        - name: Read the user's id
+          ansible.builtin.command: headscale users list -o json
+          register: _users
+          changed_when: false
+
+        - name: Mint a reusable key, a single-use key for one join, an unused one and an expired one
+          ansible.builtin.command: >-
+            headscale preauthkeys create -u {{ (_users.stdout | from_json | first).id }} {{ item }}
+          register: _keys
+          changed_when: true
+          loop: ["--reusable -e 1h", "-e 1h", "-e 1h", "-e 1s"]
+          no_log: true
+
+        - name: Join the router, which advertises a route, and the peer
+          ansible.builtin.command: >-
+            {{ _join }} --name {{ item.name }} --hostname {{ item.name }}
+            -e TS_AUTHKEY={{ _keys.results[0].stdout_lines | last }}
+            -e "TS_EXTRA_ARGS=--login-server=http://172.30.99.10:8080 {{ item.args }}" {{ _tailscale }}
+          delegate_to: localhost
+          connection: local
+          vars: &control_host
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          changed_when: true
+          loop:
+            - { name: headscale-metrics-router, args: "--advertise-routes=10.99.0.0/16" }
+            - { name: headscale-metrics-peer, args: "" }
+          loop_control:
+            label: "{{ item.name }}"
+          no_log: true
+
+        - name: Join a node on the single-use key
+          ansible.builtin.command: >-
+            {{ _join }} --name headscale-metrics-gone --hostname headscale-metrics-gone
+            -e TS_AUTHKEY={{ _keys.results[1].stdout_lines | last }}
+            -e TS_EXTRA_ARGS=--login-server=http://172.30.99.10:8080 {{ _tailscale }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          no_log: true
+
+        - name: Wait for all three nodes
+          ansible.builtin.command: headscale nodes list -o json
+          register: _nodes
+          until: _nodes.stdout | from_json | selectattr('online', 'defined') | list | length == 3
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Approve the router's route
+          ansible.builtin.command: >-
+            headscale nodes approve-routes -r 10.99.0.0/16
+            -i {{ (_nodes.stdout | from_json | selectattr('given_name', 'eq', 'headscale-metrics-router') | first).id }}
+          changed_when: true
+
+        - name: Take one node off the tailnet
+          ansible.builtin.command: docker stop headscale-metrics-gone
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+
+        - name: Wait for Headscale to see it go
+          ansible.builtin.command: headscale nodes list -o json
+          register: _nodes
+          until: _nodes.stdout | from_json | selectattr('online', 'defined') | list | length == 2
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Read the keys as the CLI shows them
+          ansible.builtin.command: headscale preauthkeys list -u {{ (_users.stdout | from_json | first).id }} -o json
+          register: _key_list
+          changed_when: false
+          no_log: true
+
+        - name: Converge with the collector on
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: &roles
+            ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../.."
+            ANSIBLE_DISPLAY_OK_HOSTS: "false"
+            ANSIBLE_DISPLAY_SKIPPED_HOSTS: "false"
+          changed_when: true
+
+        - name: Converge again with nothing changed
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _again
+          changed_when: false
+
+        - name: Read whether the timer runs
+          ansible.builtin.systemd_service:
+            name: headscale-metrics.timer
+          register: _timer
+
+        - name: Push once
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read what reached the metrics store
+          ansible.builtin.uri:
+            url: "{{ _export }}"
+            return_content: true
+          register: _pushed
+          until: "'headscale_metrics_collected_timestamp_seconds' in _pushed.content"
+          retries: 15
+          delay: 2
+
+        - name: Assert each node, route and key, and that no key secret was pushed
+          vars:
+            _series: "{{ _pushed.content.splitlines() | map('from_json') | list }}"
+            _value: >-
+              {%- set out = {} -%}
+              {%- for s in _series -%}
+                {%- set m = s.metric -%}
+                {%- set key = [m.__name__, m.node | default(''), m.route | default(''), m.state | default('')] | join('|') -%}
+                {%- set _ = out.update({key: s['values'] | last}) -%}
+              {%- endfor -%}
+              {{ out }}
+            _secrets: "{{ _key_list.stdout | from_json | map(attribute='key') | list }}"
+          ansible.builtin.assert:
+            that:
+              - "'changed=0' in _again.stdout"
+              - _timer.status.UnitFileState == 'enabled'
+              - _timer.status.ActiveState == 'active'
+              - _series | map(attribute='metric.job') | unique | list == ['headscale']
+              - _series | map(attribute='metric.instance') | unique | list == [inventory_hostname]
+              - _value['headscale_node_online|headscale-metrics-router||'] == 1
+              - _value['headscale_node_online|headscale-metrics-peer||'] == 1
+              - _value['headscale_node_online|headscale-metrics-gone||'] == 0
+              - _value['headscale_node_last_seen_timestamp_seconds|headscale-metrics-gone||'] > 1700000000
+              - _value['headscale_node_route|headscale-metrics-router|10.99.0.0/16|available'] == 1
+              - _value['headscale_node_route|headscale-metrics-router|10.99.0.0/16|approved'] == 1
+              - _value['headscale_node_route|headscale-metrics-router|10.99.0.0/16|serving'] == 1
+              - _value | select('match', 'headscale_node_route\|headscale-metrics-peer') | list | length == 0
+              - _value['headscale_preauthkeys_usable|||'] == 2
+              - _secrets | length == 4
+              - _secrets | select('in', _pushed.content) | list | length == 0
+            fail_msg: >-
+              {{ _value }}
+              {{ _again.stdout | regex_findall('TASK \[[^\]]*\]|changed: .*') | join(' ') }}
+
+        - name: Stop the timer, so only the next run can push
+          ansible.builtin.systemd_service:
+            name: headscale-metrics.timer
+            state: stopped
+
+        - name: Count the pushes so far
+          ansible.builtin.uri:
+            url: "{{ _export }}"
+            return_content: true
+          register: _before_break
+
+        - name: Stop Headscale
+          ansible.builtin.systemd_service:
+            name: headscale
+            state: stopped
+
+        - name: Push without a server to read
+          ansible.builtin.command: "{{ _collect }}"
+          register: _broken
+          changed_when: true
+          failed_when: false
+
+        - name: Count the pushes after it
+          ansible.builtin.uri:
+            url: "{{ _export }}"
+            return_content: true
+          register: _after_break
+
+        - name: Converge with the collector off
+          ansible.builtin.command: "{{ _converge }}/off.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          changed_when: true
+
+        - name: Read what the collector left
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: _left
+          loop:
+            - /etc/systemd/system/headscale-metrics.timer
+            - /etc/systemd/system/headscale-metrics.service
+            - /usr/local/sbin/headscale-metrics
+
+        - name: Assert a failed read pushes nothing, and turning it off removes the collector
+          vars:
+            _stamps: >-
+              {{ [_before_break, _after_break]
+                 | map(attribute='content') | map('regex_findall', 'headscale_metrics_collected_timestamp_seconds.*?"timestamps":\[[^\]]*\]')
+                 | list }}
+          ansible.builtin.assert:
+            that:
+              - _broken.rc != 0
+              - _stamps[0] == _stamps[1]
+              - _left.results | selectattr('stat.exists') | list | length == 0
+            fail_msg: "{{ _broken.rc }} {{ _stamps }} {{ _left.results | selectattr('stat.exists') | map(attribute='item') | list }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: >-
+            docker rm -f {{ inventory_hostname }} {{ _vm_name }}
+            headscale-metrics-router headscale-metrics-peer headscale-metrics-gone
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the settings
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
+          delegate_to: localhost
+          connection: local
+          vars: *control_host

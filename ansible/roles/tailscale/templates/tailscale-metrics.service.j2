@@ -1,0 +1,24 @@
+{# Managed by Ansible (tailscale). One count; the timer runs it. #}
+[Unit]
+Description=Write this node's tailnet peer counts for node_exporter
+After=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/tailscale-metrics --out {{ tailscale_metrics_dir }}/tailscale.prom
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{ tailscale_metrics_dir }}
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any

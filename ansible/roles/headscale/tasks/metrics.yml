@@ -1,0 +1,62 @@
+---
+# A timer pushes the tailnet's state, as Headscale sees it, to VictoriaMetrics.
+# Without a push URL, the collector is removed.
+- name: Install the tailnet collector
+  when: headscale_metrics_push_url | length > 0
+  become: true
+  block:
+    - name: Install the collector script
+      ansible.builtin.copy:
+        src: headscale-metrics
+        dest: /usr/local/sbin/headscale-metrics
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the collector's units
+      ansible.builtin.template:
+        src: "headscale-metrics.{{ item }}.j2"
+        dest: "/etc/systemd/system/headscale-metrics.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: _headscale_metrics_units
+
+    - name: Run the collector on its timer
+      ansible.builtin.systemd_service:
+        name: headscale-metrics.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ _headscale_metrics_units is changed }}"
+
+- name: Remove the tailnet collector
+  when: headscale_metrics_push_url | length == 0
+  become: true
+  block:
+    - name: Read whether the timer is installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/headscale-metrics.timer
+      register: _headscale_metrics_timer
+
+    - name: Stop the timer
+      ansible.builtin.systemd_service:
+        name: headscale-metrics.timer
+        enabled: false
+        state: stopped
+      when: _headscale_metrics_timer.stat.exists
+
+    - name: Remove the collector
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/headscale-metrics.timer
+        - /etc/systemd/system/headscale-metrics.service
+        - /usr/local/sbin/headscale-metrics
+      register: _headscale_metrics_removed
+
+    - name: Forget the removed units
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: _headscale_metrics_removed is changed

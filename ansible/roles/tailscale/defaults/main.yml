@@ -13,3 +13,8 @@ tailscale_authkey_command: ""
 tailscale_accept_routes: true
 tailscale_hostname: "{{ inventory_hostname }}"
 tailscale_up_timeout: "30s"
+
+# Peer counts for node_exporter's textfile collector (tasks/metrics.yml).
+tailscale_metrics: false  # false removes the collector and its count
+tailscale_metrics_dir: /var/lib/prometheus/node-exporter
+tailscale_metrics_interval: 1min

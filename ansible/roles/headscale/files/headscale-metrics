@@ -1,0 +1,95 @@
+#!/usr/bin/python3 -I
+"""Push the tailnet's state, as Headscale sees it, to VictoriaMetrics.
+
+Reads `headscale nodes list`, `users list` and each user's `preauthkeys list`
+as JSON and POSTs Prometheus text to URL, vmsingle's
+/api/v1/import/prometheus, with every LABEL added to each series:
+
+  headscale_node_online{node,user}               1 while connected, else 0
+  headscale_node_last_seen_timestamp_seconds{node,user}
+  headscale_node_route{node,user,route,state}    1 for each route the node
+      advertises (available), may serve (approved) and serves as primary
+      (serving)
+  headscale_preauthkeys_usable                   keys a device could still
+      join with: unexpired, and reusable or never used
+  headscale_metrics_collected_timestamp_seconds
+
+The CLI's JSON carries each key's secret; only the count leaves this process.
+The whole push is built before it is sent, so a failed read pushes nothing,
+and the script exits 1.
+
+  headscale-metrics --url http://192.0.2.10:8428/api/v1/import/prometheus \\
+    --label job=headscale --label instance=headscale
+"""
+import argparse
+import json
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+
+ROUTES = (("available", "available_routes"), ("approved", "approved_routes"), ("serving", "subnet_routes"))
+
+
+def headscale(*args):
+    done = subprocess.run(["headscale", *args, "-o", "json"], capture_output=True, text=True, timeout=30)
+    if done.returncode != 0:
+        raise RuntimeError(f"headscale {' '.join(args)}: {(done.stderr or done.stdout).strip()[:300]}")
+    return json.loads(done.stdout) or []
+
+
+def seconds(stamp):
+    return int((stamp or {}).get("seconds", 0))
+
+
+def labels(pairs):
+    def escape(value):
+        return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+    return "{" + ",".join(f'{k}="{escape(v)}"' for k, v in pairs.items()) + "}" if pairs else ""
+
+
+def gauge(name, text, samples):
+    return [f"# HELP {name} {text}", f"# TYPE {name} gauge"] + [f"{name}{labels(l)} {v}" for l, v in samples]
+
+
+def snapshot(now):
+    nodes = headscale("nodes", "list")
+    keys = [k for u in headscale("users", "list") for k in headscale("preauthkeys", "list", "-u", str(u["id"]))]
+    who = [({"node": n["given_name"], "user": n["user"]["name"]}, n) for n in nodes]
+    usable = sum(1 for k in keys if seconds(k.get("expiration")) > now and (k.get("reusable") or not k.get("used")))
+    lines = gauge("headscale_node_online", "1 while the node is connected to Headscale.",
+                  [(l, 1 if n.get("online") else 0) for l, n in who])
+    lines += gauge("headscale_node_last_seen_timestamp_seconds", "When Headscale last heard from the node.",
+                   [(l, seconds(n.get("last_seen"))) for l, n in who if n.get("last_seen")])
+    lines += gauge("headscale_node_route", "1 for each route the node advertises, may serve, and serves.",
+                   [({**l, "route": r, "state": state}, 1)
+                    for l, n in who for state, field in ROUTES for r in n.get(field) or []])
+    lines += gauge("headscale_preauthkeys_usable", "Pre-auth keys a device could still join with.", [({}, usable)])
+    lines += gauge("headscale_metrics_collected_timestamp_seconds", "When this push was read.", [({}, int(now))])
+    return "\n".join(lines) + "\n"
+
+
+def push(url, extra, body):
+    query = urllib.parse.urlencode([("extra_label", pair) for pair in extra])
+    request = urllib.request.Request(f"{url}?{query}" if query else url, data=body.encode(), method="POST")
+    with urllib.request.urlopen(request, timeout=10) as reply:
+        if reply.status // 100 != 2:
+            raise RuntimeError(f"{url}: HTTP {reply.status}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--url", required=True, help="vmsingle's /api/v1/import/prometheus")
+    parser.add_argument("--label", action="append", default=[], help="NAME=VALUE added to every series")
+    args = parser.parse_args()
+    try:
+        push(args.url, args.label, snapshot(time.time()))
+    except Exception as err:
+        print(f"headscale-metrics: {err}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
