@@ -5,6 +5,12 @@ Unattended-Upgrade::Allowed-Origins {
 {% endfor %}
 };
 
+Unattended-Upgrade::Origins-Pattern {
+{% for pattern in unattended_upgrades_origin_patterns %}
+    "{{ pattern }}";
+{% endfor %}
+};
+
 Unattended-Upgrade::Remove-Unused-Dependencies "{{ unattended_upgrades_remove_unused_deps | lower }}";
 Unattended-Upgrade::Automatic-Reboot "{{ unattended_upgrades_auto_reboot | lower }}";
 Unattended-Upgrade::Automatic-Reboot-Time "{{ unattended_upgrades_auto_reboot_time }}";

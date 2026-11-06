@@ -7,6 +7,9 @@ unattended_upgrades_origins:
   - "${distro_id}:${distro_codename}-security"
   - "${distro_id}ESMApps:${distro_codename}-apps-security"
   - "${distro_id}ESM:${distro_codename}-infra-security"
+# Debian's security Suite is stable-security, so match its codename and label.
+unattended_upgrades_origin_patterns:
+  - "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
 
 # Off by default: an uncoordinated 03:30 reboot on a two-node cluster can restart both
 # members near-simultaneously and deadlock quorum, and cold-boot recovery isn't yet
