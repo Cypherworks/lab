@@ -1,0 +1,85 @@
+---
+# A timer writes the server's counters into node_exporter's textfile
+# directory, as the metrics user. Without a metrics password or directory,
+# the collector and everything it keeps are removed.
+- name: Install the metrics collector
+  when:
+    - technitium_dns_metrics_password | length > 0
+    - technitium_dns_metrics_dir | length > 0
+  block:
+    - name: Install the collector script
+      ansible.builtin.copy:
+        src: technitium-dns-metrics
+        dest: /usr/local/sbin/technitium-dns-metrics
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create the collector's config directory
+      ansible.builtin.file:
+        path: /etc/technitium-dns-metrics
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Write the metrics password
+      ansible.builtin.copy:
+        content: "{{ technitium_dns_metrics_password }}"
+        dest: /etc/technitium-dns-metrics/password
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    - name: Install the collector's units
+      ansible.builtin.template:
+        src: "technitium-dns-metrics.{{ item }}.j2"
+        dest: "/etc/systemd/system/technitium-dns-metrics.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: _metrics_units
+
+    - name: Run the collector on its timer
+      ansible.builtin.systemd_service:
+        name: technitium-dns-metrics.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ _metrics_units is changed }}"
+
+- name: Remove the metrics collector
+  when: >-
+    technitium_dns_metrics_password | length == 0
+    or technitium_dns_metrics_dir | length == 0
+  block:
+    - name: Read whether the timer is installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/technitium-dns-metrics.timer
+      register: _metrics_timer
+
+    - name: Stop the timer
+      ansible.builtin.systemd_service:
+        name: technitium-dns-metrics.timer
+        enabled: false
+        state: stopped
+      when: _metrics_timer.stat.exists
+
+    - name: Remove the collector and what it keeps
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{ ['/etc/systemd/system/technitium-dns-metrics.timer',
+            '/etc/systemd/system/technitium-dns-metrics.service',
+            '/usr/local/sbin/technitium-dns-metrics',
+            '/etc/technitium-dns-metrics',
+            '/var/lib/technitium-dns-metrics']
+           + ([technitium_dns_metrics_dir ~ '/technitium_dns.prom'] if technitium_dns_metrics_dir else []) }}
+      register: _metrics_removed
+
+    - name: Forget the removed units
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: _metrics_removed is changed

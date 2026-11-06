@@ -1,0 +1,146 @@
+#!/usr/bin/python3 -I
+"""Write Technitium DNS counters for node_exporter's textfile collector.
+
+Reads the server's lifetime counters (/api/dashboard/metrics/text) and the
+last hour's distinct clients (/api/dashboard/stats/get) on loopback, renames
+each series technitium_<name>, and replaces OUT in one rename. It keeps its
+session token in TOKEN_FILE and signs in with the user's password only when
+the server refuses that token, as after a restart, because each sign-in logs a
+line and rewrites the server's auth config. A cluster secondary refuses API
+tokens made on it, so a session is the one sign-in that works on every node.
+On any failure it removes OUT, so a stale count never passes for a live one,
+and exits 1.
+
+  technitium-dns-metrics --port 5380 --user metrics --password-file F \\
+    --token-file T --out DIR/technitium_dns.prom
+
+The user needs only Dashboard: View.
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+
+NAME = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*$")
+PREFIX = "technitium_"
+
+
+class Refused(Exception):
+    """The server turned the token away."""
+
+
+def api(port, path, token=None, form=None, text=False):
+    url = f"http://127.0.0.1:{port}/api/{path}"
+    data = urllib.parse.urlencode(form).encode() if form else None
+    request = urllib.request.Request(url, data=data)
+    if token:
+        request.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as reply:
+            body = reply.read().decode()
+    except urllib.error.HTTPError as err:
+        if err.code in (401, 403):
+            raise Refused(f"{path}: HTTP {err.code} {err.read().decode(errors='replace')[:200]}") from err
+        raise
+    if text and not body.lstrip().startswith("{"):
+        return body
+    answer = json.loads(body)
+    if answer.get("status") == "invalid-token":
+        raise Refused(f"{path}: invalid-token {answer.get('errorMessage', '')}".strip())
+    if answer.get("status") != "ok":
+        raise RuntimeError(f"{path}: {answer.get('status')} {answer.get('errorMessage', '')}".strip())
+    return answer
+
+
+def prefixed(text):
+    """The server's Prometheus text with every series renamed technitium_*."""
+    out = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("# HELP ") or line.startswith("# TYPE "):
+            keyword, name, rest = line[2:].split(" ", 2)
+            out.append(f"# {keyword} {PREFIX}{name} {rest}")
+            continue
+        if line.startswith("#"):
+            continue
+        name, _, rest = line.partition(" ")
+        if not NAME.match(name):
+            raise RuntimeError(f"unexpected line: {line!r}")
+        out.append(f"{PREFIX}{name} {rest}")
+    return out
+
+
+def collect(port, token):
+    lines = prefixed(api(port, "dashboard/metrics/text", token, text=True))
+    stats = api(port, "dashboard/stats/get?type=LastHour", token)["response"]["stats"]
+    lines += [
+        f"# HELP {PREFIX}clients_last_hour Distinct clients in the last hour.",
+        f"# TYPE {PREFIX}clients_last_hour gauge",
+        f"{PREFIX}clients_last_hour {int(stats['totalClients'])}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def new_token(args):
+    with open(args.password_file) as fh:
+        password = fh.read().strip()
+    session = api(args.port, "user/login", form={"user": args.user, "pass": password})
+    with os.fdopen(os.open(args.token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as fh:
+        fh.write(session["token"])
+    return session["token"]
+
+
+def saved_token(path):
+    try:
+        with open(path) as fh:
+            return fh.read().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def write(path, content):
+    folder = os.path.dirname(path) or "."
+    fd, scratch = tempfile.mkstemp(dir=folder, prefix=".technitium_dns.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.chmod(scratch, 0o644)
+        os.replace(scratch, path)
+    except BaseException:
+        os.unlink(scratch)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--port", required=True, type=int, help="the server's loopback HTTP port")
+    parser.add_argument("--user", required=True)
+    parser.add_argument("--password-file", required=True)
+    parser.add_argument("--token-file", required=True)
+    parser.add_argument("--out", required=True, help="the .prom file node_exporter reads")
+    args = parser.parse_args()
+    try:
+        token = saved_token(args.token_file) or new_token(args)
+        try:
+            content = collect(args.port, token)
+        except Refused:
+            content = collect(args.port, new_token(args))
+        write(args.out, content)
+    except Exception as err:
+        try:
+            os.unlink(args.out)
+        except FileNotFoundError:
+            pass
+        print(f"technitium-dns-metrics: {err}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

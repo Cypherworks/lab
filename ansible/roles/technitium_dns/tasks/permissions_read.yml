@@ -1,0 +1,26 @@
+---
+# Sets _permissions_drift: each section whose permissions differ from the
+# role's, with the users and groups it should hold.
+- name: List the permissions
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/permissions/list"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _permissions
+  failed_when: _permissions.json.status | default('') != 'ok'
+
+- name: Find the sections that differ from the role's
+  ansible.builtin.set_fact:
+    _permissions_drift: >-
+      {%- set drift = [] -%}
+      {%- for p in _permissions.json.response.permissions -%}
+      {%- set users = p.userPermissions | rejectattr('username', 'eq', technitium_dns_metrics_user) | list -%}
+      {%- if p.section == 'Dashboard' and technitium_dns_metrics_password | length > 0 -%}
+      {%- set users = users + [{'username': technitium_dns_metrics_user, 'canView': true, 'canModify': false, 'canDelete': false}] -%}
+      {%- endif -%}
+      {%- set groups = p.groupPermissions | rejectattr('name', 'eq', 'Everyone') | list -%}
+      {%- if (users | sort(attribute='username')) != (p.userPermissions | sort(attribute='username'))
+            or groups != p.groupPermissions -%}
+      {%- set _ = drift.append({'section': p.section, 'users': users, 'groups': groups}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ drift }}

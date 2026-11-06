@@ -1,0 +1,130 @@
+---
+# Every signed-in user is in Everyone, which the server lets view most
+# sections, query logs included. Hold Everyone to no rights. With a metrics
+# password, hold a metrics user in no group that may view the dashboard and
+# nothing else; without one, remove it. A joined secondary takes users and
+# permissions from the primary.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: List the users
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/users/list"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+  register: _users
+  failed_when: _users.json.status | default('') != 'ok'
+
+- name: Name the users the server holds
+  ansible.builtin.set_fact:
+    _metrics_user_exists: "{{ technitium_dns_metrics_user in _users.json.response.users | map(attribute='username') }}"
+
+- name: Create the metrics user
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/users/create"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body: { user: "{{ technitium_dns_metrics_user }}", pass: "{{ technitium_dns_metrics_password }}" }
+  register: _metrics_created
+  when:
+    - technitium_dns_metrics_password | length > 0
+    - not _metrics_user_exists
+  failed_when: _metrics_created.json.status | default('') != 'ok'
+  changed_when: true
+  no_log: true
+
+- name: Hold the existing metrics user
+  when:
+    - technitium_dns_metrics_password | length > 0
+    - _metrics_user_exists
+  block:
+    - name: Read the metrics user
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/users/get?user={{ technitium_dns_metrics_user | urlencode }}"
+        headers: { Authorization: "Bearer {{ _login.json.token }}" }
+      register: _metrics_user
+      failed_when: _metrics_user.json.status | default('') != 'ok'
+
+    - name: Try the metrics password
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/user/login"
+        method: POST
+        body_format: form-urlencoded
+        body: { user: "{{ technitium_dns_metrics_user }}", pass: "{{ technitium_dns_metrics_password }}" }
+      register: _metrics_login
+      no_log: true
+
+    - name: End that session
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/user/logout"
+        method: POST
+        headers: { Authorization: "Bearer {{ _metrics_login.json.token }}" }
+      when: _metrics_login.json.status | default('') == 'ok'
+      no_log: true
+
+    - name: Hold the metrics user's password and keep it out of every group
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/users/set"
+        method: POST
+        body_format: form-urlencoded
+        headers: { Authorization: "Bearer {{ _login.json.token }}" }
+        body:
+          user: "{{ technitium_dns_metrics_user }}"
+          newPass: "{{ technitium_dns_metrics_password }}"
+          memberOfGroups: ""
+      register: _metrics_set
+      when: >-
+        _metrics_login.json.status | default('') != 'ok'
+        or _metrics_user.json.response.memberOfGroups | default([]) | length > 0
+      failed_when: _metrics_set.json.status | default('') != 'ok'
+      changed_when: true
+      no_log: true
+
+- name: Remove the metrics user
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/users/delete"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body: { user: "{{ technitium_dns_metrics_user }}" }
+  register: _metrics_deleted
+  when:
+    - technitium_dns_metrics_password | length == 0
+    - _metrics_user_exists
+  failed_when: _metrics_deleted.json.status | default('') != 'ok'
+  changed_when: true
+
+- name: Read the permissions
+  ansible.builtin.include_tasks: permissions_read.yml
+
+- name: Hold each section that differs
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/admin/permissions/set"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body:
+      section: "{{ item.section }}"
+      userPermissions: >-
+        {% for u in item.users %}{{ u.username }}|{{ u.canView | string | lower }}|{{ u.canModify | string | lower
+        }}|{{ u.canDelete | string | lower }}{{ '' if loop.last else '|' }}{% endfor %}
+      groupPermissions: >-
+        {% for g in item.groups %}{{ g.name }}|{{ g.canView | string | lower }}|{{ g.canModify | string | lower
+        }}|{{ g.canDelete | string | lower }}{{ '' if loop.last else '|' }}{% endfor %}
+  loop: "{{ _permissions_drift }}"
+  loop_control:
+    label: "{{ item.section }}"
+  register: _permissions_set
+  failed_when: _permissions_set.json.status | default('') != 'ok'
+  changed_when: true
+
+- name: Check the writes
+  when: _permissions_set is changed
+  block:
+    - name: Read the permissions back
+      ansible.builtin.include_tasks: permissions_read.yml
+
+    - name: Check the server took the role's permissions
+      ansible.builtin.assert:
+        that: _permissions_drift | length == 0
+        fail_msg: "The server answered ok but these sections still differ: {{ _permissions_drift | map(attribute='section') | join(', ') }}"

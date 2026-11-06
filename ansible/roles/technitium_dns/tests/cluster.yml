@@ -1,7 +1,7 @@
 ---
 # Exercises a two-node cluster against throwaway containers: a primary, a
 # secondary, a stand-in for the public DNS that also serves a block list, and
-# clients at fixed addresses. Needs Docker; no internet and no real server.
+# clients at fixed addresses. The metrics collector runs against the secondary. Needs Docker; no internet and no real server.
 # From ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
@@ -64,9 +64,10 @@
         forwarder: "{{ _public_ip }}"
         query_acl: ["{{ _listed_client }}"]
   tasks:
-    - name: Draw this run's admin password
+    - name: Draw this run's admin and metrics passwords
       ansible.builtin.set_fact:
         technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+        technitium_dns_metrics_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
       no_log: true
 
     - name: Make a scratch dir for the block list
@@ -245,6 +246,65 @@
               - _secondary_sso.json.response.ssoEnabled | bool
               - _secondary_sso.json.response.ssoClientId == 'test-client'
             fail_msg: "{{ _secondary_sso.json.response | to_json }}"
+
+        - name: Give the collector the metrics password
+          ansible.builtin.copy:
+            content: "{{ technitium_dns_metrics_password }}"
+            dest: "{{ _scratch.path }}/metrics-password"
+            mode: "0600"
+          no_log: true
+
+        - name: Read the secondary's permissions
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/admin/permissions/list"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _secondary_permissions
+          until: >-
+            _secondary_permissions.json.response.permissions
+            | map(attribute='groupPermissions') | flatten | selectattr('name', 'eq', 'Everyone') | list | length == 0
+          retries: 30
+          delay: 2
+
+        - name: Collect the secondary's counters, as its timer does
+          ansible.builtin.command: &collect_secondary >-
+            {{ ansible_playbook_python }} -I {{ playbook_dir }}/../files/technitium-dns-metrics
+            --port {{ _node2_port }} --user metrics --password-file {{ _scratch.path }}/metrics-password
+            --token-file {{ _scratch.path }}/metrics-token --out {{ _scratch.path }}/node2.prom
+          register: _collected
+          until: _collected.rc == 0
+          retries: 15
+          delay: 2
+          changed_when: true
+
+        - name: Read the session the collector kept
+          ansible.builtin.slurp:
+            src: "{{ _scratch.path }}/metrics-token"
+          register: _first_session
+
+        - name: Collect again
+          ansible.builtin.command: *collect_secondary
+          register: _collected_again
+          changed_when: true
+
+        - name: Read the session after it
+          ansible.builtin.slurp:
+            src: "{{ _scratch.path }}/metrics-token"
+          register: _second_session
+
+        - name: Assert the secondary lets the metrics user read its counters on one session, and Everyone nothing
+          vars:
+            _textfile: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/node2.prom') }}"
+            _dashboard: >-
+              {{ (_secondary_permissions.json.response.permissions
+                  | selectattr('section', 'eq', 'Dashboard') | first).userPermissions | map(attribute='username') | list }}
+          ansible.builtin.assert:
+            that:
+              - _textfile is search('(?m)^technitium_queries_total ')
+              - _textfile is search('(?m)^technitium_clients_last_hour ')
+              - _dashboard == ['metrics']
+              - _collected_again.rc == 0
+              - _first_session.content == _second_session.content
+            fail_msg: "{{ _textfile }} {{ _dashboard }} {{ _collected.stderr }} {{ _collected_again.stderr }}"
 
         - name: Check the secondary's answers
           ansible.builtin.include_tasks: cluster_answers.yml

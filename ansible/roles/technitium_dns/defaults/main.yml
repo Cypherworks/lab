@@ -75,6 +75,14 @@ technitium_dns_cluster_node_ip: ""      # this node's static address
 technitium_dns_cluster_primary_url: ""  # secondary: the primary's HTTPS URL
 technitium_dns_cluster_primary_ip: ""   # secondary: the primary's address
 
+# DNS counters for node_exporter's textfile collector, written once a minute
+# by a user that may only view the dashboard (Everyone, which every user is
+# in, holds no rights). Off until both a password and a directory are set.
+technitium_dns_metrics_password: ""  # SOPS
+technitium_dns_metrics_user: metrics
+technitium_dns_metrics_dir: ""       # node_exporter's --collector.textfile.directory
+technitium_dns_metrics_interval: 1min
+
 # Rebuilds: control-host archives, named <host>-config.tar.gz.
 technitium_dns_archive_dir: "{{ lookup('ansible.builtin.env', 'HOME') }}/.local/state/technitium_dns"
 technitium_dns_restore_from: ""   # restore_config.yml: the source host

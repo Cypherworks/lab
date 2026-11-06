@@ -1,0 +1,22 @@
+---
+# Runs the role's API hold and its metrics collector on metrics.yml's target,
+# where Technitium already runs under systemd on loopback.
+- name: Converge the metrics collector
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Read the run's settings
+      ansible.builtin.include_vars:
+        file: "{{ settings }}"
+
+    - name: Hold what the role holds through the API
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: hold
+
+    - name: Hold the metrics collector
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: metrics

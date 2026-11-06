@@ -1,0 +1,27 @@
+{# Managed by Ansible (technitium_dns). One collection; the timer runs it. #}
+[Unit]
+Description=Write Technitium DNS counters for node_exporter
+After=technitium-dns.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/technitium-dns-metrics --port {{ technitium_dns_http_port }} --user {{ technitium_dns_metrics_user }} --password-file /etc/technitium-dns-metrics/password --token-file /var/lib/technitium-dns-metrics/token --out {{ technitium_dns_metrics_dir }}/technitium_dns.prom
+StateDirectory=technitium-dns-metrics
+StateDirectoryMode=0700
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{ technitium_dns_metrics_dir }}
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
