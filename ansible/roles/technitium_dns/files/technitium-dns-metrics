@@ -3,7 +3,9 @@
 
 Reads the server's lifetime counters (/api/dashboard/metrics/text) and the
 last hour's distinct clients (/api/dashboard/stats/get) on loopback, renames
-each series technitium_<name>, and replaces OUT in one rename. It keeps its
+each series technitium_<name>, and replaces OUT in one rename. The counters
+are this node's own; the clients are NODE's, so --node cluster counts the
+clients the whole cluster saw, which no sum of per-node counts can. It keeps its
 session token in TOKEN_FILE and signs in with the user's password only when
 the server refuses that token, as after a restart, because each sign-in logs a
 line and rewrites the server's auth config. A cluster secondary refuses API
@@ -12,7 +14,7 @@ On any failure it removes OUT, so a stale count never passes for a live one,
 and exits 1.
 
   technitium-dns-metrics --port 5380 --user metrics --password-file F \\
-    --token-file T --out DIR/technitium_dns.prom
+    --token-file T --out DIR/technitium_dns.prom [--node cluster]
 
 The user needs only Dashboard: View.
 """
@@ -76,9 +78,10 @@ def prefixed(text):
     return out
 
 
-def collect(port, token):
+def collect(port, token, node):
     lines = prefixed(api(port, "dashboard/metrics/text", token, text=True))
-    stats = api(port, "dashboard/stats/get?type=LastHour", token)["response"]["stats"]
+    query = {"type": "LastHour", **({"node": node} if node else {})}
+    stats = api(port, "dashboard/stats/get?" + urllib.parse.urlencode(query), token)["response"]["stats"]
     lines += [
         f"# HELP {PREFIX}clients_last_hour Distinct clients in the last hour.",
         f"# TYPE {PREFIX}clients_last_hour gauge",
@@ -124,13 +127,14 @@ def main():
     parser.add_argument("--password-file", required=True)
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--out", required=True, help="the .prom file node_exporter reads")
+    parser.add_argument("--node", help="whose clients to count: a node's name, or cluster (clustered servers only)")
     args = parser.parse_args()
     try:
         token = saved_token(args.token_file) or new_token(args)
         try:
-            content = collect(args.port, token)
+            content = collect(args.port, token, args.node)
         except Refused:
-            content = collect(args.port, new_token(args))
+            content = collect(args.port, new_token(args), args.node)
         write(args.out, content)
     except Exception as err:
         try:

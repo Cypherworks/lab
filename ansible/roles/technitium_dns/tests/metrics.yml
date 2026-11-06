@@ -162,6 +162,11 @@
             name: technitium-dns-metrics.timer
           register: _timer
 
+        - name: Read the collector unit
+          ansible.builtin.slurp:
+            src: /etc/systemd/system/technitium-dns-metrics.service
+          register: _unit
+
         - name: Collect once
           ansible.builtin.command: "{{ _collect }}"
           changed_when: true
@@ -223,6 +228,7 @@
               - "_dashboard == [{'username': 'metrics', 'canView': true, 'canModify': false, 'canDelete': false}]"
               - _timer.status.UnitFileState == 'enabled'
               - _timer.status.ActiveState == 'active'
+              - "'--node' not in (_unit.content | b64decode)"
               - "'technitium_queries_total' in _samples"
               - "'technitium_blocked_total' in _samples"
               - "'technitium_clients_last_hour' in _samples"
