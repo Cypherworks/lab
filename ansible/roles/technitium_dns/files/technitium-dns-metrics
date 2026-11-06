@@ -2,7 +2,7 @@
 """Write Technitium DNS counters for node_exporter's textfile collector.
 
 Reads the server's lifetime counters (/api/dashboard/metrics/text) and the
-last hour's distinct clients (/api/dashboard/stats/get) on loopback, renames
+last day's distinct clients (/api/dashboard/stats/get) on loopback, renames
 each series technitium_<name>, and replaces OUT in one rename. The counters
 are this node's own; the clients are NODE's, so --node cluster counts the
 clients the whole cluster saw, which no sum of per-node counts can. It keeps its
@@ -19,6 +19,7 @@ and exits 1.
 The user needs only Dashboard: View.
 """
 import argparse
+import datetime
 import json
 import os
 import re
@@ -30,6 +31,16 @@ import urllib.request
 
 NAME = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*$")
 PREFIX = "technitium_"
+ISO = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def last_day():
+    """The stats window for the 24 hours up to now. A custom span of 3 hours
+    to 7 days is read hour by hour through the current hour; LastDay stops at
+    the last whole hour, so it would miss whatever began since."""
+    end = datetime.datetime.now(datetime.timezone.utc)
+    start = end - datetime.timedelta(hours=24)
+    return {"type": "Custom", "start": start.strftime(ISO), "end": end.strftime(ISO)}
 
 
 class Refused(Exception):
@@ -80,12 +91,12 @@ def prefixed(text):
 
 def collect(port, token, node):
     lines = prefixed(api(port, "dashboard/metrics/text", token, text=True))
-    query = {"type": "LastHour", **({"node": node} if node else {})}
+    query = {**last_day(), **({"node": node} if node else {})}
     stats = api(port, "dashboard/stats/get?" + urllib.parse.urlencode(query), token)["response"]["stats"]
     lines += [
-        f"# HELP {PREFIX}clients_last_hour Distinct clients in the last hour.",
-        f"# TYPE {PREFIX}clients_last_hour gauge",
-        f"{PREFIX}clients_last_hour {int(stats['totalClients'])}",
+        f"# HELP {PREFIX}clients_last_day Distinct clients in the last 24 hours.",
+        f"# TYPE {PREFIX}clients_last_day gauge",
+        f"{PREFIX}clients_last_day {int(stats['totalClients'])}",
     ]
     return "\n".join(lines) + "\n"
 

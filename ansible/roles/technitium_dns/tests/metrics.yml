@@ -231,7 +231,7 @@
               - "'--node' not in (_unit.content | b64decode)"
               - "'technitium_queries_total' in _samples"
               - "'technitium_blocked_total' in _samples"
-              - "'technitium_clients_last_hour' in _samples"
+              - "'technitium_clients_last_day' in _samples"
               - _samples | reject('match', 'technitium_') | list | length == 0
               - _types == ['counter', 'gauge']
               - _textfile_stat.stat.mode == '0644'
@@ -241,7 +241,7 @@
             fail_msg: >-
               {{ _granted }} {{ _dashboard }} {{ _timer.status.UnitFileState }} {{ _timer.status.ActiveState }}
               {{ _lines }} {{ _status }} {{ _logins_before.stdout }}/{{ _logins_after.stdout }}
-              {{ _again.stdout | regex_findall('TASK \\[[^\\]]*\\]|changed: .*') | join(' ') }}
+              {{ _again.stdout | regex_findall('TASK \[[^\]]*\]|changed: .*') | join(' ') }}
 
         - name: Lose the token and the password
           ansible.builtin.shell: rm -f {{ _token }} && echo wrong > {{ _password }}

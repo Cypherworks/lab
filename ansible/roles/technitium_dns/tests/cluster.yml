@@ -29,6 +29,9 @@
     _node3_port: 15388
     _public_port: 15387
     _public_api: "http://127.0.0.1:{{ _public_port }}/api"
+    # The collector's window: the 24 hours up to now, current hour included.
+    _day_window: >-
+      type=Custom&start={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(now().timestamp() - 86400, utc=true) }}&end={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(now().timestamp(), utc=true) }}
     _split: split.labcheck
     _private: private.labcheck
     _dig: >-
@@ -274,9 +277,9 @@
           changed_when: false
           loop: ["{{ _listed_client }}", "{{ _other_client }}"]
 
-        - name: Wait for the cluster's last hour to count both clients
+        - name: Wait for the cluster's last day to count both clients
           ansible.builtin.uri:
-            url: "http://127.0.0.1:{{ _node2_port }}/api/dashboard/stats/get?type=LastHour&node=cluster"
+            url: "http://127.0.0.1:{{ _node2_port }}/api/dashboard/stats/get?{{ _day_window }}&node=cluster"
             headers: { Authorization: "Bearer {{ _login.json.token }}" }
           register: _cluster_ready
           until: _cluster_ready.json.response.stats.totalClients | default(0) | int >= 2
@@ -319,11 +322,11 @@
             src: "{{ _scratch.path }}/metrics-token"
           register: _second_session
 
-        - name: Read the last hour's clients for the cluster and for the secondary alone
+        - name: Read the last day's clients for the cluster and for the secondary alone
           ansible.builtin.uri:
-            url: "http://127.0.0.1:{{ _node2_port }}/api/dashboard/stats/get?type=LastHour{{ item }}"
+            url: "http://127.0.0.1:{{ _node2_port }}/api/dashboard/stats/get?{{ _day_window }}{{ item }}"
             headers: { Authorization: "Bearer {{ _login.json.token }}" }
-          register: _last_hour
+          register: _last_day
           loop: ["&node=cluster", ""]
 
         - name: Assert the secondary lets the metrics user read the cluster's counters on one session, and Everyone nothing
@@ -333,9 +336,9 @@
             _dashboard: >-
               {{ (_secondary_permissions.json.response.permissions
                   | selectattr('section', 'eq', 'Dashboard') | first).userPermissions | map(attribute='username') | list }}
-            _clients: "{{ _textfile | regex_search('(?m)^technitium_clients_last_hour (\\d+)$', '\\1') | first | int }}"
-            _cluster_clients: "{{ _last_hour.results[0].json.response.stats.totalClients | int }}"
-            _own_clients: "{{ _last_hour.results[1].json.response.stats.totalClients | int }}"
+            _clients: "{{ _textfile | regex_search('(?m)^technitium_clients_last_day (\\d+)$', '\\1') | first | int }}"
+            _cluster_clients: "{{ _last_day.results[0].json.response.stats.totalClients | int }}"
+            _own_clients: "{{ _last_day.results[1].json.response.stats.totalClients | int }}"
           ansible.builtin.assert:
             that:
               - _textfile is search('(?m)^technitium_queries_total ')
