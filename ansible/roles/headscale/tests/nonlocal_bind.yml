@@ -1,0 +1,145 @@
+---
+# Turns the metrics non-local bind on, then off, and checks the sysctl file,
+# the running kernel's value and what the role reports as changed, which is
+# what restarts Headscale. Unconfined system paths make /proc/sys writable,
+# and the container's own netns is all that changes. Needs Docker,
+# community.docker, and internet for the image and its apt packages.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/headscale/tests/nonlocal_bind.yml
+- name: Start a host whose network sysctls can be written
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: headscale-nonlocal-bind-test
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Start Ubuntu 24.04, as the host runs
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --security-opt=systempaths=unconfined
+          - ubuntu:24.04
+          - sleep
+          - infinity
+      changed_when: true
+
+    - name: Install what the role's modules need
+      ansible.builtin.command: >-
+        docker exec {{ _target }} sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 sudo'
+      changed_when: true
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: nonlocal_bind_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Make non-local bind follow the variable
+  hosts: nonlocal_bind_target
+  gather_facts: false
+  vars:
+    ansible_user: root
+    _read: |
+      cat /etc/sysctl.d/60-headscale-nonlocal-bind.conf 2>/dev/null || echo no-file
+      echo "live: $(cat /proc/sys/net/ipv4/ip_nonlocal_bind)"
+  tasks:
+    - name: Check the container starts with non-local bind off
+      ansible.builtin.shell: "{{ _read }}"  # noqa command-instead-of-shell
+      register: _before
+      changed_when: false
+
+    - name: Turn non-local bind on
+      ansible.builtin.include_role:
+        name: headscale
+        tasks_from: nonlocal_bind
+      vars:
+        headscale_metrics_nonlocal_bind: true
+
+    - name: Record what turning it on reported
+      ansible.builtin.set_fact:
+        _on_changed: "{{ headscale_nonlocal_bind is changed }}"
+
+    - name: Read the host with non-local bind on
+      ansible.builtin.shell: "{{ _read }}"  # noqa command-instead-of-shell
+      register: _on
+      changed_when: false
+
+    - name: Turn non-local bind on again
+      ansible.builtin.include_role:
+        name: headscale
+        tasks_from: nonlocal_bind
+      vars:
+        headscale_metrics_nonlocal_bind: true
+
+    - name: Record what turning it on again reported
+      ansible.builtin.set_fact:
+        _on_again_changed: "{{ headscale_nonlocal_bind is changed }}"
+
+    - name: Turn non-local bind off
+      ansible.builtin.include_role:
+        name: headscale
+        tasks_from: nonlocal_bind
+      vars:
+        headscale_metrics_nonlocal_bind: false
+
+    - name: Record what turning it off reported
+      ansible.builtin.set_fact:
+        _off_changed: "{{ headscale_nonlocal_bind_off | default({}) is changed }}"
+        _off_on_task_changed: "{{ headscale_nonlocal_bind is changed }}"
+
+    - name: Read the host with non-local bind off
+      ansible.builtin.shell: "{{ _read }}"  # noqa command-instead-of-shell
+      register: _off
+      changed_when: false
+
+    - name: Turn non-local bind off again
+      ansible.builtin.include_role:
+        name: headscale
+        tasks_from: nonlocal_bind
+      vars:
+        headscale_metrics_nonlocal_bind: false
+
+    - name: Record what turning it off again reported
+      ansible.builtin.set_fact:
+        _off_again_changed: "{{ headscale_nonlocal_bind_off | default({}) is changed }}"
+
+    - name: Clean up
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    - name: Assert the container started with it off
+      ansible.builtin.assert:
+        that:
+          - "_before.stdout_lines == ['no-file', 'live: 0']"
+
+    - name: Assert turning it on persists it, sets it, and restarts once
+      ansible.builtin.assert:
+        that:
+          - "_on.stdout_lines == ['net.ipv4.ip_nonlocal_bind=1', 'live: 1']"
+          - _on_changed
+          - not _on_again_changed
+
+    - name: Assert turning it off removes the file, clears it, and restarts once
+      ansible.builtin.assert:
+        that:
+          - "_off.stdout_lines == ['no-file', 'live: 0']"
+          - _off_changed
+          - not _off_on_task_changed
+          - not _off_again_changed
