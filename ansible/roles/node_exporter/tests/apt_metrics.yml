@@ -1,0 +1,153 @@
+---
+# Ubuntu 24.04's collectors package never reports apt_upgrades_pending, so the
+# role runs a fixed apt_info.py in its place. Proves the fix against a local
+# repo holding one upgrade. Needs Docker, community.docker, and internet for
+# the image and its apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/node_exporter/tests/apt_metrics.yml
+- name: Boot a host without the collectors
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: node-exporter-apt-test
+    _boot: >-
+      apt-get update -qq && apt-get install -y -qq --no-install-recommends
+      systemd systemd-sysv python3 sudo prometheus-node-exporter
+      && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Ubuntu 24.04, as the hosts run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - ubuntu:24.04
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: apt_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Count a pending upgrade
+  hosts: apt_target
+  gather_facts: false
+  vars:
+    ansible_user: root
+    node_exporter_listen_address: 127.0.0.1
+    _probe_pending: 'apt_upgrades_pending{arch="all",origin="probe:probe/probe-updates"} 1'
+  tasks:
+    - name: Run the role with its defaults
+      ansible.builtin.include_role:
+        name: node_exporter
+
+    - name: Restart node_exporter now if the role asked for it
+      ansible.builtin.meta: flush_handlers
+
+    # Archive sources go, so the probe is the only upgrade the host can see.
+    - name: Install probe 1.0 and offer 2.0 from a local repo
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /tmp/probe/DEBIAN /srv/probe
+        printf 'Package: lab-apt-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: Lab test <test@example.test>\nDescription: upgrade probe\n' \
+          > /tmp/probe/DEBIAN/control
+        dpkg-deb --build /tmp/probe /tmp/probe.deb
+        dpkg -i /tmp/probe.deb
+        printf 'Package: lab-apt-probe\nVersion: 2.0\nArchitecture: all\nMaintainer: Lab test <test@example.test>\nFilename: ./lab-apt-probe_2.0_all.deb\nSize: 1\nDescription: upgrade probe\n' \
+          > /srv/probe/Packages
+        mv /etc/apt/sources.list.d/ubuntu.sources /root/
+        echo 'deb [trusted=yes] file:/srv/probe ./' > /etc/apt/sources.list.d/probe.list
+        touch /run/reboot-required
+      changed_when: true
+
+    - name: Publish the probe repo and read the metrics
+      ansible.builtin.include_tasks: apt_metrics_read.yml
+
+    - name: Assert the upgrade and the reboot flag both show
+      ansible.builtin.assert:
+        that:
+          - _probe_pending in _metrics
+          - "'node_reboot_required 1' in _metrics"
+          - "'node_textfile_scrape_error 0' in _metrics"
+        fail_msg: "{{ _metrics }}"
+
+    - name: Turn the role's apt_info.py off
+      ansible.builtin.include_role:
+        name: node_exporter
+      vars:
+        node_exporter_apt_info_override: false
+
+    - name: Read the metrics from the package's own apt_info.py
+      ansible.builtin.include_tasks: apt_metrics_read.yml
+
+    - name: Read the apt unit the package runs
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter-apt.service
+      register: _package_unit
+
+    - name: Assert the package's script is back and still misses the upgrade
+      ansible.builtin.assert:
+        that:
+          - "'/usr/share/prometheus-node-exporter-collectors/apt_info.py' in _package_unit.status.ExecStart"
+          - "'apt_upgrades_pending' not in _metrics | join"
+          - "'node_reboot_required 1' in _metrics"
+        fail_msg: "{{ _package_unit.status.ExecStart }} {{ _metrics }}"
+
+    - name: Run the role with its defaults again
+      ansible.builtin.include_role:
+        name: node_exporter
+
+    - name: Withdraw the upgrade and clear the reboot flag
+      ansible.builtin.shell: |
+        set -e
+        sed -i 's/^Version: 2.0$/Version: 1.0/' /srv/probe/Packages
+        rm /run/reboot-required
+      changed_when: true
+
+    - name: Publish the probe repo and read the metrics
+      ansible.builtin.include_tasks: apt_metrics_read.yml
+
+    - name: Clean up
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    # The family vanishes at zero, so the dashboard's count needs an `or`.
+    - name: Assert nothing pending writes no apt_upgrades_pending series
+      ansible.builtin.assert:
+        that:
+          - "'apt_upgrades_pending' not in _metrics | join"
+          - "'node_reboot_required 0' in _metrics"
+          - "'node_textfile_scrape_error 0' in _metrics"
+        fail_msg: "{{ _metrics }}"

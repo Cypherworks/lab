@@ -3,6 +3,7 @@
 # gate access (metrics are not authenticated).
 node_exporter_listen_address: "{{ ansible_default_ipv4.address }}"
 node_exporter_port: 9100
-# Collector set is the package default, which already includes hwmon + thermal_zone
-# (CPU temperature on x86 and the Pis). Add/disable collectors here if needed.
+# Package default collectors; a container sees its host's sensors, so set its.
 node_exporter_extra_args: ""
+# Off where the collectors' own apt_info.py counts pending upgrades.
+node_exporter_apt_info_override: true

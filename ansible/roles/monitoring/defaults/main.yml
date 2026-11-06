@@ -34,6 +34,7 @@ monitoring_grafana_anonymous_enabled: false
 # carry the real hostname as their `instance` label (dashboards read hostnames, not
 # IPs). An empty list omits that job.
 monitoring_node_targets: []          # node_exporter on the bare-metal hosts (:9100)
+monitoring_node_instance_targets: [] # node_exporter on the Incus instances (:9100)
 monitoring_blocky_targets: []        # blocky /metrics (:4000)
 monitoring_patroni_targets: []       # Patroni REST /metrics (:8008)
 monitoring_etcd_targets: []          # etcd /metrics (:2379)
