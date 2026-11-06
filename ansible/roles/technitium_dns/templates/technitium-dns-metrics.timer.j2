@@ -1,0 +1,11 @@
+{# Managed by Ansible (technitium_dns). #}
+[Unit]
+Description=Write Technitium DNS counters for node_exporter on a timer
+
+[Timer]
+OnBootSec={{ technitium_dns_metrics_interval }}
+OnUnitActiveSec={{ technitium_dns_metrics_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

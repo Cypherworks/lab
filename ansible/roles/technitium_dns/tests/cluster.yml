@@ -1,7 +1,9 @@
 ---
 # Exercises a two-node cluster against throwaway containers: a primary, a
 # secondary, a stand-in for the public DNS that also serves a block list, and
-# clients at fixed addresses. Needs Docker; no internet and no real server.
+# clients at fixed addresses. The metrics collector runs against the secondary
+# and must count the clients the whole cluster saw. Needs Docker; no internet
+# and no real server.
 # From ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
@@ -27,6 +29,9 @@
     _node3_port: 15388
     _public_port: 15387
     _public_api: "http://127.0.0.1:{{ _public_port }}/api"
+    # The collector's window: the 24 hours up to now, current hour included.
+    _day_window: >-
+      type=Custom&start={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(now().timestamp() - 86400, utc=true) }}&end={{ '%Y-%m-%dT%H:%M:%SZ' | strftime(now().timestamp(), utc=true) }}
     _split: split.labcheck
     _private: private.labcheck
     _dig: >-
@@ -64,9 +69,10 @@
         forwarder: "{{ _public_ip }}"
         query_acl: ["{{ _listed_client }}"]
   tasks:
-    - name: Draw this run's admin password
+    - name: Draw this run's admin and metrics passwords
       ansible.builtin.set_fact:
         technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+        technitium_dns_metrics_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
       no_log: true
 
     - name: Make a scratch dir for the block list
@@ -245,6 +251,107 @@
               - _secondary_sso.json.response.ssoEnabled | bool
               - _secondary_sso.json.response.ssoClientId == 'test-client'
             fail_msg: "{{ _secondary_sso.json.response | to_json }}"
+
+        - name: Give the collector the metrics password
+          ansible.builtin.copy:
+            content: "{{ technitium_dns_metrics_password }}"
+            dest: "{{ _scratch.path }}/metrics-password"
+            mode: "0600"
+          no_log: true
+
+        - name: Read the secondary's permissions
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/admin/permissions/list"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _secondary_permissions
+          until: >-
+            _secondary_permissions.json.response.permissions
+            | map(attribute='groupPermissions') | flatten | selectattr('name', 'eq', 'Everyone') | list | length == 0
+          retries: 30
+          delay: 2
+
+        - name: Send the primary a query from each client, so it has a client the secondary hasn't seen
+          ansible.builtin.command: >-
+            docker run --rm --network {{ _net }} --ip {{ item }} --entrypoint dig {{ _image }}
+            +short +time=3 +tries=2 @{{ _node1_ip }} nas.{{ _split }} A
+          changed_when: false
+          loop: ["{{ _listed_client }}", "{{ _other_client }}"]
+
+        - name: Wait for the cluster's last day to count both clients
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/dashboard/stats/get?{{ _day_window }}&node=cluster"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _cluster_ready
+          until: _cluster_ready.json.response.stats.totalClients | default(0) | int >= 2
+          retries: 30
+          delay: 2
+
+        - name: Render the secondary's collector unit
+          ansible.builtin.template:
+            src: "{{ playbook_dir }}/../templates/technitium-dns-metrics.service.j2"
+            dest: "{{ _scratch.path }}/technitium-dns-metrics.service"
+            mode: "0644"
+          vars:
+            technitium_dns_http_port: 5380
+            technitium_dns_metrics_user: metrics
+            technitium_dns_metrics_dir: /var/lib/prometheus/node-exporter
+
+        - name: Collect the secondary's counters, as its timer does
+          ansible.builtin.command: &collect_secondary >-
+            {{ ansible_playbook_python }} -I {{ playbook_dir }}/../files/technitium-dns-metrics
+            --port {{ _node2_port }} --user metrics --password-file {{ _scratch.path }}/metrics-password
+            --token-file {{ _scratch.path }}/metrics-token --out {{ _scratch.path }}/node2.prom --node cluster
+          register: _collected
+          until: _collected.rc == 0
+          retries: 15
+          delay: 2
+          changed_when: true
+
+        - name: Read the session the collector kept
+          ansible.builtin.slurp:
+            src: "{{ _scratch.path }}/metrics-token"
+          register: _first_session
+
+        - name: Collect again
+          ansible.builtin.command: *collect_secondary
+          register: _collected_again
+          changed_when: true
+
+        - name: Read the session after it
+          ansible.builtin.slurp:
+            src: "{{ _scratch.path }}/metrics-token"
+          register: _second_session
+
+        - name: Read the last day's clients for the cluster and for the secondary alone
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _node2_port }}/api/dashboard/stats/get?{{ _day_window }}{{ item }}"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _last_day
+          loop: ["&node=cluster", ""]
+
+        - name: Assert the secondary lets the metrics user read the cluster's counters on one session, and Everyone nothing
+          vars:
+            _textfile: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/node2.prom') }}"
+            _unit: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/technitium-dns-metrics.service') }}"
+            _dashboard: >-
+              {{ (_secondary_permissions.json.response.permissions
+                  | selectattr('section', 'eq', 'Dashboard') | first).userPermissions | map(attribute='username') | list }}
+            _clients: "{{ _textfile | regex_search('(?m)^technitium_clients_last_day (\\d+)$', '\\1') | first | int }}"
+            _cluster_clients: "{{ _last_day.results[0].json.response.stats.totalClients | int }}"
+            _own_clients: "{{ _last_day.results[1].json.response.stats.totalClients | int }}"
+          ansible.builtin.assert:
+            that:
+              - _textfile is search('(?m)^technitium_queries_total ')
+              - _clients | int == _cluster_clients | int
+              - _clients | int > _own_clients | int
+              - _unit is search('(?m)^ExecStart=.* --node cluster$')
+              - _dashboard == ['metrics']
+              - _collected_again.rc == 0
+              - _first_session.content == _second_session.content
+            fail_msg: >-
+              clients {{ _clients }} cluster {{ _cluster_clients }} secondary {{ _own_clients }}
+              {{ _textfile }} {{ _unit }} {{ _dashboard }} {{ _collected.stderr }} {{ _collected_again.stderr }}
+            success_msg: "clients {{ _clients }} cluster {{ _cluster_clients }} secondary {{ _own_clients }}"
 
         - name: Check the secondary's answers
           ansible.builtin.include_tasks: cluster_answers.yml

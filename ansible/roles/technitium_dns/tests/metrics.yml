@@ -1,0 +1,340 @@
+---
+# Exercises the DNS metrics end to end on a host booted like a real one:
+# systemd runs in a privileged throwaway container of the server's image,
+# beside a real Technitium on loopback. Checks that Everyone holds no rights,
+# that the metrics user may only view the dashboard, that the timer writes a
+# textfile node_exporter can read, that the collector keeps one token, that a
+# lost token or wrong password heals on the next converge, that a second
+# converge changes nothing, and that turning it off removes it. Needs Docker,
+# community.docker, and internet for the image's apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/metrics.yml
+- name: Boot a host for the collector
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, as the lab's resolvers run.
+    _image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _target: technitium-metrics-target
+    _net: technitium-metrics-test
+    _dir: "{{ playbook_dir }}/.metrics"
+  tasks:
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} 2>/dev/null; docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.97.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Boot systemd in the server's image
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} --ip 172.30.97.10
+        --entrypoint sh {{ _image }} -c
+        'apt-get update -qq && apt-get install -y -qq python3 systemd systemd-sysv
+        && exec /usr/lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Make the settings directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Draw this run's passwords
+      ansible.builtin.set_fact:
+        _admin: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+        _metrics: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Write the converge settings, with the collector on and off
+      ansible.builtin.copy:
+        content: "{{ item.settings | to_json }}"
+        dest: "{{ _dir }}/{{ item.name }}.json"
+        mode: "0600"
+      loop:
+        - name: "on"
+          settings:
+            technitium_dns_admin_password: "{{ _admin }}"
+            technitium_dns_metrics_password: "{{ _metrics }}"
+            technitium_dns_metrics_dir: /var/lib/prometheus/node-exporter
+        - name: "off"
+          settings:
+            technitium_dns_admin_password: "{{ _admin }}"
+            technitium_dns_metrics_password: ""
+            technitium_dns_metrics_dir: /var/lib/prometheus/node-exporter
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: metrics_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+        technitium_dns_admin_password: "{{ _admin }}"
+      no_log: true
+
+- name: Collect the server's counters
+  hosts: metrics_target
+  gather_facts: false
+  vars:
+    _dir: "{{ playbook_dir }}/.metrics"
+    _net: technitium-metrics-test
+    _api: http://127.0.0.1:5380/api
+    _prom: /var/lib/prometheus/node-exporter/technitium_dns.prom
+    _token: /var/lib/technitium-dns-metrics/token
+    _password: /etc/technitium-dns-metrics/password
+    _converge: >-
+      ansible-playbook -i {{ inventory_hostname }}, -c community.docker.docker
+      {{ playbook_dir }}/metrics_converge.yml -e settings={{ _dir }}
+    _collect: systemctl start technitium-dns-metrics.service
+  tasks:
+    - name: Collect, break, heal, remove, and clean up
+      block:
+        - name: Make node_exporter's textfile directory, as its package does
+          ansible.builtin.file:
+            path: /var/lib/prometheus/node-exporter
+            state: directory
+            mode: "0755"
+
+        - name: Run the server
+          ansible.builtin.command: >-
+            systemd-run --unit=technitium --working-directory=/opt/technitium/dns
+            /usr/bin/dotnet DnsServerApp.dll /etc/dns
+          changed_when: true
+
+        - name: Wait for the API on loopback
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: 5380
+            timeout: 120
+
+        - name: Converge with the collector on
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: &control_host
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          environment: &roles
+            ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../.."
+            ANSIBLE_DISPLAY_OK_HOSTS: "false"
+            ANSIBLE_DISPLAY_SKIPPED_HOSTS: "false"
+          changed_when: true
+
+        - name: Converge again with nothing changed
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _again
+          changed_when: false
+
+        - name: Log in as admin
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: login
+
+        - name: Read every section's permissions
+          ansible.builtin.uri:
+            url: "{{ _api }}/admin/permissions/list"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _permissions
+
+        - name: Read whether the timer runs
+          ansible.builtin.systemd_service:
+            name: technitium-dns-metrics.timer
+          register: _timer
+
+        - name: Read the collector unit
+          ansible.builtin.slurp:
+            src: /etc/systemd/system/technitium-dns-metrics.service
+          register: _unit
+
+        - name: Collect once
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read the textfile
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _textfile
+
+        - name: Read how the textfile is kept
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _textfile_stat
+
+        - name: Read the collector's token
+          ansible.builtin.slurp:
+            src: "{{ _token }}"
+          register: _token_file
+
+        - name: Ask for what the metrics user may and may not see
+          ansible.builtin.uri:
+            url: "{{ _api }}/{{ item }}"
+            headers: { Authorization: "Bearer {{ _token_file.content | b64decode | trim }}" }
+            return_content: true
+          register: _reach
+          loop: [dashboard/metrics/text, zones/list, logs/list, settings/get, cache/list, admin/users/list]
+
+        - name: Count the metrics user's sign-ins
+          ansible.builtin.shell: &count_logins
+            cmd: set -o pipefail; cat /var/log/technitium/dns/*.log | grep -c '\[metrics\] User logged in' || true
+            executable: /bin/bash
+          register: _logins_before
+          changed_when: false
+
+        - name: Collect twice more
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+          loop: [1, 2]
+
+        - name: Count the sign-ins again
+          ansible.builtin.shell: *count_logins
+          register: _logins_after
+          changed_when: false
+
+        - name: Assert Everyone holds nothing, metrics only views the dashboard, and the textfile is right
+          vars:
+            _sections: "{{ _permissions.json.response.permissions }}"
+            _granted: "{{ _sections | rejectattr('userPermissions', 'eq', []) | map(attribute='section') | list }}"
+            _dashboard: "{{ (_sections | selectattr('section', 'eq', 'Dashboard') | first).userPermissions }}"
+            _lines: "{{ (_textfile.content | b64decode).splitlines() }}"
+            _samples: "{{ _lines | reject('match', '#') | map('split', ' ') | map('first') | list }}"
+            _types: "{{ _lines | select('match', '# TYPE ') | map('split', ' ') | map('last') | unique | sort }}"
+            _status: "{{ _reach.results | map(attribute='json') | map(attribute='status', default='text') | list }}"
+          ansible.builtin.assert:
+            that:
+              - "'changed=0' in _again.stdout"
+              - _sections | map(attribute='groupPermissions') | flatten | selectattr('name', 'eq', 'Everyone') | list | length == 0
+              - _granted == ['Dashboard']
+              - "_dashboard == [{'username': 'metrics', 'canView': true, 'canModify': false, 'canDelete': false}]"
+              - _timer.status.UnitFileState == 'enabled'
+              - _timer.status.ActiveState == 'active'
+              - "'--node' not in (_unit.content | b64decode)"
+              - "'technitium_queries_total' in _samples"
+              - "'technitium_blocked_total' in _samples"
+              - "'technitium_clients_last_day' in _samples"
+              - _samples | reject('match', 'technitium_') | list | length == 0
+              - _types == ['counter', 'gauge']
+              - _textfile_stat.stat.mode == '0644'
+              - "'queries_total' in _reach.results[0].content"
+              - _status[1:] | select('eq', 'ok') | list | length == 0
+              - _logins_before.stdout == _logins_after.stdout
+            fail_msg: >-
+              {{ _granted }} {{ _dashboard }} {{ _timer.status.UnitFileState }} {{ _timer.status.ActiveState }}
+              {{ _lines }} {{ _status }} {{ _logins_before.stdout }}/{{ _logins_after.stdout }}
+              {{ _again.stdout | regex_findall('TASK \[[^\]]*\]|changed: .*') | join(' ') }}
+
+        - name: Lose the token and the password
+          ansible.builtin.shell: rm -f {{ _token }} && echo wrong > {{ _password }}
+          changed_when: true
+
+        - name: Collect without them
+          ansible.builtin.command: "{{ _collect }}"
+          register: _broken
+          changed_when: true
+          failed_when: false
+
+        - name: Read whether a textfile is left
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _broken_stat
+
+        - name: Converge, which puts the password back
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _healed_run
+          changed_when: true
+
+        - name: Collect after the converge
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read the healed textfile
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _healed_stat
+
+        - name: Converge with the collector off
+          ansible.builtin.command: "{{ _converge }}/off.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          changed_when: true
+
+        - name: Read what the collector left
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: _left
+          loop:
+            - /etc/systemd/system/technitium-dns-metrics.timer
+            - /etc/systemd/system/technitium-dns-metrics.service
+            - /usr/local/sbin/technitium-dns-metrics
+            - /etc/technitium-dns-metrics
+            - /var/lib/technitium-dns-metrics
+            - "{{ _prom }}"
+
+        - name: List the users
+          ansible.builtin.uri:
+            url: "{{ _api }}/admin/users/list"
+            headers: { Authorization: "Bearer {{ _login.json.token }}" }
+          register: _users
+
+        - name: Assert a broken collector leaves no count, heals, and goes when turned off
+          ansible.builtin.assert:
+            that:
+              - _broken.rc != 0
+              - not _broken_stat.stat.exists
+              - "'changed=0' not in _healed_run.stdout"
+              - _healed_stat.stat.exists
+              - _left.results | selectattr('stat.exists') | list | length == 0
+              - "'metrics' not in _users.json.response.users | map(attribute='username')"
+            fail_msg: >-
+              {{ _broken.rc }} {{ _left.results | selectattr('stat.exists') | map(attribute='item') | list }}
+              {{ _users.json.response.users | map(attribute='username') | list }}
+      always:
+        - name: Remove the target
+          ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the settings
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
