@@ -1,0 +1,114 @@
+---
+# Basic auth in front of Alertmanager's API, so readers outside the instance
+# can be let in without opening it to everything on the VLAN. Passwords are
+# hashed here with htpasswd, read from stdin, and only rehashed on a change.
+- name: Require a password for every Alertmanager API user
+  ansible.builtin.assert:
+    that:
+      - monitoring_alertmanager_vmalert_password | length > 0
+      - monitoring_alertmanager_api_users | rejectattr('password') | list | length == 0
+      - "'vmalert' not in monitoring_alertmanager_api_users | map(attribute='name')"
+    fail_msg: >-
+      Each of monitoring_alertmanager_api_users needs a name and password, and
+      monitoring_alertmanager_vmalert_password must be set; vmalert is reserved.
+
+- name: Name everyone who signs in to Alertmanager
+  ansible.builtin.set_fact:
+    _am_api_users: >-
+      {{ monitoring_alertmanager_api_users
+         + [{'name': 'vmalert', 'password': monitoring_alertmanager_vmalert_password}] }}
+    _am_htpasswd: "{{ monitoring_config_dir }}/alertmanager-api.htpasswd"
+  no_log: true
+
+- name: Install htpasswd
+  become: true
+  ansible.builtin.apt:
+    name: apache2-utils
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Make the Alertmanager password file
+  become: true
+  ansible.builtin.file:
+    path: "{{ _am_htpasswd }}"
+    state: touch
+    owner: root
+    group: root
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Check each API password against its hash
+  become: true
+  ansible.builtin.command:
+    argv: [htpasswd, -v, -i, "{{ _am_htpasswd }}", "{{ item.name }}"]
+    stdin: "{{ item.password }}"
+  loop: "{{ _am_api_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _am_checked
+  changed_when: false
+  # 3: the password differs. 6: the user isn't in the file yet.
+  failed_when: _am_checked.rc not in [0, 3, 6]
+  no_log: true
+
+- name: Hash the API passwords that are new or changed
+  become: true
+  ansible.builtin.command:
+    argv: [htpasswd, -i, -B, -C, "10", "{{ _am_htpasswd }}", "{{ item.item.name }}"]
+    stdin: "{{ item.item.password }}"
+  loop: "{{ _am_checked.results | rejectattr('rc', 'equalto', 0) | list }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  changed_when: true
+  no_log: true
+  notify: Restart monitoring
+
+- name: Read who the password file lets in
+  become: true
+  ansible.builtin.slurp:
+    src: "{{ _am_htpasswd }}"
+  register: _am_file
+  no_log: true
+
+- name: Remove API users the deploy dropped
+  become: true
+  ansible.builtin.command:
+    argv: [htpasswd, -D, "{{ _am_htpasswd }}", "{{ item }}"]
+  loop: >-
+    {{ (_am_file.content | b64decode).splitlines() | map('regex_replace', ':.*$', '')
+       | reject('in', _am_api_users | map(attribute='name')) | list }}
+  changed_when: true
+  notify: Restart monitoring
+
+- name: Read the hashes
+  become: true
+  ansible.builtin.slurp:
+    src: "{{ _am_htpasswd }}"
+  register: _am_file
+  no_log: true
+
+- name: Write Alertmanager's web config
+  become: true
+  ansible.builtin.copy:
+    content: >-
+      {{ {'basic_auth_users': dict((_am_file.content | b64decode).splitlines()
+          | map('split', ':') | list)} | to_nice_yaml }}
+    dest: "{{ monitoring_config_dir }}/alertmanager-secrets/web.yml"
+    owner: "{{ monitoring_alertmanager_uid }}"
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: Restart monitoring
+
+- name: Write vmalert's Alertmanager password
+  become: true
+  ansible.builtin.copy:
+    content: "{{ monitoring_alertmanager_vmalert_password }}"
+    dest: "{{ monitoring_config_dir }}/vmalert-notifier-password"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: Restart monitoring

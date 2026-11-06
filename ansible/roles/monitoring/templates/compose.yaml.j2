@@ -36,9 +36,16 @@ services:
       - "--datasource.url=http://vmsingle:8428"
       - "--remoteWrite.url=http://vmsingle:8428"
       - "--notifier.url=http://alertmanager:9093"
+{% if monitoring_alertmanager_api_users %}
+      - "--notifier.basicAuth.username=vmalert"
+      - "--notifier.basicAuth.passwordFile=/etc/vmalert/notifier-password"
+{% endif %}
       - "--rule=/etc/vmalert/alert-rules.yml"
     volumes:
       - {{ monitoring_config_dir }}/alert-rules.yml:/etc/vmalert/alert-rules.yml:ro
+{% if monitoring_alertmanager_api_users %}
+      - {{ monitoring_config_dir }}/vmalert-notifier-password:/etc/vmalert/notifier-password:ro
+{% endif %}
     depends_on:
       - vmsingle
       - alertmanager
@@ -48,11 +55,18 @@ services:
     restart: unless-stopped
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
+{% if monitoring_alertmanager_api_users %}
+      - "--web.config.file=/etc/alertmanager/secrets/web.yml"
+{% endif %}
     volumes:
       - {{ monitoring_config_dir }}/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - {{ monitoring_config_dir }}/alertmanager-templates:/etc/alertmanager/templates:ro
       - {{ monitoring_config_dir }}/alertmanager-secrets:/etc/alertmanager/secrets:ro
       - amdata:/alertmanager
+{% if monitoring_alertmanager_api_users %}
+    ports:
+      - "9093:9093"
+{% endif %}
 
   redis_exporter:
     image: {{ monitoring_redis_exporter_image }}

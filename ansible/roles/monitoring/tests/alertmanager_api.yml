@@ -1,0 +1,278 @@
+---
+# Runs the role's Alertmanager API auth tasks on a throwaway Debian 13
+# container, then real Alertmanager and vmalert on what they wrote. Checks who
+# gets in, that vmalert's alerts arrive signed in, that a second run changes
+# nothing, and that a changed password or dropped user stops working. Also
+# renders the compose both ways. Needs Docker, and internet for the images and
+# apt. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/alertmanager_api.yml
+- name: Verify the Alertmanager API auth
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _host: monitoring-amapi-host
+    _net: monitoring-amapi-test
+    _am: monitoring-amapi-alertmanager
+    _vm: monitoring-amapi-vmsingle
+    _vmalert: monitoring-amapi-vmalert
+    _dir: "{{ playbook_dir }}/.amapi"
+    _config: /opt/monitoring/config
+    _converge: >-
+      ansible-playbook -i {{ _host }}, -c community.docker.docker
+      {{ playbook_dir }}/alertmanager_api_converge.yml -e @{{ _dir }}
+    _first:
+      monitoring_alertmanager_vmalert_password: vmalert-test-only
+      monitoring_alertmanager_api_users:
+        - {name: dashboard, password: first-test-only}
+        - {name: retired, password: retired-test-only}
+    _second:
+      monitoring_alertmanager_vmalert_password: vmalert-test-only
+      monitoring_alertmanager_api_users:
+        - {name: dashboard, password: second-test-only}
+    _am_config: |
+      route: {receiver: none}
+      receivers: [{name: none}]
+    _rules: |
+      groups:
+        - name: test
+          interval: 2s
+          rules:
+            - alert: AlwaysFiring
+              expr: vector(1)
+    _probe: |
+      import base64, json, sys, time, urllib.error, urllib.request
+      url = "http://{{ _am }}:9093/api/v2/alerts"
+      def ask(cred):
+          request = urllib.request.Request(url)
+          if cred:
+              token = base64.b64encode(cred.encode()).decode()
+              request.add_header("Authorization", "Basic " + token)
+          try:
+              with urllib.request.urlopen(request, timeout=3) as reply:
+                  return reply.status, json.load(reply)
+          except urllib.error.HTTPError as err:
+              return err.code, None
+          except OSError:
+              return 0, None
+      creds = json.loads(sys.argv[1])
+      for _ in range(30):
+          if ask(creds["reader"])[0] == 200:
+              break
+          time.sleep(1)
+      seen = []
+      for _ in range(30):
+          status, alerts = ask(creds["reader"])
+          seen = [a["labels"]["alertname"] for a in alerts or []]
+          if "AlwaysFiring" in seen:
+              break
+          time.sleep(1)
+      codes = {name: ask(cred)[0] for name, cred in creds.items()}
+      print(json.dumps({"codes": codes, "alerts": seen}))
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _host }} {{ _am }} {{ _vm }} {{ _vmalert }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directories
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [first, second, config]
+
+    - name: Write the test settings and configs
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ _dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {content: "{{ _first | to_json }}", dest: first.json}
+        - {content: "{{ _second | to_json }}", dest: second.json}
+        - {content: "{{ _am_config }}", dest: config/alertmanager.yml}
+        - {content: "{{ _rules }}", dest: config/rules.yml}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Start a Debian 13 host
+      ansible.builtin.command: docker run -d --name {{ _host }} debian:13 sleep infinity
+      changed_when: true
+
+    - name: Give it Python for Ansible
+      ansible.builtin.command: >-
+        docker exec {{ _host }} sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 >/dev/null'
+      changed_when: true
+
+    - name: Converge with two readers
+      ansible.builtin.command: "{{ _converge }}/first.json"
+      register: _run_first
+      changed_when: true
+
+    - name: Converge again with nothing changed
+      ansible.builtin.command: "{{ _converge }}/first.json"
+      register: _run_again
+      changed_when: false
+
+    - name: Converge with a vmalert user claimed by a reader
+      ansible.builtin.command: >-
+        {{ _converge }}/first.json -e '{"monitoring_alertmanager_api_users":
+        [{"name": "vmalert", "password": "x"}]}'
+      register: _run_reserved
+      changed_when: false
+      failed_when: false
+
+    - name: Read how the auth files are kept
+      ansible.builtin.command: >-
+        docker exec {{ _host }} stat -c '%n %u %a'
+        {{ _config }}/alertmanager-api.htpasswd
+        {{ _config }}/alertmanager-secrets/web.yml
+        {{ _config }}/vmalert-notifier-password
+      register: _modes
+      changed_when: false
+
+    - name: Copy out what the first run wrote
+      ansible.builtin.shell: >-
+        docker cp {{ _host }}:{{ _config }}/{{ item.src }} {{ _dir }}/first/{{ item.dest }}
+        && chmod 0644 {{ _dir }}/first/{{ item.dest }}
+      loop:
+        - {src: alertmanager-secrets/web.yml, dest: web.yml}
+        - {src: vmalert-notifier-password, dest: vmalert-password}
+      changed_when: true
+
+    - name: Converge with a new password and one reader dropped
+      ansible.builtin.command: "{{ _converge }}/second.json"
+      register: _run_second
+      changed_when: true
+
+    - name: Copy out what the second run wrote
+      ansible.builtin.shell: >-
+        docker cp {{ _host }}:{{ _config }}/alertmanager-secrets/web.yml {{ _dir }}/second/web.yml
+        && chmod 0644 {{ _dir }}/second/web.yml
+      changed_when: true
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start VictoriaMetrics for vmalert to query
+      ansible.builtin.command: docker run -d --name {{ _vm }} --network {{ _net }} {{ monitoring_vmsingle_image }}
+      changed_when: true
+
+    - name: Start Alertmanager behind the first run's web config
+      ansible.builtin.command: >-
+        docker run -d --name {{ _am }} --network {{ _net }}
+        -v {{ _dir }}/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+        -v {{ _dir }}/first/web.yml:/etc/alertmanager/web.yml:ro
+        {{ monitoring_alertmanager_image }}
+        --config.file=/etc/alertmanager/alertmanager.yml --web.config.file=/etc/alertmanager/web.yml
+      changed_when: true
+
+    - name: Start vmalert, signing in as the compose has it
+      ansible.builtin.command: >-
+        docker run -d --name {{ _vmalert }} --network {{ _net }}
+        -v {{ _dir }}/config/rules.yml:/etc/vmalert/rules.yml:ro
+        -v {{ _dir }}/first/vmalert-password:/etc/vmalert/notifier-password:ro
+        {{ monitoring_vmalert_image }}
+        -datasource.url=http://{{ _vm }}:8428 -notifier.url=http://{{ _am }}:9093
+        -notifier.basicAuth.username=vmalert
+        -notifier.basicAuth.passwordFile=/etc/vmalert/notifier-password
+        -rule=/etc/vmalert/rules.yml
+      changed_when: true
+
+    - name: Ask Alertmanager as each user after the first run
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _probe }}", "{{ _creds | to_json }}"]
+      vars:
+        _creds:
+          reader: "dashboard:first-test-only"
+          nobody: ""
+          dashboard: "dashboard:first-test-only"
+          wrong: "dashboard:not-it"
+          retired: "retired:retired-test-only"
+          vmalert: "vmalert:vmalert-test-only"
+      register: _probe_first
+      changed_when: false
+
+    - name: Restart Alertmanager behind the second run's web config
+      ansible.builtin.shell: >-
+        docker rm -f {{ _am }} &&
+        docker run -d --name {{ _am }} --network {{ _net }}
+        -v {{ _dir }}/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+        -v {{ _dir }}/second/web.yml:/etc/alertmanager/web.yml:ro
+        {{ monitoring_alertmanager_image }}
+        --config.file=/etc/alertmanager/alertmanager.yml --web.config.file=/etc/alertmanager/web.yml
+      changed_when: true
+
+    - name: Ask Alertmanager as each user after the second run
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _probe }}", "{{ _creds | to_json }}"]
+      vars:
+        _creds:
+          reader: "dashboard:second-test-only"
+          old: "dashboard:first-test-only"
+          dashboard: "dashboard:second-test-only"
+          retired: "retired:retired-test-only"
+          vmalert: "vmalert:vmalert-test-only"
+      register: _probe_second
+      changed_when: false
+
+    - name: Keep the logs for a failure
+      ansible.builtin.command: docker logs --tail 15 {{ _vmalert }}
+      register: _vmalert_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Render the compose with and without readers
+      ansible.builtin.set_fact:
+        _published: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_first) | from_yaml }}"
+        _internal: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f {{ _host }} {{ _am }} {{ _vm }} {{ _vmalert }};
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert who gets in, and what the compose publishes
+      vars:
+        _first_seen: "{{ (_probe_first.stdout | from_json) }}"
+        _second_seen: "{{ (_probe_second.stdout | from_json) }}"
+        _am_up: "{{ _published.services.alertmanager }}"
+        _vmalert_up: "{{ _published.services.vmalert }}"
+      ansible.builtin.assert:
+        that:
+          - "'changed=0' in _run_again.stdout"
+          - "'restart requested' in _run_first.stdout"
+          - "'restart requested' not in _run_again.stdout"
+          - _run_reserved.rc != 0
+          - "'vmalert is reserved' in _run_reserved.stdout"
+          - _modes.stdout_lines[0].endswith(' 0 600')
+          - _modes.stdout_lines[1].endswith(' ' ~ monitoring_alertmanager_uid ~ ' 400')
+          - _modes.stdout_lines[2].endswith(' 0 400')
+          - "_first_seen.codes == {'reader': 200, 'nobody': 401, 'dashboard': 200, 'wrong': 401, 'retired': 200, 'vmalert': 200}"
+          - "'AlwaysFiring' in _first_seen.alerts"
+          - "_second_seen.codes == {'reader': 200, 'old': 401, 'dashboard': 200, 'retired': 401, 'vmalert': 200}"
+          - "'--web.config.file=/etc/alertmanager/secrets/web.yml' in _am_up.command"
+          - _am_up.ports == ['9093:9093']
+          - "'--notifier.basicAuth.username=vmalert' in _vmalert_up.command"
+          - "'--notifier.basicAuth.passwordFile=/etc/vmalert/notifier-password' in _vmalert_up.command"
+          - "'--web.config.file=/etc/alertmanager/secrets/web.yml' not in _internal.services.alertmanager.command"
+          - "'ports' not in _internal.services.alertmanager"
+          - _internal.services.vmalert.command | select('match', '--notifier.basicAuth') | list | length == 0
+        fail_msg: >-
+          {{ _probe_first.stdout }} {{ _probe_second.stdout }} {{ _modes.stdout_lines }}
+          {{ _run_again.stdout[-300:] }} {{ _run_reserved.stdout[-400:] }} {{ _vmalert_logs.stderr[-600:] }}

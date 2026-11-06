@@ -97,6 +97,9 @@ scrape_configs:
       - targets: ["{{ t.url }}"]
         labels:
           instance: "{{ t.instance }}"
+{% if t.url is match('http://') %}
+          __param_module: http_2xx
+{% endif %}
 {% endfor %}
     relabel_configs:
       - source_labels: [__address__]

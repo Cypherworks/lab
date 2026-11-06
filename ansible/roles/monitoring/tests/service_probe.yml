@@ -34,12 +34,14 @@
             monitoring_blackbox_service_targets:
               - { url: "https://auth.example.test/health", instance: auth }
               - { url: "https://vault.example.test/alive", instance: vault }
+              - { url: "http://192.0.2.31:8080/healthz", instance: wall-1 }
 
         - name: Render with services
           ansible.builtin.template:
-            src: ../templates/scrape.yml.j2
-            dest: "{{ _scratch.path }}/on.yml"
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/on-{{ item }}"
             mode: "0644"
+          loop: [scrape.yml, blackbox.yml]
 
         - name: Assert no job exists without services
           vars:
@@ -50,19 +52,34 @@
 
         - name: Assert the job names each service and drops cert series
           vars:
-            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on.yml') | from_yaml }}"
+            _urls: ['https://auth.example.test/health', 'https://vault.example.test/alive', 'http://192.0.2.31:8080/healthz']
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on-scrape.yml') | from_yaml }}"
             _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'service-health') | first }}"
           ansible.builtin.assert:
             that:
               - _job.metrics_path == '/probe'
               - _job.params.module == ['https_2xx']
-              - _job.static_configs | map(attribute='targets') | flatten == ['https://auth.example.test/health', 'https://vault.example.test/alive']
-              - _job.static_configs | map(attribute='labels.instance') | list == ['auth', 'vault']
+              - _job.static_configs | map(attribute='targets') | flatten == _urls
+              - _job.static_configs | map(attribute='labels.instance') | list == ['auth', 'vault', 'wall-1']
               - _job.relabel_configs[0].target_label == '__param_target'
               - _job.relabel_configs[1].replacement == 'blackbox:9115'
               - _job.metric_relabel_configs[0].regex == 'probe_ssl_.*'
               - _job.metric_relabel_configs[0].action == 'drop'
             fail_msg: "{{ _job | to_json }}"
+
+        - name: Assert a plain http service is probed without TLS
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on-scrape.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'service-health') | first }}"
+            _modules: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/on-blackbox.yml') | from_yaml).modules }}"
+          ansible.builtin.assert:
+            that:
+              - _job.static_configs[2].labels.__param_module == 'http_2xx'
+              - _job.static_configs[:2] | selectattr('labels.__param_module', 'defined') | list | length == 0
+              - _modules.http_2xx.prober == 'http'
+              - "'fail_if_not_ssl' not in _modules.http_2xx.http"
+              - _modules.https_2xx.http.fail_if_not_ssl
+            fail_msg: "{{ _job | to_json }} {{ _modules | to_json }}"
       always:
         - name: Remove the scratch dir
           ansible.builtin.file:
