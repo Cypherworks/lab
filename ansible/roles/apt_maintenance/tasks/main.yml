@@ -1,0 +1,76 @@
+---
+# Installs the weekly maintenance script, its slot timer and the boot unit
+# that confirms the host came back healthy. Holds stay held, nothing is
+# autoremoved (lab-deploy#194), and local conffiles are kept.
+- name: Refuse a host without a slot or with a multi-line gate check
+  ansible.builtin.assert:
+    that:
+      - apt_maintenance_on_calendar | length > 0
+      - apt_maintenance_gate_checks | select('search', '\n') | list | length == 0
+    fail_msg: >-
+      Set apt_maintenance_on_calendar to this host's OnCalendar slot, and keep
+      each apt_maintenance_gate_checks entry on one line.
+
+- name: Check systemd understands the slot
+  ansible.builtin.command:
+    argv: [systemd-analyze, calendar, "{{ apt_maintenance_on_calendar }}"]
+  changed_when: false
+
+- name: Create the config, state and metrics directories
+  become: true
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/apt-maintenance, mode: "0755" }
+    - { path: /var/lib/apt-maintenance, mode: "0700" }
+    - { path: "{{ apt_maintenance_textfile_dir }}", mode: "0755" }
+
+- name: Install the maintenance script
+  become: true
+  ansible.builtin.copy:
+    src: apt-maintenance
+    dest: /usr/local/sbin/apt-maintenance
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render the maintenance settings and gate
+  become: true
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/apt-maintenance/{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: [config, gate-checks]
+
+- name: Render the maintenance systemd units
+  become: true
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - apt-maintenance.service
+    - apt-maintenance.timer
+    - apt-maintenance-confirm.service
+
+- name: Enable the slot timer
+  become: true
+  ansible.builtin.systemd_service:
+    name: apt-maintenance.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Enable the boot confirmation
+  become: true
+  ansible.builtin.systemd_service:
+    name: apt-maintenance-confirm.service
+    enabled: true

@@ -1,0 +1,12 @@
+[Unit]
+Description=Confirm the host is healthy after an apt maintenance reboot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/apt-maintenance/confirm-pending
+
+[Service]
+Type=exec
+ExecStart=/usr/local/sbin/apt-maintenance confirm
+
+[Install]
+WantedBy=multi-user.target

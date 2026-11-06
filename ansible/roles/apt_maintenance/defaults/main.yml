@@ -1,0 +1,25 @@
+---
+# Weekly apt upgrade from every origin, with a reboot when anything changed or
+# the OS asks for one. unattended_upgrades stays the nightly security floor;
+# this is the rest. Each host gets its own slot, and a gate of shell checks
+# decides whether the estate can spare it: if any check fails the host defers
+# and touches nothing, so one host that didn't come back stops the rollout.
+# Slots never catch up after downtime, so a power cut can't line hosts up.
+
+# Required: this host's systemd OnCalendar slot, e.g. "Sun *-*-* 02:00:00".
+apt_maintenance_on_calendar: ""
+
+# Must all exit 0 before an upgrade and after its reboot; logged, no secrets.
+apt_maintenance_gate_checks: []
+
+# Seconds the gate may take to pass after a reboot, and the retry interval.
+apt_maintenance_boot_confirm_timeout: 1800
+apt_maintenance_boot_confirm_interval: 30
+
+# Seconds apt waits for the dpkg lock, e.g. while unattended-upgrades runs.
+apt_maintenance_lock_timeout: 600
+
+# Where node_exporter's textfile collector reads, beside the apt metrics.
+apt_maintenance_textfile_dir: /var/lib/prometheus/node-exporter
+
+apt_maintenance_reboot_command: systemctl reboot

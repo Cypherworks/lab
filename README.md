@@ -30,6 +30,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 | [`base`](ansible/roles/base) | Hostname, packages, timezone, operator SSH keys, static netplan. Applied to every host. |
 | [`docker`](ansible/roles/docker) | Docker Engine + Compose v2 from Docker's APT repository. Shared dependency. |
 | [`unattended_upgrades`](ansible/roles/unattended_upgrades) | Automatic security updates with a quiet-window reboot. |
+| [`apt_maintenance`](ansible/roles/apt_maintenance) | Weekly upgrade from every origin and a reboot, each host in its own slot behind a health gate, so no central run or stored credential. |
 | [`ssh_ca_trust`](ansible/roles/ssh_ca_trust) | Trust an SSH certificate authority for user certificates via an additive sshd drop-in. |
 | [`sssd`](ansible/roles/sssd) | SSSD LDAP client against an Authentik LDAP outpost; identity by default, optional PAM login. |
 | [`tailscale`](ansible/roles/tailscale) | Join a host to a Headscale/Tailscale overlay. |
