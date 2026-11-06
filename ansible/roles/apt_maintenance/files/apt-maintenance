@@ -28,7 +28,7 @@ write_metrics() {
   {
     echo "# HELP apt_maintenance_last_run_timestamp_seconds When the last maintenance run started."
     echo "# TYPE apt_maintenance_last_run_timestamp_seconds gauge"
-    echo "apt_maintenance_last_run_timestamp_seconds $(cat "$STATE_DIR/last_run")"
+    echo "apt_maintenance_last_run_timestamp_seconds $(cat "$STATE_DIR/last_run" 2>/dev/null || echo 0)"
     if [ -s "$STATE_DIR/last_success" ]; then
       echo "# HELP apt_maintenance_last_success_timestamp_seconds When a run last left the host patched and its gate passing."
       echo "# TYPE apt_maintenance_last_success_timestamp_seconds gauge"
@@ -71,17 +71,18 @@ upgrade() {
   local opts=(-q -o "DPkg::Lock::Timeout=$LOCK_TIMEOUT"
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
   for attempt in $(seq "$UPDATE_ATTEMPTS"); do
-    apt-get "${opts[@]}" update && break
+    apt-get "${opts[@]}" --error-on=any update && break
     [ "$attempt" -lt "$UPDATE_ATTEMPTS" ] || return 1
-    log "apt-get update failed, retrying in 60s"
-    sleep 60
+    log "apt-get update failed, retrying in ${UPDATE_RETRY_DELAY}s"
+    sleep "$UPDATE_RETRY_DELAY"
   done
   apt-get "${opts[@]}" -y upgrade --with-new-pkgs
 }
 
 run() {
-  local before after
-  date +%s > "$STATE_DIR/last_run"
+  local before after start elapsed
+  start=$(date +%s)
+  echo "$start" > "$STATE_DIR/last_run"
   if ! gate_passes; then
     log "gate closed, deferring to the next slot"
     write_metrics deferred
@@ -99,8 +100,23 @@ run() {
     succeed
     return 0
   fi
+  elapsed=$(( $(date +%s) - start ))
+  if [ "$elapsed" -ge "$REBOOT_DEADLINE" ]; then
+    log "upgrade done ${elapsed}s in, past the reboot deadline of ${REBOOT_DEADLINE}s; not rebooting"
+    write_metrics failed
+    return 1
+  fi
+  if ! gate_passes; then
+    log "gate closed before the reboot, deferring it to the next slot"
+    write_metrics deferred
+    return 0
+  fi
+  if ! touch "$PENDING"; then
+    log "can't record the pending reboot, not rebooting"
+    write_metrics failed
+    return 1
+  fi
   log "rebooting"
-  touch "$PENDING"
   write_metrics rebooting
   if ! sh -c "$REBOOT_COMMAND"; then
     log "reboot command failed"

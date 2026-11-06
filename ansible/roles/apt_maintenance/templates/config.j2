@@ -3,4 +3,6 @@ TEXTFILE_DIR={{ apt_maintenance_textfile_dir | quote }}
 LOCK_TIMEOUT={{ apt_maintenance_lock_timeout | int }}
 CONFIRM_TIMEOUT={{ apt_maintenance_boot_confirm_timeout | int }}
 CONFIRM_INTERVAL={{ apt_maintenance_boot_confirm_interval | int }}
+REBOOT_DEADLINE={{ apt_maintenance_reboot_deadline | int }}
+UPDATE_RETRY_DELAY={{ apt_maintenance_update_retry_delay | int }}
 REBOOT_COMMAND={{ apt_maintenance_reboot_command | quote }}

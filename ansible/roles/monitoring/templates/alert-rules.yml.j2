@@ -149,7 +149,7 @@ groups:
           description: "Up and scraped, but no log line from it in {{ monitoring_not_logging_window }}."
 {% endif %}
 
-      # Written by the apt_maintenance role; a weekly slot that keeps failing.
+      # From the apt_maintenance role: a weekly slot missed, deferred or failed.
       - alert: MaintenanceOverdue
         expr: time() - apt_maintenance_last_success_timestamp_seconds > {{ monitoring_maintenance_overdue_days }} * 86400
         labels:

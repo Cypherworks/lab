@@ -16,8 +16,14 @@ apt_maintenance_gate_checks: []
 apt_maintenance_boot_confirm_timeout: 1800
 apt_maintenance_boot_confirm_interval: 30
 
+# No reboot once this many seconds have passed since the slot started.
+apt_maintenance_reboot_deadline: 1200
+
 # Seconds apt waits for the dpkg lock, e.g. while unattended-upgrades runs.
 apt_maintenance_lock_timeout: 600
+
+# Seconds between the three apt-get update attempts.
+apt_maintenance_update_retry_delay: 60
 
 # Where node_exporter's textfile collector reads, beside the apt metrics.
 apt_maintenance_textfile_dir: /var/lib/prometheus/node-exporter
