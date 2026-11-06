@@ -6,17 +6,21 @@
   ansible.builtin.assert:
     that:
       - monitoring_alertmanager_vmalert_password | length > 0
+      - monitoring_alertmanager_vmsingle_password | length > 0
       - monitoring_alertmanager_api_users | rejectattr('password') | list | length == 0
-      - "'vmalert' not in monitoring_alertmanager_api_users | map(attribute='name')"
+      - monitoring_alertmanager_api_users | map(attribute='name') | select('in', ['vmalert', 'vmsingle']) | list | length == 0
     fail_msg: >-
       Each of monitoring_alertmanager_api_users needs a name and password, and
-      monitoring_alertmanager_vmalert_password must be set; vmalert is reserved.
+      monitoring_alertmanager_vmalert_password and
+      monitoring_alertmanager_vmsingle_password must be set; vmalert and
+      vmsingle are reserved.
 
 - name: Name everyone who signs in to Alertmanager
   ansible.builtin.set_fact:
     _am_api_users: >-
       {{ monitoring_alertmanager_api_users
-         + [{'name': 'vmalert', 'password': monitoring_alertmanager_vmalert_password}] }}
+         + [{'name': 'vmalert', 'password': monitoring_alertmanager_vmalert_password},
+            {'name': 'vmsingle', 'password': monitoring_alertmanager_vmsingle_password}] }}
     _am_htpasswd: "{{ monitoring_config_dir }}/alertmanager-api.htpasswd"
   no_log: true
 
@@ -102,13 +106,18 @@
   no_log: true
   notify: Restart monitoring
 
-- name: Write vmalert's Alertmanager password
+- name: Write the Alertmanager passwords vmalert and vmsingle sign in with
   become: true
   ansible.builtin.copy:
-    content: "{{ monitoring_alertmanager_vmalert_password }}"
-    dest: "{{ monitoring_config_dir }}/vmalert-notifier-password"
+    content: "{{ item.password }}"
+    dest: "{{ monitoring_config_dir }}/{{ item.file }}"
     owner: root
     group: root
     mode: "0400"
+  loop:
+    - {file: vmalert-notifier-password, password: "{{ monitoring_alertmanager_vmalert_password }}"}
+    - {file: vmsingle-alertmanager-password, password: "{{ monitoring_alertmanager_vmsingle_password }}"}
+  loop_control:
+    label: "{{ item.file }}"
   no_log: true
   notify: Restart monitoring

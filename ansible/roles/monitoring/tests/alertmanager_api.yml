@@ -1,9 +1,10 @@
 ---
 # Runs the role's Alertmanager API auth tasks on a throwaway Debian 13
-# container, then real Alertmanager and vmalert on what they wrote. Checks who
-# gets in, that vmalert's alerts arrive signed in, that a second run changes
-# nothing, and that a changed password or dropped user stops working. Also
-# renders the compose both ways. Needs Docker, and internet for the images and
+# container, then real Alertmanager, vmalert, VictoriaLogs and vmsingle on what
+# they wrote. Checks who gets in, that vmalert's alerts arrive signed in, that
+# vmsingle scrapes the stack's own metrics with Alertmanager signed in, that a
+# second run changes nothing, and that a changed password or dropped user stops
+# working. Also renders the compose and scrape config both ways. Needs Docker, and internet for the images and
 # apt. From ansible/:
 #
 #   ansible-playbook -i localhost, roles/monitoring/tests/alertmanager_api.yml
@@ -18,6 +19,7 @@
     _am: monitoring-amapi-alertmanager
     _vm: monitoring-amapi-vmsingle
     _vmalert: monitoring-amapi-vmalert
+    _vl: monitoring-amapi-victorialogs
     _dir: "{{ playbook_dir }}/.amapi"
     _config: /opt/monitoring/config
     _converge: >-
@@ -25,11 +27,13 @@
       {{ playbook_dir }}/alertmanager_api_converge.yml -e @{{ _dir }}
     _first:
       monitoring_alertmanager_vmalert_password: vmalert-test-only
+      monitoring_alertmanager_vmsingle_password: vmsingle-test-only
       monitoring_alertmanager_api_users:
         - {name: dashboard, password: first-test-only}
         - {name: retired, password: retired-test-only}
     _second:
       monitoring_alertmanager_vmalert_password: vmalert-test-only
+      monitoring_alertmanager_vmsingle_password: vmsingle-test-only
       monitoring_alertmanager_api_users:
         - {name: dashboard, password: second-test-only}
     _am_config: |
@@ -71,10 +75,35 @@
           time.sleep(1)
       codes = {name: ask(cred)[0] for name, cred in creds.items()}
       print(json.dumps({"codes": codes, "alerts": seen}))
+    _scraped: |
+      import json, time, urllib.parse, urllib.request
+      def series(query):
+          url = "http://{{ _vm }}:8428/api/v1/query?" + urllib.parse.urlencode({"query": query})
+          try:
+              with urllib.request.urlopen(url, timeout=3) as reply:
+                  return json.load(reply)["data"]["result"]
+          except OSError:
+              return []
+      line = urllib.request.Request("http://{{ _vl }}:9428/insert/jsonline", data=b'{"_msg": "test"}')
+      for _ in range(30):
+          try:
+              urllib.request.urlopen(line, timeout=3).close()
+              break
+          except OSError:
+              time.sleep(1)
+      up = {}
+      for _ in range(60):
+          up = {r["metric"]["job"]: r["value"][1] for r in series("up")}
+          if all(up.get(job) == "1" for job in ("alertmanager", "vmalert", "victorialogs")) and series("vl_rows_ingested_total"):
+              break
+          time.sleep(1)
+      names = ["alertmanager_notifications_failed_total", "vmalert_alerts_send_errors_total",
+               "vl_rows_ingested_total", "vl_storage_is_read_only"]
+      print(json.dumps({"up": up, "present": [n for n in names if series(n)]}))
   tasks:
     - name: Clear what a failed run left behind for debugging
       ansible.builtin.shell: >-
-        docker rm -f {{ _host }} {{ _am }} {{ _vm }} {{ _vmalert }} 2>/dev/null;
+        docker rm -f {{ _host }} {{ _am }} {{ _vm }} {{ _vmalert }} {{ _vl }} 2>/dev/null;
         docker network rm {{ _net }} 2>/dev/null; true
       changed_when: false
 
@@ -122,11 +151,19 @@
       register: _run_again
       changed_when: false
 
-    - name: Converge with a vmalert user claimed by a reader
+    - name: Converge with a reserved user claimed by a reader
       ansible.builtin.command: >-
         {{ _converge }}/first.json -e '{"monitoring_alertmanager_api_users":
-        [{"name": "vmalert", "password": "x"}]}'
+        [{"name": "{{ item }}", "password": "x"}]}'
+      loop: [vmalert, vmsingle]
       register: _run_reserved
+      changed_when: false
+      failed_when: false
+
+    - name: Converge with no vmsingle password
+      ansible.builtin.command: >-
+        {{ _converge }}/first.json -e monitoring_alertmanager_vmsingle_password=
+      register: _run_no_vmsingle
       changed_when: false
       failed_when: false
 
@@ -136,6 +173,7 @@
         {{ _config }}/alertmanager-api.htpasswd
         {{ _config }}/alertmanager-secrets/web.yml
         {{ _config }}/vmalert-notifier-password
+        {{ _config }}/vmsingle-alertmanager-password
       register: _modes
       changed_when: false
 
@@ -146,6 +184,7 @@
       loop:
         - {src: alertmanager-secrets/web.yml, dest: web.yml}
         - {src: vmalert-notifier-password, dest: vmalert-password}
+        - {src: vmsingle-alertmanager-password, dest: vmsingle-password}
       changed_when: true
 
     - name: Converge with a new password and one reader dropped
@@ -163,13 +202,29 @@
       ansible.builtin.command: docker network create {{ _net }}
       changed_when: true
 
-    - name: Start VictoriaMetrics for vmalert to query
-      ansible.builtin.command: docker run -d --name {{ _vm }} --network {{ _net }} {{ monitoring_vmsingle_image }}
+    - name: Render the role's scrape config, which then holds only the stack's own jobs
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../templates/scrape.yml.j2', template_vars=_first | combine({'monitoring_scrape_interval': '2s'})) }}"
+        dest: "{{ _dir }}/config/scrape.yml"
+        mode: "0644"
+
+    - name: Start VictoriaLogs for vmsingle to scrape
+      ansible.builtin.command: >-
+        docker run -d --name {{ _vl }} --network {{ _net }} --network-alias victorialogs
+        {{ monitoring_victorialogs_image }}
+      changed_when: true
+
+    - name: Start VictoriaMetrics, scraping and signing in as the compose has it
+      ansible.builtin.command: >-
+        docker run -d --name {{ _vm }} --network {{ _net }}
+        -v {{ _dir }}/config/scrape.yml:/etc/vm/scrape.yml:ro
+        -v {{ _dir }}/first/vmsingle-password:/etc/vm/alertmanager-password:ro
+        {{ monitoring_vmsingle_image }} -promscrape.config=/etc/vm/scrape.yml
       changed_when: true
 
     - name: Start Alertmanager behind the first run's web config
       ansible.builtin.command: >-
-        docker run -d --name {{ _am }} --network {{ _net }}
+        docker run -d --name {{ _am }} --network {{ _net }} --network-alias alertmanager
         -v {{ _dir }}/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
         -v {{ _dir }}/first/web.yml:/etc/alertmanager/web.yml:ro
         {{ monitoring_alertmanager_image }}
@@ -178,7 +233,7 @@
 
     - name: Start vmalert, signing in as the compose has it
       ansible.builtin.command: >-
-        docker run -d --name {{ _vmalert }} --network {{ _net }}
+        docker run -d --name {{ _vmalert }} --network {{ _net }} --network-alias vmalert
         -v {{ _dir }}/config/rules.yml:/etc/vmalert/rules.yml:ro
         -v {{ _dir }}/first/vmalert-password:/etc/vmalert/notifier-password:ro
         {{ monitoring_vmalert_image }}
@@ -199,13 +254,20 @@
           wrong: "dashboard:not-it"
           retired: "retired:retired-test-only"
           vmalert: "vmalert:vmalert-test-only"
+          vmsingle: "vmsingle:vmsingle-test-only"
       register: _probe_first
+      changed_when: false
+
+    - name: Ask vmsingle what it scraped from the stack
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _scraped }}"]
+      register: _scraped_first
       changed_when: false
 
     - name: Restart Alertmanager behind the second run's web config
       ansible.builtin.shell: >-
         docker rm -f {{ _am }} &&
-        docker run -d --name {{ _am }} --network {{ _net }}
+        docker run -d --name {{ _am }} --network {{ _net }} --network-alias alertmanager
         -v {{ _dir }}/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
         -v {{ _dir }}/second/web.yml:/etc/alertmanager/web.yml:ro
         {{ monitoring_alertmanager_image }}
@@ -222,6 +284,7 @@
           dashboard: "dashboard:second-test-only"
           retired: "retired:retired-test-only"
           vmalert: "vmalert:vmalert-test-only"
+          vmsingle: "vmsingle:vmsingle-test-only"
       register: _probe_second
       changed_when: false
 
@@ -231,14 +294,16 @@
       changed_when: false
       failed_when: false
 
-    - name: Render the compose with and without readers
+    - name: Render the compose and scrape config with and without readers
       ansible.builtin.set_fact:
         _published: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_first) | from_yaml }}"
         _internal: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+        _scrape_published: "{{ lookup('ansible.builtin.template', '../templates/scrape.yml.j2', template_vars=_first) | from_yaml }}"
+        _scrape_internal: "{{ lookup('ansible.builtin.template', '../templates/scrape.yml.j2') | from_yaml }}"
 
     - name: Remove the containers
       ansible.builtin.shell: >-
-        docker rm -f {{ _host }} {{ _am }} {{ _vm }} {{ _vmalert }};
+        docker rm -f {{ _host }} {{ _am }} {{ _vm }} {{ _vmalert }} {{ _vl }};
         docker network rm {{ _net }}
       changed_when: true
 
@@ -251,21 +316,33 @@
       vars:
         _first_seen: "{{ (_probe_first.stdout | from_json) }}"
         _second_seen: "{{ (_probe_second.stdout | from_json) }}"
+        _scraped: "{{ (_scraped_first.stdout | from_json) }}"
         _am_up: "{{ _published.services.alertmanager }}"
         _vmalert_up: "{{ _published.services.vmalert }}"
+        _vm_password: "{{ monitoring_config_dir }}/vmsingle-alertmanager-password:/etc/vm/alertmanager-password:ro"
+        _am_job: "{{ _scrape_published.scrape_configs | selectattr('job_name', 'eq', 'alertmanager') | first }}"
+        _am_job_internal: "{{ _scrape_internal.scrape_configs | selectattr('job_name', 'eq', 'alertmanager') | first }}"
       ansible.builtin.assert:
         that:
           - "'changed=0' in _run_again.stdout"
           - "'restart requested' in _run_first.stdout"
           - "'restart requested' not in _run_again.stdout"
-          - _run_reserved.rc != 0
-          - "'vmalert is reserved' in _run_reserved.stdout"
+          - _run_reserved.results | rejectattr('rc') | list | length == 0
+          - _run_reserved.results | rejectattr('stdout', 'search', 'vmalert and vmsingle are reserved') | list | length == 0
+          - _run_no_vmsingle.rc != 0
           - _modes.stdout_lines[0].endswith(' 0 600')
           - _modes.stdout_lines[1].endswith(' ' ~ monitoring_alertmanager_uid ~ ' 400')
           - _modes.stdout_lines[2].endswith(' 0 400')
-          - "_first_seen.codes == {'reader': 200, 'nobody': 401, 'dashboard': 200, 'wrong': 401, 'retired': 200, 'vmalert': 200}"
+          - _modes.stdout_lines[3].endswith(' 0 400')
+          - "_first_seen.codes == {'reader': 200, 'nobody': 401, 'dashboard': 200, 'wrong': 401, 'retired': 200, 'vmalert': 200, 'vmsingle': 200}"
           - "'AlwaysFiring' in _first_seen.alerts"
-          - "_second_seen.codes == {'reader': 200, 'old': 401, 'dashboard': 200, 'retired': 401, 'vmalert': 200}"
+          - "_second_seen.codes == {'reader': 200, 'old': 401, 'dashboard': 200, 'retired': 401, 'vmalert': 200, 'vmsingle': 200}"
+          - "_scraped.up == {'alertmanager': '1', 'vmalert': '1', 'victorialogs': '1'}"
+          - _scraped.present | length == 4
+          - "_am_job.basic_auth == {'username': 'vmsingle', 'password_file': '/etc/vm/alertmanager-password'}"
+          - "'basic_auth' not in _am_job_internal"
+          - _vm_password in _published.services.vmsingle.volumes
+          - _vm_password not in _internal.services.vmsingle.volumes
           - "'--web.config.file=/etc/alertmanager/secrets/web.yml' in _am_up.command"
           - _am_up.ports == ['9093:9093']
           - "'--notifier.basicAuth.username=vmalert' in _vmalert_up.command"
@@ -274,5 +351,5 @@
           - "'ports' not in _internal.services.alertmanager"
           - _internal.services.vmalert.command | select('match', '--notifier.basicAuth') | list | length == 0
         fail_msg: >-
-          {{ _probe_first.stdout }} {{ _probe_second.stdout }} {{ _modes.stdout_lines }}
-          {{ _run_again.stdout[-300:] }} {{ _run_reserved.stdout[-400:] }} {{ _vmalert_logs.stderr[-600:] }}
+          {{ _probe_first.stdout }} {{ _probe_second.stdout }} {{ _scraped_first.stdout }} {{ _modes.stdout_lines }}
+          {{ _run_again.stdout[-300:] }} {{ (_run_reserved.results | map(attribute='stdout') | join(' '))[-600:] }} {{ _vmalert_logs.stderr[-600:] }}

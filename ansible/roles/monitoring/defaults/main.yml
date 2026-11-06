@@ -48,6 +48,10 @@ monitoring_blackbox_targets: []      # e.g. ["https://grafana.example.com"]
 monitoring_blackbox_icmp_targets: []
 # Health URLs for the kiosk's tiles and ServiceDown, as {url, instance}.
 monitoring_blackbox_service_targets: []
+# One frame URL per camera, as {url, instance}. Each probe decodes a frame, so
+# they run at their own, slower pace.
+monitoring_blackbox_cctv_targets: []
+monitoring_blackbox_cctv_interval: "60s"
 # Cert expiry on each HA node directly, as {target: "ip:443", instance}. A node
 # behind a VIP holds its own cert, so its server_name decides which it presents.
 monitoring_blackbox_node_tls_targets: []
@@ -104,9 +108,11 @@ monitoring_alertmanager_repeat_interval: "24h"
 monitoring_alertmanager_uid: 65534
 # Readers of the Alertmanager API from outside the instance, as [{name,
 # password}] from SOPS. Set, Alertmanager is published on 9093 behind basic
-# auth, and vmalert signs in with its own password. Empty keeps it internal.
+# auth, and vmalert and vmsingle (scraping its metrics) sign in with their own
+# passwords. Empty keeps it internal.
 monitoring_alertmanager_api_users: []
 monitoring_alertmanager_vmalert_password: ""
+monitoring_alertmanager_vmsingle_password: ""
 # Receivers outside the lab, written to files by name. Empty leaves one out.
 monitoring_alert_secret_files: >-
   {{ [

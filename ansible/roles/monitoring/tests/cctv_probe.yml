@@ -1,0 +1,159 @@
+---
+# Checks the CCTV probe: the scrape job asks blackbox for one frame per camera,
+# and a real blackbox_exporter, on the role's rendered config, passes only a
+# JPEG. A stand-in serves a frame, a failed stream and an HTML page. Needs
+# Docker, and internet to pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/cctv_probe.yml
+- name: Verify the CCTV probe
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: monitoring-cctv-probe-test
+    _cams: monitoring-cctv-probe-cameras
+    _blackbox: monitoring-cctv-probe-blackbox
+    _blackbox_port: 15406
+    _urls:
+      - "https://cctv.example.test/api/frame.jpeg?src=front"
+      - "https://cctv.example.test/api/frame.jpeg?src=garage"
+    _cameras: |
+      import http.server
+      class Frames(http.server.BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path == "/api/frame.jpeg?src=front":
+                  self.reply(200, "image/jpeg", b"\xff\xd8\xff\xe0frame")
+              elif self.path == "/api/frame.jpeg?src=gone":
+                  self.reply(500, "text/plain", b"stream failed")
+              else:
+                  self.reply(200, "text/html", b"<html>not a frame</html>")
+          def reply(self, code, kind, body):
+              self.send_response(code)
+              self.send_header("Content-Type", kind)
+              self.end_headers()
+              self.wfile.write(body)
+      http.server.HTTPServer(("", 8080), Frames).serve_forever()
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, probe, and clean up
+      block:
+        - name: Render with no cameras
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/off-{{ item }}"
+            mode: "0644"
+          loop: [scrape.yml, blackbox.yml]
+
+        - name: Add cameras
+          ansible.builtin.set_fact:
+            monitoring_blackbox_cctv_targets:
+              - { url: "{{ _urls[0] }}", instance: front }
+              - { url: "{{ _urls[1] }}", instance: garage }
+
+        - name: Render with cameras
+          ansible.builtin.template:
+            src: "../templates/{{ item }}.j2"
+            dest: "{{ _scratch.path }}/on-{{ item }}"
+            mode: "0644"
+          loop: [scrape.yml, blackbox.yml]
+
+        - name: Assert neither the job nor the module exists without cameras
+          vars:
+            _scrape: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/off-scrape.yml') | from_yaml }}"
+            _modules: "{{ (lookup('ansible.builtin.file', _scratch.path ~ '/off-blackbox.yml') | from_yaml).modules }}"
+          ansible.builtin.assert:
+            that:
+              - _scrape.scrape_configs | selectattr('job_name', 'eq', 'cctv') | list | length == 0
+              - "'http_jpeg' not in _modules"
+
+        - name: Assert the job asks for one frame per camera, at its own pace, and drops cert series
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/on-scrape.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'cctv') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _job.scrape_interval == monitoring_blackbox_cctv_interval
+              - monitoring_blackbox_cctv_interval == '60s'
+              - _job.metrics_path == '/probe'
+              - _job.params.module == ['http_jpeg']
+              - _job.static_configs | map(attribute='targets') | flatten == _urls
+              - _job.static_configs | map(attribute='labels.instance') | list == ['front', 'garage']
+              - _job.relabel_configs[0].target_label == '__param_target'
+              - _job.relabel_configs[1].replacement == 'blackbox:9115'
+              - _job.metric_relabel_configs[0].regex == 'probe_ssl_.*'
+              - _job.metric_relabel_configs[0].action == 'drop'
+            fail_msg: "{{ _job | to_json }}"
+
+        - name: Make the test network
+          ansible.builtin.command: docker network create {{ _net }}
+          changed_when: true
+
+        - name: Start the stand-in cameras
+          ansible.builtin.command:
+            argv: [docker, run, -d, --name, "{{ _cams }}", --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _cameras }}"]
+          changed_when: true
+
+        - name: Create the exporter on the role's config
+          ansible.builtin.command: >-
+            docker create --name {{ _blackbox }} --network {{ _net }}
+            -p 127.0.0.1:{{ _blackbox_port }}:9115 {{ monitoring_blackbox_image }}
+            --config.file=/tmp/blackbox.yml
+          changed_when: true
+
+        - name: Give the exporter its config
+          ansible.builtin.command: docker cp {{ _scratch.path }}/on-blackbox.yml {{ _blackbox }}:/tmp/blackbox.yml
+          changed_when: true
+
+        - name: Start the exporter
+          ansible.builtin.command: docker start {{ _blackbox }}
+          changed_when: true
+
+        - name: Probe a frame, a failed stream and a page
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ _blackbox_port }}/probe?module=http_jpeg&target={{ ('http://' ~ _cams ~ ':8080' ~ item) | urlencode }}"
+            return_content: true
+          register: _probed
+          until: _probed.status == 200 and 'probe_http_status_code' in _probed.content
+          retries: 15
+          delay: 2
+          loop:
+            - /api/frame.jpeg?src=front
+            - /api/frame.jpeg?src=gone
+            - /
+
+        - name: Assert only a JPEG passes
+          ansible.builtin.assert:
+            that:
+              - "'probe_success 1' in _probed.results[0].content"
+              - "'probe_success 0' in _probed.results[1].content"
+              - "'probe_success 0' in _probed.results[2].content"
+            fail_msg: "{{ _probed.results | map(attribute='content') | join(' || ') }}"
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: docker rm -f {{ _cams }} {{ _blackbox }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent
