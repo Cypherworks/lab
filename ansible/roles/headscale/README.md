@@ -23,7 +23,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_checksum` | `sha256:{{ headscale_release_base }}/checksums.txt` | Integrity check for the `.deb`. A `sha256:<url>` verifies against Headscale's published checksums file; override with a literal `sha256:<hash>` to pin, or `""` to skip. |
 | `headscale_domain` | `headscale.example.com` | Public control-plane hostname (`server_url` and the TLS-ALPN cert). |
 | `headscale_listen_addr` | `0.0.0.0:443` | Listen address. Behind the EC2 `sni_router`, override to a local port (e.g. `127.0.0.1:8443`). |
-| `headscale_metrics_listen_addr` | `127.0.0.1:9090` | Prometheus `/metrics` bind. Override to the host's tailnet IP to scrape over the overlay. Never public. |
+| `headscale_metrics_listen_addr` | `127.0.0.1:9090` | Bind for Headscale's debug server, which serves `/metrics` and `/debug/*`. Keep it on loopback and scrape locally. See notes. |
 | `headscale_metrics_nonlocal_bind` | `false` | Set `true` when `headscale_metrics_listen_addr` is this host's own tailnet IP: that address only exists after the host joins the overlay Headscale serves, so it must be allowed to bind before the address is up. See notes. |
 | `headscale_base_domain` | `ts.example.com` | MagicDNS suffix; a tailnet-only subdomain so it never clashes with the real Route53 zone. |
 | `headscale_dns_nameservers` | `["1.1.1.1", "1.0.0.1"]` | DNS servers pushed to `accept-dns` clients. |
@@ -65,7 +65,6 @@ Handlers: none — the running service is reconciled to the on-disk config direc
       vars:
         headscale_arch: arm64
         headscale_listen_addr: "127.0.0.1:8443"   # behind sni_router
-        headscale_metrics_listen_addr: "100.64.0.1:9090"
         headscale_oidc_enabled: true
         headscale_oidc_issuer: "https://auth.example.com/application/o/headscale/"
         headscale_oidc_client_id: "{{ vault_hs_client_id }}"
@@ -76,9 +75,9 @@ Handlers: none — the running service is reconciled to the on-disk config direc
 
 - `headscale_oidc_only_start_if_available` is false on purpose. The EC2 reaches Authentik over the very overlay Headscale runs, so a hard OIDC-at-startup dependency deadlocks (Authentik blip -> Headscale won't start -> overlay degrades -> can't reach Authentik). Starting anyway breaks the loop; OIDC enrolment resumes once Authentik is reachable.
 - `headscale_oidc_scopes` deliberately omits `groups`: that scope triggers Headscale's "empty OIDC callback params" failure (headscale#2887). Authentik's `profile` scope already carries the groups claim that `allowed_groups` matches against.
-- `headscale_metrics_listen_addr` must never bind `0.0.0.0` or the public interface. Keep it on loopback or the tailnet IP; the EC2 security group stays closed and the tailnet is the only path in.
+- `headscale_metrics_listen_addr` is Headscale's debug server, not just `/metrics`. Through tailscale's `tsweb.Debugger` it serves `/debug/config` (the running config as JSON, OIDC client secret included), the policy, routes and pprof, to any loopback or Tailscale source address. On the tailnet IP, every enrolled device can read it unless an ACL policy stops it. Keep it on loopback and scrape it from an agent on the same host.
 - The `.deb` is verified against Headscale's published checksums file by default (`headscale_checksum`). This catches transport corruption and tampering of the artifact; for a stronger guarantee against a compromised release, override `headscale_checksum` with a literal `sha256:<hash>` pinned to a reviewed version.
 - With OIDC off, bootstrap routers and the laptop with short-lived pre-auth keys issued by hand.
-- `headscale_metrics_nonlocal_bind` breaks a boot cycle specific to a host that joins its own overlay: `metrics_listen_addr` is that host's tailnet IP, which only appears once it joins, but Headscale binds the address at startup and would crash-loop on `cannot assign requested address`. Allowing non-local bind lets it claim the address early; nothing can reach it until the overlay is up anyway.
+- `headscale_metrics_nonlocal_bind` breaks a boot cycle specific to a host that joins its own overlay: `metrics_listen_addr` is that host's tailnet IP, which only appears once it joins, but Headscale binds the address at startup and would crash-loop on `cannot assign requested address`. Allowing non-local bind lets it claim the address early; nothing can reach it until the overlay is up anyway. It also hides a wrong address: Headscale binds an IP the host doesn't hold without an error. Setting it back to `false` doesn't remove the sysctl file the role wrote.
 - The service is reconciled directly rather than via a notify handler. A handler is deferred to the end of the play, so an interrupted run (or a later role that dials Headscale) would see a service still on its install-time config. Restarting on "config/sysctl changed or port not listening" converges from any state.
 - `headscale_selfjoin_user` supports a host that is its own control server: the role ensures the user and exposes its id, and the `tailscale` role's `tailscale_authkey_command` mints a fresh key against the live database at join time — no perishable key in SOPS.
