@@ -15,6 +15,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `unattended_upgrades_origins` | `["${distro_id}:${distro_codename}-security", "${distro_id}ESMApps:${distro_codename}-apps-security", "${distro_id}ESM:${distro_codename}-infra-security"]` | Allowed origins written to the policy; the ESM entries cover the Ubuntu apps/infra security pockets. |
+| `unattended_upgrades_origin_patterns` | `["origin=Debian,codename=${distro_codename}-security,label=Debian-Security"]` | Origins-Pattern entries written beside the allowed origins. Debian names its security Suite `stable-security`, so the `origin:archive` form above never matches it; this matches the codename and label instead, and matches nothing on Ubuntu. |
 | `unattended_upgrades_auto_reboot` | `false` | Whether to reboot automatically after an update that needs it. |
 | `unattended_upgrades_auto_reboot_time` | `"03:30"` | Time of day for the automatic reboot, when `unattended_upgrades_auto_reboot` is enabled. |
 | `unattended_upgrades_remove_unused_deps` | `false` | Whether to remove unused dependencies after upgrades. |
@@ -29,7 +30,9 @@ None.
 
 1. Installs `unattended-upgrades` and `apt-listchanges` via apt (cache refreshed, `cache_valid_time: 3600`).
 2. Templates `20auto-upgrades.j2` to `/etc/apt/apt.conf.d/20auto-upgrades` (root:root, mode `0644`), enabling periodic package-list updates, unattended upgrades, download of upgradeable packages, and a 7-day autoclean interval.
-3. Templates `50unattended-upgrades.j2` to `/etc/apt/apt.conf.d/50unattended-upgrades` (root:root, mode `0644`) with the allowed origins, unused-dependency removal, and automatic-reboot policy.
+3. Templates `50unattended-upgrades.j2` to `/etc/apt/apt.conf.d/50unattended-upgrades` (root:root, mode `0644`) with the allowed origins, the origin patterns, unused-dependency removal, and automatic-reboot policy.
+
+`tests/security_origins.yml` boots Debian 13 and Ubuntu 24.04 under systemd in Docker. On each it offers one upgrade from a repo shaped like the security archive and one from a repo shaped like the updates archive, runs `unattended-upgrade`, and asserts only the security one is applied. It needs Docker, `community.docker`, and internet for the images and their apt packages.
 
 ## Example
 

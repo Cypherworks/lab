@@ -1,0 +1,153 @@
+---
+# The role's allowed origins were written for Ubuntu. On Debian 13 they must
+# still apply the security archive (Origin Debian, Label Debian-Security,
+# Suite stable-security, Codename trixie-security), and on Ubuntu 24.04 the
+# noble-security pocket, while each leaves its updates archive alone. Two
+# local repos per host, shaped like those archives, each offer one upgrade;
+# unattended-upgrade runs for real. Needs Docker, community.docker, and
+# internet for the images and their apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/unattended_upgrades/tests/security_origins.yml
+- name: Boot a Debian 13 and an Ubuntu 24.04 host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _boot: >-
+      rm -f /usr/sbin/policy-rc.d
+      && apt-get update -qq && apt-get install -y -qq --no-install-recommends
+      systemd systemd-sysv python3 sudo
+      && exec /lib/systemd/systemd
+    _targets:
+      - name: unattended-upgrades-debian-test
+        image: debian:13
+        sources: debian.sources
+        security: [Debian, Debian-Security, stable-security, trixie-security]
+        updates: [Debian, Debian, stable-updates, trixie-updates]
+      - name: unattended-upgrades-ubuntu-test
+        image: ubuntu:24.04
+        sources: ubuntu.sources
+        security: [Ubuntu, Ubuntu, noble-security, noble]
+        updates: [Ubuntu, Ubuntu, noble-updates, noble]
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ item.name }}
+      loop: "{{ _targets }}"
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on each image
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ item.name }}
+          - --hostname={{ item.name }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - "{{ item.image }}"
+          - sh
+          - -c
+          - "{{ _boot }}"
+      loop: "{{ _targets }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ item.name }} systemctl is-system-running
+      loop: "{{ _targets }}"
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the targets through Docker
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups: upgrade_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+        _sources: "{{ item.sources }}"
+        _security: "{{ item.security }}"
+        _updates: "{{ item.updates }}"
+      loop: "{{ _targets }}"
+
+- name: Apply the security archive and nothing else
+  hosts: upgrade_target
+  gather_facts: false
+  vars:
+    ansible_user: root
+  tasks:
+    - name: Run the role with its defaults
+      ansible.builtin.include_role:
+        name: unattended_upgrades
+
+    # Archive sources go, so the two probes are the only upgrades on offer.
+    - name: Install both probes at 1.0 and offer 2.0 from archive-shaped repos
+      ansible.builtin.shell: |
+        set -e
+        build() {
+          mkdir -p "/tmp/$1-$2/DEBIAN"
+          printf 'Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: Lab test <test@example.test>\nDescription: upgrade probe\n' \
+            "$1" "$2" > "/tmp/$1-$2/DEBIAN/control"
+          dpkg-deb --build "/tmp/$1-$2" "/tmp/$1_$2_all.deb" > /dev/null
+        }
+        publish() {
+          mkdir -p "/srv/$1"
+          cp "/tmp/$2_2.0_all.deb" "/srv/$1/"
+          deb="/srv/$1/$2_2.0_all.deb"
+          printf 'Package: %s\nVersion: 2.0\nArchitecture: all\nMaintainer: Lab test <test@example.test>\nFilename: ./%s_2.0_all.deb\nSize: %s\nSHA256: %s\nDescription: upgrade probe\n' \
+            "$2" "$2" "$(stat -c%s "$deb")" "$(sha256sum "$deb" | cut -d' ' -f1)" > "/srv/$1/Packages"
+          printf 'Origin: %s\nLabel: %s\nSuite: %s\nCodename: %s\nDate: %s\nSHA256:\n %s %s Packages\n' \
+            "$3" "$4" "$5" "$6" "$(date -Ru)" \
+            "$(sha256sum "/srv/$1/Packages" | cut -d' ' -f1)" "$(stat -c%s "/srv/$1/Packages")" \
+            > "/srv/$1/Release"
+          echo "deb [trusted=yes] file:/srv/$1 ./" >> /etc/apt/sources.list.d/probes.list
+        }
+        for pkg in probe-security probe-updates; do
+          build "$pkg" 1.0
+          build "$pkg" 2.0
+          dpkg -i "/tmp/${pkg}_1.0_all.deb" > /dev/null
+        done
+        mv /etc/apt/sources.list.d/{{ _sources }} /root/
+        publish security probe-security {{ _security | join(' ') }}
+        publish updates probe-updates {{ _updates | join(' ') }}
+        apt-get update -qq
+      changed_when: true
+
+    - name: Run unattended-upgrade
+      ansible.builtin.command: unattended-upgrade -v
+      register: _run
+      changed_when: true
+
+    - name: Read the installed probe versions
+      ansible.builtin.command: dpkg-query -W -f='${Package} ${Version}\n' probe-security probe-updates
+      register: _versions
+      changed_when: false
+
+    - name: Read whether apt refreshes its lists on its own
+      ansible.builtin.command: apt-config shell lists APT::Periodic::Update-Package-Lists
+      register: _lists
+      changed_when: false
+
+    - name: Clean up
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    - name: Assert the security probe upgraded and the updates probe did not
+      ansible.builtin.assert:
+        that:
+          - "'probe-security 2.0' in _versions.stdout_lines"
+          - "'probe-updates 1.0' in _versions.stdout_lines"
+          - _lists.stdout == "lists='1'"
+        fail_msg: "{{ _versions.stdout_lines }} {{ _lists.stdout }} {{ _run.stdout_lines }}"
