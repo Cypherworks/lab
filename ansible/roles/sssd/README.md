@@ -52,7 +52,7 @@ Identity path (always):
 3. Templates `sssd.conf.j2` to `/etc/sssd/sssd.conf` at mode `0600` (mandatory — SSSD refuses a looser config, and the file holds the bind password). Uses `ldap_schema = rfc2307bis` with `ldap_user_name = cn`, `auto_private_groups = hybrid`, `ldap_tls_reqcert = demand` against the CA.
 4. Points `passwd`/`group` in `/etc/nsswitch.conf` at `sss` via whole-line `lineinfile`. `shadow` is deliberately left alone (auth territory).
 5. Enables and starts the `sssd` service.
-6. Disables `sssd_monitor_started_sockets` and clears any failure they left. `services =` has the monitor start those responders, and the package's socket units refuse to run beside that: their `ExecStartPre` exits 17. Dropping the line for socket activation would also stop the failures, but it moves the login path, so the role keeps the responders under the monitor.
+6. Disables `sssd_monitor_started_sockets` and clears any failure they left. `services =` has the monitor start those responders, and the package's socket units refuse to run beside that: their `ExecStartPre` exits 17. Dropping the line for socket activation would also stop the failures, but it moves the login path, so the role keeps the responders under the monitor. A socket the host doesn't ship is skipped: Debian 13's sssd 2.10 has no `sssd-pam-priv.socket`. `tests/responder_sockets.yml` covers Ubuntu 24.04 and `tests/responder_sockets_debian.yml` covers Debian 13.
 
 Config/CA changes notify the `Restart sssd` handler, which restarts (not reloads) to clear the aggressive cache so stale identity data does not linger.
 

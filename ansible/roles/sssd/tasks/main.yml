@@ -63,6 +63,11 @@
     enabled: false
     state: stopped
   loop: "{{ sssd_monitor_started_sockets }}"
+  register: sssd_disable_socket
+  # Debian 13's sssd 2.10 ships no sssd-pam-priv.socket.
+  failed_when: >-
+    sssd_disable_socket is failed and 'Could not find the requested service'
+    not in sssd_disable_socket.msg | default('')
 
 - name: Clear the failure those sockets left behind
   become: true
