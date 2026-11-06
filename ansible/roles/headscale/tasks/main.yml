@@ -31,16 +31,8 @@
     mode: "0640"
   register: headscale_config
 
-- name: Allow binding the metrics address before the overlay exists
-  become: true
-  ansible.posix.sysctl:
-    name: net.ipv4.ip_nonlocal_bind
-    value: "1"
-    sysctl_set: true
-    sysctl_file: /etc/sysctl.d/60-headscale-nonlocal-bind.conf
-    reload: true
-  register: headscale_nonlocal_bind
-  when: headscale_metrics_nonlocal_bind
+- name: Set non-local bind as the metrics address needs it
+  ansible.builtin.include_tasks: nonlocal_bind.yml
 
 - name: Check whether Headscale is already serving its listen port
   ansible.builtin.command: "ss -H -ltn sport = :{{ headscale_listen_addr.split(':')[-1] }}"
@@ -55,6 +47,7 @@
     state: >-
       {{ 'restarted'
          if (headscale_config is changed or headscale_nonlocal_bind is changed
+             or headscale_nonlocal_bind_off is changed
              or headscale_listener.stdout == '')
          else 'started' }}
 

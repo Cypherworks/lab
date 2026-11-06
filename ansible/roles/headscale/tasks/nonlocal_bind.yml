@@ -1,0 +1,34 @@
+---
+- name: Allow binding the metrics address before the overlay exists
+  become: true
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_set: true
+    sysctl_file: /etc/sysctl.d/60-headscale-nonlocal-bind.conf
+    reload: true
+  register: headscale_nonlocal_bind
+  when: headscale_metrics_nonlocal_bind
+
+- name: Stop setting non-local bind at boot
+  become: true
+  ansible.builtin.file:
+    path: /etc/sysctl.d/60-headscale-nonlocal-bind.conf
+    state: absent
+  when: not headscale_metrics_nonlocal_bind
+
+- name: Read the running kernel's non-local bind
+  ansible.builtin.slurp:
+    src: /proc/sys/net/ipv4/ip_nonlocal_bind
+  register: headscale_nonlocal_bind_live
+  when: not headscale_metrics_nonlocal_bind
+
+# Removing the file leaves the running kernel at 1 until a reboot.
+- name: Turn non-local bind off on the running kernel
+  become: true
+  ansible.builtin.command: sysctl -w net.ipv4.ip_nonlocal_bind=0
+  register: headscale_nonlocal_bind_off
+  changed_when: true
+  when:
+    - not headscale_metrics_nonlocal_bind
+    - headscale_nonlocal_bind_live.content | b64decode | trim != '0'
