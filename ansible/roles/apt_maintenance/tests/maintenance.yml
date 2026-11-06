@@ -267,10 +267,13 @@
         name: apt-maintenance-confirm.service
         state: started
 
-    - name: Read the state after the skipped confirmation
-      ansible.builtin.shell: |
-        systemctl show -p ConditionResult --value apt-maintenance-confirm.service
-        cat {{ _prom }}
+    - name: Read the confirmation unit after it was skipped
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+      register: _no_confirm_unit
+
+    - name: Read the metrics after the skipped confirmation
+      ansible.builtin.command: cat {{ _prom }}
       register: _no_confirm
       changed_when: false
 
@@ -342,9 +345,13 @@
         state: started
       failed_when: false
 
+    - name: Read the unit's result after the fetch failure
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+      register: _unfetched_unit
+
     - name: Read the state after the fetch failure
       ansible.builtin.shell: |
-        systemctl show -p Result --value apt-maintenance.service
         cat {{ _prom }}
         echo ---
         {{ _markers }}
@@ -456,7 +463,7 @@
     - name: Assert the confirmation does nothing without a pending reboot
       ansible.builtin.assert:
         that:
-          - _no_confirm.stdout_lines[0] == 'no'
+          - _no_confirm_unit.status.ConditionResult == 'no'
           - "'apt_maintenance_result{result=\"failed\"} 1' in _no_confirm.stdout"
 
     - name: Assert a run past its deadline upgrades but doesn't reboot
@@ -480,7 +487,7 @@
     - name: Assert a repo that can't be fetched fails the run
       ansible.builtin.assert:
         that:
-          - _unfetched.stdout_lines[0] == 'exit-code'
+          - _unfetched_unit.status.Result == 'exit-code'
           - "'apt_maintenance_result{result=\"failed\"} 1' in _unfetched.stdout"
           - "'absent /run/amtest-rebooted' in _unfetched.stdout"
           - "'upgrade failed, not rebooting' in _unfetched.stdout"
