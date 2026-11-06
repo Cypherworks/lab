@@ -54,7 +54,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
 | `monitoring_blackbox_targets` | `[]` | Plain list of https URLs for cert-expiry probes; the URL becomes the `instance` label. |
 | `monitoring_blackbox_icmp_targets` | `[]` | Addresses pinged once per scrape. Scraped as job `icmp`; a failed probe is one lost packet. |
-| `monitoring_blackbox_service_targets` | `[]` | Health URLs for the kiosk's up/down tiles: `{url, instance}`. Scraped as job `service-health`; its cert series are dropped. `ServiceDown` fires when one fails for a minute. |
+| `monitoring_blackbox_service_targets` | `[]` | Health URLs for the kiosk's up/down tiles: `{url, instance}`. Scraped as job `service-health`; its cert series are dropped. An `https://` URL must answer over TLS; an `http://` one (inside the lab) is probed with the `http_2xx` module instead. `ServiceDown` fires when one fails for a minute. |
 | `monitoring_blackbox_node_tls_targets` | `[]` | HA nodes to read a cert from directly, past their VIP: `{target: "ip:443", instance}`. Scraped as job `blackbox-tls`. |
 | `monitoring_blackbox_node_tls_server_name` | `""` | SNI name those nodes are asked for. |
 | `monitoring_blackbox_tls_skip_verify` | `false` | Skip verification on https probes. A cert that fails verification reports no expiry at all, so set this to see an expired cert. |
@@ -100,6 +100,8 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_discord_critical_webhook_url` / `monitoring_discord_warning_webhook_url` | `""` | Secrets. Discord webhooks by severity, written to files. Text sent there goes through `alert-text.tmpl`, which strips URLs, FQDNs and addresses. Empty leaves Discord out. |
 | `monitoring_healthchecks_ping_url` | `""` | Secret. Set, a `Watchdog` alert pings it every minute, so an outside service can notice the lab has gone. A period of 2 minutes with 1 of grace alerts about 3 minutes after the last ping. |
 | `monitoring_redis_password` | `""` | SOPS — redis_exporter connection password. |
+| `monitoring_alertmanager_api_users` | `[]` | Secrets. Readers of the Alertmanager API from outside the instance, as `{name, password}`. Set, Alertmanager is published on 9093 behind basic auth (`--web.config.file`). Empty keeps it on the compose network only. |
+| `monitoring_alertmanager_vmalert_password` | `""` | Secret, needed with API users. vmalert signs in to Alertmanager as `vmalert` with it; that name is reserved. |
 
 ### SNMPv3 (Synology NAS, authPriv)
 
@@ -136,7 +138,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 
 ## What it does
 
-Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config and its text template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the `lab-kiosk` dashboard laid out for a 1080p wall screen. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`, `lab-overview.json`) so Grafana stops serving them, and the dropped ntfy config files. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. It then brings the stack up with `docker_compose_v2`, removing the container of any service the compose doesn't define, and deletes the dropped ntfy volumes, which held its user database.
+Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config and its text template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the `lab-kiosk` dashboard laid out for a 1080p wall screen. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`, `lab-overview.json`) so Grafana stops serving them, and the dropped ntfy config files. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. With API users set, it hashes each password on the host with `htpasswd` (bcrypt, read from stdin), rehashing only one that changed, drops users the deploy removed, and writes Alertmanager's web config and vmalert's password file; with none, it removes those files. It then brings the stack up with `docker_compose_v2`, removing the container of any service the compose doesn't define, and deletes the dropped ntfy volumes, which held its user database.
 
 vmsingle is used instead of Prometheus for lighter storage and better compaction on the resource- and heat-constrained rig; it is PromQL-compatible, so Grafana treats it as a Prometheus datasource. Any config, env, or compose change restarts the stack.
 

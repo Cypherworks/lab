@@ -13,6 +13,15 @@ modules:
       tls_config:
         insecure_skip_verify: true
 {% endif %}
+{% if monitoring_blackbox_service_targets | selectattr('url', 'match', 'http://') | list %}
+  # A plain http health URL inside the lab, such as a service behind Caddy.
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      method: GET
+      preferred_ip_protocol: "ip4"
+{% endif %}
 {% if monitoring_blackbox_icmp_targets %}
   icmp_ping:
     prober: icmp

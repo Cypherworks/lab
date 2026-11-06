@@ -43,6 +43,22 @@
   no_log: true
   notify: Restart monitoring
 
+- name: Put Alertmanager's API behind basic auth
+  ansible.builtin.include_tasks: alertmanager_api.yml
+  when: monitoring_alertmanager_api_users | length > 0
+
+- name: Remove the Alertmanager API auth files when it isn't published
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ monitoring_config_dir }}/alertmanager-api.htpasswd"
+    - "{{ monitoring_config_dir }}/alertmanager-secrets/web.yml"
+    - "{{ monitoring_config_dir }}/vmalert-notifier-password"
+  when: monitoring_alertmanager_api_users | length == 0
+  notify: Restart monitoring
+
 - name: Render the monitoring config files
   become: true
   ansible.builtin.template:

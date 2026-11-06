@@ -102,6 +102,11 @@ monitoring_grafana_role_path: "contains(groups[*], 'grafana-admins') && 'Admin' 
 monitoring_alertmanager_repeat_interval: "24h"
 # The user the Alertmanager image runs as, so it can read its secret files.
 monitoring_alertmanager_uid: 65534
+# Readers of the Alertmanager API from outside the instance, as [{name,
+# password}] from SOPS. Set, Alertmanager is published on 9093 behind basic
+# auth, and vmalert signs in with its own password. Empty keeps it internal.
+monitoring_alertmanager_api_users: []
+monitoring_alertmanager_vmalert_password: ""
 # Receivers outside the lab, written to files by name. Empty leaves one out.
 monitoring_alert_secret_files: >-
   {{ [
