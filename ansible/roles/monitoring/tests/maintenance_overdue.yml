@@ -1,0 +1,94 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up
+# apt_maintenance data: a system whose last good maintenance run is over the
+# limit fires, one patched within it stays quiet, and one that has never
+# reported stays quiet (the dashboard row counts that one). Needs Docker, and
+# internet to pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, \
+#     roles/monitoring/tests/maintenance_overdue.yml
+- name: Verify the maintenance overdue alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.maintenance_overdue"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 1h
+      tests:
+        - name: a system unpatched past the limit fires, a patched one doesn't
+          interval: 1h
+          input_series:
+            - series: 'apt_maintenance_last_success_timestamp_seconds{job="node",instance="node-a"}'
+              values: '0x200'
+            - series: 'apt_maintenance_last_success_timestamp_seconds{job="node-instance",instance="etcd-1"}'
+              values: '0+3600x200'
+            - series: 'node_reboot_required{job="node-instance",instance="pg-1"}'
+              values: '0x200'
+          alert_rule_test:
+            - eval_time: 192h
+              alertname: MaintenanceOverdue
+            - eval_time: 193h
+              alertname: MaintenanceOverdue
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                    job: node
+                    instance: node-a
+                  exp_annotations:
+                    summary: "Not patched for 8 days: node-a"
+                    description: "No successful apt maintenance run in 8 days."
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alert behaves
+      ansible.builtin.assert:
+        that:
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"

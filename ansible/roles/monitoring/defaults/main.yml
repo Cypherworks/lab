@@ -121,6 +121,8 @@ monitoring_hass_token: ""            # SOPS — HASS long-lived access token
 # Alert thresholds — tunable from the deploy.
 monitoring_temp_warn_celsius: 75
 monitoring_disk_used_percent: 85
+# Days without a good apt_maintenance run before it pages: a week and a day.
+monitoring_maintenance_overdue_days: 8
 
 # Grafana — site values from the deploy. OIDC endpoints are authentik's GLOBAL
 # ones (not per-app); verified against integrations.goauthentik.io/monitoring/grafana.
