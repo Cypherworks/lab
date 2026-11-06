@@ -21,6 +21,28 @@ scrape_configs:
 {% endfor %}
 {% endif %}
 {% endmacro -%}
+  # The stack's own metrics, so a failing notifier or a stalled log store shows.
+  # Alertmanager's API sits behind basic auth when it is published.
+  - job_name: alertmanager
+{% if monitoring_alertmanager_api_users %}
+    basic_auth:
+      username: vmsingle
+      password_file: /etc/vm/alertmanager-password
+{% endif %}
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels:
+          instance: "alertmanager"
+  - job_name: vmalert
+    static_configs:
+      - targets: ["vmalert:8880"]
+        labels:
+          instance: "vmalert"
+  - job_name: victorialogs
+    static_configs:
+      - targets: ["victorialogs:9428"]
+        labels:
+          instance: "victorialogs"
 {{ labelled_job('node', monitoring_node_targets) -}}
 {{ labelled_job('blocky', monitoring_blocky_targets) -}}
 {{ labelled_job('patroni', monitoring_patroni_targets) -}}
@@ -100,6 +122,30 @@ scrape_configs:
 {% if t.url is match('http://') %}
           __param_module: http_2xx
 {% endif %}
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - target_label: __address__
+        replacement: blackbox:9115
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: probe_ssl_.*
+        action: drop
+{% endif %}
+{% if monitoring_blackbox_cctv_targets %}
+  # blackbox_exporter fetch of one frame from each camera, through the restream.
+  # Cert series are dropped, as for the service health probes.
+  - job_name: cctv
+    scrape_interval: {{ monitoring_blackbox_cctv_interval }}
+    metrics_path: /probe
+    params:
+      module: [http_jpeg]
+    static_configs:
+{% for t in monitoring_blackbox_cctv_targets %}
+      - targets: ["{{ t.url }}"]
+        labels:
+          instance: "{{ t.instance }}"
 {% endfor %}
     relabel_configs:
       - source_labels: [__address__]

@@ -22,6 +22,18 @@ modules:
       method: GET
       preferred_ip_protocol: "ip4"
 {% endif %}
+{% if monitoring_blackbox_cctv_targets %}
+  # A camera is up when its restream hands back a JPEG frame.
+  http_jpeg:
+    prober: http
+    timeout: 8s
+    http:
+      method: GET
+      preferred_ip_protocol: "ip4"
+      fail_if_header_not_matches:
+        - header: Content-Type
+          regexp: "^image/jpeg"
+{% endif %}
 {% if monitoring_blackbox_icmp_targets %}
   icmp_ping:
     prober: icmp

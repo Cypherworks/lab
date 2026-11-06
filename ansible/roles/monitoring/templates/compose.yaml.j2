@@ -26,6 +26,9 @@ services:
     volumes:
       - vmdata:/victoria-metrics-data
       - {{ monitoring_config_dir }}/scrape.yml:/etc/vm/scrape.yml:ro
+{% if monitoring_alertmanager_api_users %}
+      - {{ monitoring_config_dir }}/vmsingle-alertmanager-password:/etc/vm/alertmanager-password:ro
+{% endif %}
     ports:
       - "8428:8428"
 

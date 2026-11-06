@@ -56,6 +56,7 @@
     - "{{ monitoring_config_dir }}/alertmanager-api.htpasswd"
     - "{{ monitoring_config_dir }}/alertmanager-secrets/web.yml"
     - "{{ monitoring_config_dir }}/vmalert-notifier-password"
+    - "{{ monitoring_config_dir }}/vmsingle-alertmanager-password"
   when: monitoring_alertmanager_api_users | length == 0
   notify: Restart monitoring
 
