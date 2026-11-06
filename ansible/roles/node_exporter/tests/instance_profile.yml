@@ -1,0 +1,164 @@
+---
+# The Incus instances run Debian 13, whose collectors count pending upgrades
+# themselves, and see the host's sensors and storage pool. So they run only the
+# collectors nothing else gives, with the package's own apt_info.py. Proves
+# that set on Debian 13 with node_exporter installed without its Recommends.
+# Needs Docker, community.docker, and internet for the image and packages.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/node_exporter/tests/instance_profile.yml
+- name: Boot a Debian 13 host without the collectors or dbus
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: node-exporter-instance-test
+    _boot: >-
+      rm -f /usr/sbin/policy-rc.d
+      && apt-get update -qq && apt-get install -y -qq --no-install-recommends
+      systemd systemd-sysv python3 sudo prometheus-node-exporter
+      && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Debian 13, as the instances run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - debian:13
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: instance_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Serve only the instance collectors, with the package's apt counts
+  hosts: instance_target
+  gather_facts: false
+  vars:
+    ansible_user: root
+    node_exporter_listen_address: 127.0.0.1
+    node_exporter_extra_args: >-
+      --collector.disable-defaults --collector.textfile --collector.os
+      --collector.pressure --collector.systemd
+    node_exporter_apt_info_override: false
+    _probe_pending: 'apt_upgrades_pending{arch="all",origin="probe:probe/probe-updates"} 1'
+    # pressure also reads /proc/pressure/irq, absent here, so it reports 0.
+    _succeeding_collectors: [os, systemd, textfile]
+  tasks:
+    - name: Run the role with the instance collector set
+      ansible.builtin.include_role:
+        name: node_exporter
+
+    - name: Restart node_exporter now if the role asked for it
+      ansible.builtin.meta: flush_handlers
+
+    # Archive sources go, so the probe is the only upgrade the host can see.
+    - name: Install probe 1.0 and offer 2.0 from a local repo
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /tmp/probe/DEBIAN /srv/probe
+        printf 'Package: lab-apt-probe\nVersion: 1.0\nArchitecture: all\nMaintainer: Lab test <test@example.test>\nDescription: upgrade probe\n' \
+          > /tmp/probe/DEBIAN/control
+        dpkg-deb --build /tmp/probe /tmp/probe.deb
+        dpkg -i /tmp/probe.deb
+        printf '%s\n' 'Package: lab-apt-probe' 'Version: 2.0' 'Architecture: all' \
+          'Maintainer: Lab test <test@example.test>' \
+          'Filename: ./lab-apt-probe_2.0_all.deb' 'Size: 1' \
+          'Description: upgrade probe' > /srv/probe/Packages
+        mv /etc/apt/sources.list.d/debian.sources /root/
+        echo 'deb [trusted=yes] file:/srv/probe ./' > /etc/apt/sources.list.d/probe.list
+        touch /run/reboot-required
+      changed_when: true
+
+    - name: Publish the probe repo and read the metrics
+      ansible.builtin.include_tasks: apt_metrics_read.yml
+
+    - name: Read the apt unit the package runs
+      ansible.builtin.systemd_service:
+        name: prometheus-node-exporter-apt.service
+      register: _package_unit
+
+    - name: Read the state of every service
+      ansible.builtin.service_facts:
+
+    - name: Clean up
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    - name: Assert the package's apt_info.py counts the upgrade
+      ansible.builtin.assert:
+        that:
+          - "'/usr/share/prometheus-node-exporter-collectors/apt_info.py' in _package_unit.status.ExecStart"
+          - _probe_pending in _metrics
+          - "'node_reboot_required 1' in _metrics"
+          - "'node_textfile_scrape_error 0' in _metrics"
+        fail_msg: "{{ _package_unit.status.ExecStart }} {{ _metrics }}"
+
+    - name: Assert each instance collector ran and nothing else did
+      vars:
+        _lines: "{{ _scrape.content.splitlines() }}"
+        _ran: "{{ _lines | select('match', 'node_scrape_collector_success') | list }}"
+        _active_unit: >-
+          node_systemd_unit_state\{name="prometheus-node-exporter.service",state="active"
+        _succeeded: >-
+          {{ _succeeding_collectors | map('regex_replace', '^(.*)$',
+          'node_scrape_collector_success{collector="\1"} 1') | list }}
+      ansible.builtin.assert:
+        that:
+          - _ran | length == _succeeding_collectors | length + 1
+          - _succeeded | difference(_ran) == []
+          - _lines | select('match', 'node_pressure_(cpu|io|memory)_waiting_seconds_total ') | list | length == 3
+          - _lines | select('match', 'node_(hwmon|thermal_zone|filesystem|cpu)_') | list == []
+          - _lines | select('match', _active_unit) | select('search', ' 1$') | list | length == 1
+          - _lines | select('match', 'node_os_info\{') | list | length == 1
+        fail_msg: "{{ _ran }}"
+
+    - name: Assert no collector service fails in the container
+      vars:
+        _failed: >-
+          {{ ansible_facts.services | dict2items
+          | selectattr('key', 'match', 'prometheus-node-exporter')
+          | selectattr('value.state', 'eq', 'failed')
+          | map(attribute='key') | list }}
+        _collectors: >-
+          {{ ansible_facts.services | dict2items
+          | selectattr('key', 'match', 'prometheus-node-exporter-')
+          | list | length }}
+      ansible.builtin.assert:
+        that:
+          - _collectors | int > 1
+          - _failed == []
+        fail_msg: "{{ _failed }}"

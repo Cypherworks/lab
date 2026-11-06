@@ -44,6 +44,7 @@ scrape_configs:
         labels:
           instance: "victorialogs"
 {{ labelled_job('node', monitoring_node_targets) -}}
+{{ labelled_job('node-instance', monitoring_node_instance_targets) -}}
 {{ labelled_job('blocky', monitoring_blocky_targets) -}}
 {{ labelled_job('patroni', monitoring_patroni_targets) -}}
 {# speedtest-tracker exposes a native Prometheus endpoint at /prometheus (no auth;

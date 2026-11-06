@@ -1,0 +1,62 @@
+---
+# The Incus instances' node_exporters scrape as their own job, apart from the
+# hosts', so dashboards and alerts can tell a host from an instance. Renders
+# the role's scrape config with and without instance targets. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/node_instance_job.yml
+- name: Verify the node-instance scrape job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, check, and clean up
+      block:
+        - name: Render the scrape config with no instance targets
+          ansible.builtin.template:
+            src: ../templates/scrape.yml.j2
+            dest: "{{ _scratch.path }}/off-scrape.yml"
+            mode: "0644"
+
+        - name: Point the role at a host and two instances
+          ansible.builtin.set_fact:
+            monitoring_node_targets:
+              - { target: "198.51.100.11:9100", instance: host-1 }
+            monitoring_node_instance_targets:
+              - { target: "198.51.100.21:9100", instance: instance-1 }
+              - { target: "198.51.100.22:9100", instance: instance-2 }
+
+        - name: Render the scrape config with them
+          ansible.builtin.template:
+            src: ../templates/scrape.yml.j2
+            dest: "{{ _scratch.path }}/scrape.yml"
+            mode: "0644"
+
+        - name: Assert each instance scrapes under node-instance, hosts under node
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/scrape.yml') | from_yaml }}"
+            _off: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/off-scrape.yml') | from_yaml }}"
+            _jobs: "{{ _config.scrape_configs | items2dict(key_name='job_name', value_name='static_configs') }}"
+          ansible.builtin.assert:
+            that:
+              - _jobs['node-instance'] | map(attribute='targets') | list == [['198.51.100.21:9100'], ['198.51.100.22:9100']]
+              - _jobs['node-instance'] | map(attribute='labels.instance') | list == ['instance-1', 'instance-2']
+              - _jobs['node'] | map(attribute='labels.instance') | list == ['host-1']
+              - _off.scrape_configs | default([], true) | selectattr('job_name', 'eq', 'node-instance') | list == []
+            fail_msg: "{{ _config | to_json }}"
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

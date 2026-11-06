@@ -1,12 +1,18 @@
 ---
-# Prometheus node_exporter on the bare-metal hosts (x86 nodes + Pis). Debian's
-# package ships a hardened systemd unit; the default collectors include hwmon and
-# thermal_zone, which is what gives us CPU temperature on both the x86 ThinkCentres
-# (coretemp via hwmon) and the ARM Pis (thermal_zone) — the priority, given the heat.
-- name: Install node_exporter
+# Prometheus node_exporter on hosts and Incus instances. Debian's package
+# ships a hardened systemd unit; the default collectors include hwmon and
+# thermal_zone, which give CPU temperature on the x86 ThinkCentres (coretemp
+# via hwmon) and the ARM Pis (thermal_zone), the priority given the heat. A
+# container sees its host's sensors, so instances pick their collectors
+# through node_exporter_extra_args.
+# Its Recommends, named so a no-Recommends host still gets apt.prom and units.
+- name: Install node_exporter, the collectors and dbus
   become: true
   ansible.builtin.apt:
-    name: prometheus-node-exporter
+    name:
+      - prometheus-node-exporter
+      - prometheus-node-exporter-collectors
+      - dbus
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -47,6 +53,52 @@
     group: root
     mode: "0644"
   notify: Restart node_exporter
+
+# The collectors' apt timer runs this in place of their own apt_info.py.
+- name: Run the role's apt_info.py in place of the package's
+  when: node_exporter_apt_info_override | bool
+  become: true
+  block:
+    - name: Install the role's apt_info.py
+      ansible.builtin.copy:
+        src: apt_info.py
+        dest: /usr/local/sbin/prometheus-node-exporter-apt-info
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Ensure the apt collector drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/prometheus-node-exporter-apt.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Point the apt collector at the role's apt_info.py
+      ansible.builtin.copy:
+        src: apt-info.dropin.conf
+        dest: /etc/systemd/system/prometheus-node-exporter-apt.service.d/10-apt-info.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+- name: Hand the apt collector back to the package's apt_info.py
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/prometheus-node-exporter-apt.service.d/10-apt-info.conf
+    - /usr/local/sbin/prometheus-node-exporter-apt-info
+  when: not (node_exporter_apt_info_override | bool)
+
+# The systemd collector reads units over dbus; a fresh install leaves it down.
+- name: Start dbus
+  become: true
+  ansible.builtin.systemd_service:
+    name: dbus.service
+    state: started
 
 - name: Enable and start node_exporter
   become: true

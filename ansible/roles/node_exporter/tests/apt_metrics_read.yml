@@ -1,0 +1,29 @@
+---
+# Shared by apt_metrics.yml: republish the probe repo, run the apt collector,
+# and keep the apt lines node_exporter serves.
+- name: Hash the probe repo's index into its Release and refresh apt
+  ansible.builtin.shell: |
+    set -e
+    cd /srv/probe
+    printf 'Origin: probe\nLabel: probe\nSuite: probe-updates\nCodename: probe\nDate: %s\nSHA256:\n %s %s Packages\n' \
+      "$(date -Ru)" "$(sha256sum Packages | cut -d' ' -f1)" "$(stat -c%s Packages)" > Release
+    apt-get update -qq
+  changed_when: true
+
+- name: Run the apt collector
+  ansible.builtin.systemd_service:
+    name: prometheus-node-exporter-apt.service
+    state: restarted
+
+- name: Scrape node_exporter
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9100/metrics
+    return_content: true
+  register: _scrape
+  until: _scrape.status == 200
+  retries: 10
+  delay: 2
+
+- name: Keep the apt and textfile lines
+  ansible.builtin.set_fact:
+    _metrics: "{{ _scrape.content.splitlines() | select('match', '(apt_|node_reboot_required|node_textfile_scrape_error)') | list }}"
