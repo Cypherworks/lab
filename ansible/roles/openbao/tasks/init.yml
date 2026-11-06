@@ -25,6 +25,24 @@
   ansible.builtin.set_fact:
     openbao_initialized: "{{ (openbao_status.stdout | from_json).initialized }}"
 
+# Restore mode only ever applies to a fresh node, never over live data.
+- name: Record whether this run restores a snapshot
+  ansible.builtin.set_fact:
+    openbao_restoring: "{{ not openbao_initialized and (openbao_restore_snapshot | length > 0) }}"
+
+# Checked before init: a missing file must not leave a half-built node.
+- name: Check the snapshot to restore is on the host
+  ansible.builtin.stat:
+    path: "{{ openbao_restore_snapshot }}"
+  register: openbao_restore_file
+  when: openbao_restoring
+
+- name: Refuse to restore a snapshot that isn't there
+  ansible.builtin.assert:
+    that: openbao_restore_file.stat.exists
+    fail_msg: "openbao_restore_snapshot {{ openbao_restore_snapshot }} is not on the host."
+  when: openbao_restoring
+
 # --- First-init path -------------------------------------------------------
 - name: Initialise OpenBao (recovery-key mode; KMS auto-unseals)
   environment:
@@ -43,7 +61,9 @@
 - name: Capture the bootstrap root token (this run only, in memory)
   ansible.builtin.set_fact:
     openbao_bootstrap_root_token: "{{ (openbao_init.stdout | from_json).root_token }}"
-  when: not openbao_initialized
+  when:
+    - not openbao_initialized
+    - not openbao_restoring
   no_log: true
 
 # Recovery keys under the recovery CMK: host can encrypt, never decrypt.
@@ -63,9 +83,52 @@
       - --overwrite
       - --value
       - "{{ (openbao_init.stdout | from_json).recovery_keys_b64 | to_json }}"
-  when: not openbao_initialized
+  when:
+    - not openbao_initialized
+    - not openbao_restoring
   changed_when: true
   no_log: true
+
+# --- Restore path ------------------------------------------------------------
+
+# The snapshot's data, recovery key included, replaces this init's own keys.
+- name: Restore the snapshot over the fresh node
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_TOKEN: "{{ (openbao_init.stdout | from_json).root_token }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: bao operator raft snapshot restore -force {{ openbao_restore_snapshot }}
+  register: openbao_restore_result
+  until: openbao_restore_result.rc == 0
+  retries: 10
+  delay: 3
+  when: openbao_restoring
+  changed_when: true
+  no_log: true
+
+- name: Wait for KMS to unseal the restored data
+  environment:
+    BAO_ADDR: "{{ openbao_api_addr }}"
+    BAO_SKIP_VERIFY: "true"
+  ansible.builtin.command: bao status -format=json
+  register: openbao_restored_status
+  until: openbao_restored_status.rc == 0
+  retries: 20
+  delay: 3
+  changed_when: false
+  failed_when: false
+  when: openbao_restoring
+
+- name: Fail if the restored data stayed sealed
+  ansible.builtin.assert:
+    that: openbao_restored_status.rc == 0
+    fail_msg: "The restored data didn't unseal: is this the snapshot's unseal key?"
+  when: openbao_restoring
+
+- name: Carry on as the restored, initialised node
+  ansible.builtin.set_fact:
+    openbao_initialized: true
+  when: openbao_restoring
 
 # Re-converge path: read the AppRole creds the first-init run stored.
 - name: Read the provisioner AppRole creds from SSM

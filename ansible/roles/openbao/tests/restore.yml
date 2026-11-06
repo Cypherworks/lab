@@ -1,0 +1,241 @@
+---
+# Restores one OpenBao's raft snapshot into a fresh one through the role's
+# restore mode, on systemd in privileged throwaway containers, with moto
+# standing in for AWS KMS and SSM. Proves the fresh node unseals on the
+# source's data, adopts the source's provisioner AppRole from SSM, keeps the
+# source's PKI root, leaves the recovery keys in SSM untouched, and never
+# restores over a node that is already initialised. Needs Docker, the
+# community.docker collection, and internet for images, debs and pip. From
+# ansible/:
+#
+#   ANSIBLE_ROLES_PATH=$PWD/roles ansible-playbook -i localhost, \
+#     roles/openbao/tests/restore.yml
+- name: Boot a fake AWS and two systemd hosts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: openbao-restore-test
+    _aws: openbao-restore-aws
+    _hosts: [openbao-restore-source, openbao-restore-target]
+    _make_key: >-
+      import boto3;
+      print(boto3.client('kms', endpoint_url='http://127.0.0.1:5000',
+      region_name='eu-west-2', aws_access_key_id='fake',
+      aws_secret_access_key='fake').create_key()['KeyMetadata']['KeyId'])
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _hosts | join(' ') }} {{ _aws }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start moto as KMS and SSM
+      ansible.builtin.command: >-
+        docker run -d --name {{ _aws }} --network {{ _net }} python:3.13-alpine
+        sh -c "pip install -q 'moto[server]' && exec moto_server -H 0.0.0.0 -p 5000"
+      changed_when: true
+
+    - name: Create the unseal and recovery keys
+      ansible.builtin.command: docker exec {{ _aws }} python3 -c "{{ _make_key }}"
+      register: _keys
+      until: _keys.rc == 0
+      retries: 40
+      delay: 3
+      changed_when: true
+      loop: [unseal, recovery]
+
+    - name: Boot systemd on Debian 13, as the service containers run
+      ansible.builtin.command: >-
+        docker run -d --name {{ item }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+        python3 python3-apt ca-certificates jq && exec /lib/systemd/systemd'
+      changed_when: true
+      loop: "{{ _hosts }}"
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ item }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+      loop: "{{ _hosts }}"
+
+    - name: Read the architecture
+      ansible.builtin.command: docker exec {{ _hosts[0] }} dpkg --print-architecture
+      register: _arch
+      changed_when: false
+
+    - name: Target the containers
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: restore_hosts
+        ansible_connection: community.docker.docker
+        ansible_become: false
+        ansible_python_interpreter: /usr/bin/python3
+        openbao_arch: "{{ _arch.stdout }}"
+        openbao_kms_key_id: "{{ _keys.results[0].stdout }}"
+        openbao_recovery_kms_key_id: "{{ _keys.results[1].stdout }}"
+        openbao_kms_endpoint: "http://{{ _aws }}:5000"
+        openbao_node_id: "{{ item }}"
+        openbao_aws_cli_env:
+          AWS_ACCESS_KEY_ID: fake-access
+          AWS_SECRET_ACCESS_KEY: fake-secret
+          AWS_DEFAULT_REGION: eu-west-2
+          AWS_ENDPOINT_URL: "http://{{ _aws }}:5000"
+      loop: "{{ _hosts }}"
+
+- name: Converge the source and take a snapshot with its snapshot AppRole
+  hosts: openbao-restore-source
+  gather_facts: false
+  vars: &bao
+    openbao_api_addr: https://127.0.0.1:8200
+    openbao_cluster_addr: https://127.0.0.1:8201
+    openbao_aws_region: eu-west-2
+    openbao_aws_access_key_id: fake-access
+    openbao_aws_secret_access_key: fake-secret
+    openbao_deb_sha256_by_arch:
+      amd64: 42bd0890a8e2060e5f29410ea828ee047aa2de21028045731a0516d5a532928c
+      arm64: f9f40f906aaf673f536e59e45be3f485408b36cdb75697e89bb5201b8545dc46
+    openbao_kms_plugin_binary_by_arch:
+      amd64: openbao-plugin-kms-aws_linux_amd64_v1
+      arm64: openbao-plugin-kms-aws_linux_arm64_v8
+    openbao_kms_plugin_sha256_by_arch:
+      amd64: f00ebed7fa1cbec080e0fed908e167125bc14b266df7e4af845f82aa4650ed4e
+      arm64: 8f173d8590d3df52c3501dd3af79b5f90fbc8ae4386b04abb706ca8b82a55b23
+    openbao_auto_init: true
+    openbao_ssm_recovery_param: /openbao/recovery-keys
+    openbao_ssm_provisioner_param: /openbao/provisioner-creds
+    openbao_pki_root_common_name: Restore Test Root CA
+    openbao_snapshot_enabled: true
+    openbao_snapshot_bucket: restore-test-snapshots
+    openbao_snapshot_aws_access_key_id: fake-access
+    openbao_snapshot_aws_secret_access_key: fake-secret
+    openbao_snapshot_aws_region: eu-west-2
+    _env:
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_SKIP_VERIFY: "true"
+  tasks:
+    - name: Converge the source
+      ansible.builtin.include_role:
+        name: openbao
+      vars:
+        openbao_deb_sha256: "{{ openbao_deb_sha256_by_arch[openbao_arch] }}"
+        openbao_kms_plugin_binary: "{{ openbao_kms_plugin_binary_by_arch[openbao_arch] }}"
+        openbao_kms_plugin_sha256: "{{ openbao_kms_plugin_sha256_by_arch[openbao_arch] }}"
+
+    - name: Save a snapshot as the snapshot job does
+      environment: "{{ _env }}"
+      ansible.builtin.shell: |
+        set -a; . /var/lib/openbao-snapshots/approle.env; set +a
+        BAO_TOKEN=$(bao write -field=token auth/approle/login \
+          role_id="$BAO_APPROLE_ROLE_ID" secret_id="$BAO_APPROLE_SECRET_ID") \
+          bao operator raft snapshot save /root/source.snapshot
+      args:
+        executable: /bin/bash
+      changed_when: true
+      no_log: true
+
+    - name: Read the source's PKI root
+      environment: "{{ _env }}"
+      ansible.builtin.command: bao read -field=certificate pki/cert/ca
+      register: _source_ca
+      changed_when: false
+
+    - name: Read the recovery keys the source stored
+      environment: "{{ openbao_aws_cli_env }}"
+      ansible.builtin.command: >-
+        aws ssm get-parameter --name /openbao/recovery-keys
+        --query Parameter.Version --output text
+      register: _recovery_version
+      changed_when: false
+
+- name: Restore the snapshot into the target through the role
+  hosts: openbao-restore-target
+  gather_facts: false
+  vars:
+    <<: *bao
+    openbao_restore_snapshot: /root/source.snapshot
+    _source: openbao-restore-source
+  tasks:
+    - name: Hand the snapshot to the target
+      delegate_to: localhost
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      ansible.builtin.shell: >-
+        docker cp {{ _source }}:/root/source.snapshot - |
+        docker cp - {{ inventory_hostname }}:/root/
+      changed_when: true
+
+    - name: Converge the target in restore mode
+      ansible.builtin.include_role:
+        name: openbao
+      vars:
+        openbao_deb_sha256: "{{ openbao_deb_sha256_by_arch[openbao_arch] }}"
+        openbao_kms_plugin_binary: "{{ openbao_kms_plugin_binary_by_arch[openbao_arch] }}"
+        openbao_kms_plugin_sha256: "{{ openbao_kms_plugin_sha256_by_arch[openbao_arch] }}"
+
+    - name: Read the target after the restore
+      environment: "{{ _env }}"
+      ansible.builtin.command: bao status -format=json
+      register: _status
+      changed_when: false
+
+    - name: Read the target's PKI root
+      environment: "{{ _env }}"
+      ansible.builtin.command: bao read -field=certificate pki/cert/ca
+      register: _target_ca
+      changed_when: false
+
+    - name: Read the recovery keys parameter after the restore
+      environment: "{{ openbao_aws_cli_env }}"
+      ansible.builtin.command: >-
+        aws ssm get-parameter --name /openbao/recovery-keys
+        --query Parameter.Version --output text
+      register: _recovery_after
+      changed_when: false
+
+    - name: Assert the target runs the source's data, unsealed by KMS
+      ansible.builtin.assert:
+        that:
+          - not (_status.stdout | from_json).sealed
+          - (_status.stdout | from_json).type == 'awskms'
+          - _target_ca.stdout == hostvars[_source]._source_ca.stdout
+          - _recovery_after.stdout == hostvars[_source]._recovery_version.stdout
+
+    - name: Converge the target again with the snapshot still set
+      ansible.builtin.include_role:
+        name: openbao
+      vars:
+        openbao_deb_sha256: "{{ openbao_deb_sha256_by_arch[openbao_arch] }}"
+        openbao_kms_plugin_binary: "{{ openbao_kms_plugin_binary_by_arch[openbao_arch] }}"
+        openbao_kms_plugin_sha256: "{{ openbao_kms_plugin_sha256_by_arch[openbao_arch] }}"
+
+    - name: Assert the second converge did not restore over the live node
+      ansible.builtin.assert:
+        that: openbao_restore_result is skipped
+
+- name: Remove the containers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Remove the hosts and the fake AWS
+      ansible.builtin.command: >-
+        docker rm -f openbao-restore-source openbao-restore-target openbao-restore-aws
+      changed_when: true
+
+    - name: Remove the network
+      ansible.builtin.command: docker network rm openbao-restore-test
+      changed_when: true
