@@ -74,6 +74,11 @@
 				trusted_proxies private_ranges
 			}
 {% endif %}
+{# A fixed HTML page instead of a backend; backticks can't occur in it. #}
+{% if route.page is defined %}
+		header Content-Type "text/html; charset=utf-8"
+		respond `{{ route.page }}` 200
+{% else %}
 		reverse_proxy {{ route.upstreams | default([route.upstream]) | join(' ') }} {
 {% if (route.upstreams | default([]) | length > 1) or route.lb_policy is defined %}
 			lb_policy {{ route.lb_policy | default('round_robin') }}
@@ -94,6 +99,7 @@
 			header_up -{{ header }}
 {% endfor %}
 		}
+{% endif %}
 {% if route.authentik_gated | default(false) %}
 		}
 {% endif %}

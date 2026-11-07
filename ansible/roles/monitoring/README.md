@@ -126,6 +126,8 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_go2rtc_api_port` | `1984` | go2rtc HTTP port (MSE/HLS/UI). |
 | `monitoring_go2rtc_video_transcode` | `false` | Transcode camera video to H.264, for H.265 cameras or sources with no parameter sets in their SDP, which MSE draws at 4:3. Software transcode, costs CPU on the host. |
 | `monitoring_go2rtc_video_fps` | `0` | Frame rate limit on the transcode; `0` keeps the camera's rate. A limit also puts keyframes 2 seconds apart: go2rtc's MSE player keeps only 5 seconds and drops a whole keyframe group at a time, so its default 50-frame group (5 seconds at 10 fps) made the playing picture vanish at every keyframe. |
+| `monitoring_go2rtc_front_video_filter` | `""` | ffmpeg `-vf` filter chain for the front camera, e.g. `drawbox` to dim the camera's clock or `delogo` to hide its name. Only applied when transcoding. go2rtc splits its stream options on `#` and the command on spaces, so the chain can't hold either: write colours as `0x110d0c`. |
+| `monitoring_go2rtc_garage_carport_video_filter` | `""` | The same for the garage/carport camera. |
 | `monitoring_go2rtc_front_url` | `""` | SOPS — front camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_garage_carport_url` | `""` | SOPS — garage/carport camera RTSP source (carries a Scrypted access token). |
 | `monitoring_go2rtc_username` | `""` | Optional go2rtc Basic auth username. Empty leaves auth off. |

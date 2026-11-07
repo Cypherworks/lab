@@ -22,18 +22,20 @@ ffmpeg:
   h264: "-c:v libx264 -g {{ (monitoring_go2rtc_video_fps | int) * 2 }} -profile:v high -level:v 4.1 -preset:v superfast -tune:v zerolatency -pix_fmt:v yuv420p"
 
 {% endif %}
+{# One camera's transcode: the frame rate limit, then its video filter. #}
+{% macro transcoded(stream, filter) -%}
+ffmpeg:{{ stream }}_source#video=h264{% if monitoring_go2rtc_video_fps %}#raw=-r {{ monitoring_go2rtc_video_fps }}{% endif %}{% if filter %}#raw=-vf {{ filter }}{% endif %}
+{%- endmacro %}
 streams:
   front:
 {% if monitoring_go2rtc_video_transcode %}
-    - ffmpeg:front_source#video=h264{% if monitoring_go2rtc_video_fps %}#raw=-r {{ monitoring_go2rtc_video_fps }}{% endif %}
-
+    - {{ transcoded('front', monitoring_go2rtc_front_video_filter) }}
   front_source:
 {% endif %}
     - ${GO2RTC_FRONT_URL}
   garage_carport:
 {% if monitoring_go2rtc_video_transcode %}
-    - ffmpeg:garage_carport_source#video=h264{% if monitoring_go2rtc_video_fps %}#raw=-r {{ monitoring_go2rtc_video_fps }}{% endif %}
-
+    - {{ transcoded('garage_carport', monitoring_go2rtc_garage_carport_video_filter) }}
   garage_carport_source:
 {% endif %}
     - ${GO2RTC_GARAGE_CARPORT_URL}
