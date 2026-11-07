@@ -1,0 +1,8 @@
+---
+# One site rule, written as a site's group_vars would write it.
+monitoring_alert_rules:
+  - alert: NasHot
+    expr: max(synology_temperature) >= 55
+    for: 5m
+    labels: { severity: warning, tile: capacity/NAS temp }
+    annotations: { summary: "NAS running hot", description: "NAS at {{ '{{ $value }}' }} °C." }

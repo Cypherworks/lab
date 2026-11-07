@@ -1,0 +1,110 @@
+---
+# Runs a site's own alert rules, given as data, through promtool and vmalert,
+# and checks none render when the list is empty. Needs Docker, and internet to
+# pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/site_alert_rules.yml
+- name: Verify site alert rules given as data
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.site_alert_rules"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a cool NAS stays quiet
+          interval: 1m
+          input_series:
+            - series: 'synology_temperature{instance="nas"}'
+              values: '50x10'
+          alert_rule_test:
+            - eval_time: 10m
+              alertname: NasHot
+        - name: a hot NAS fires after five minutes, labels and text intact
+          interval: 1m
+          input_series:
+            - series: 'synology_temperature{instance="nas"}'
+              values: '56x10'
+          alert_rule_test:
+            - eval_time: 4m
+              alertname: NasHot
+            - eval_time: 6m
+              alertname: NasHot
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                    tile: capacity/NAS temp
+                  exp_annotations:
+                    summary: NAS running hot
+                    description: "NAS at 56 °C."
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules with no site rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Read the rules rendered with no site rules
+      ansible.builtin.slurp:
+        src: "{{ _dir }}/alert-rules.yml"
+      register: _unlisted
+
+    - name: List one site rule, as group_vars would
+      ansible.builtin.include_vars:
+        file: site_alert_rules_vars.yml
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the site rule renders and behaves
+      ansible.builtin.assert:
+        that:
+          - "'NasHot' not in (_unlisted.content | b64decode)"
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"
