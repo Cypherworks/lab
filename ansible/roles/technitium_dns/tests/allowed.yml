@@ -1,0 +1,228 @@
+---
+# Exercises the allowed names against throwaway containers: a server with a
+# block list, a stand-in for the public DNS that also serves the list, and a
+# client. Proves an allowed name and its subdomains get past a list that
+# blocks their parent, and that the role holds the Allowed zone exactly.
+# Needs Docker; no internet and no real server. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/technitium_dns/tests/allowed.yml
+- name: Verify the allowed names
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    # technitium/dns-server:15.6.2, the role's pinned version.
+    _image: technitium/dns-server@sha256:eb48ac5c135f4ab936b536f74f853d53e15ab39ef37fdbc9598a089b90d9f245
+    _net: technitium-allowed-test
+    _subnet: 172.30.98.0/24
+    _server: technitium-allowed-server
+    _server_ip: 172.30.98.10
+    _public: technitium-allowed-public
+    _public_ip: 172.30.98.60
+    _public_port: 15472
+    _client: 172.30.98.40
+    _list_url: "http://{{ _public_ip }}:5380/blocklist.txt"
+    _api: "http://127.0.0.1:{{ technitium_dns_http_port }}/api"
+    _public_api: "http://127.0.0.1:{{ _public_port }}/api"
+    _auth: { Authorization: "Bearer {{ _login.json.token }}" }
+    _dig: >-
+      docker run --rm --network {{ _net }} --ip {{ _client }} --entrypoint dig {{ _image }}
+      +short +time=3 +tries=2 @{{ _server_ip }}
+    technitium_dns_http_port: 15471
+    technitium_dns_recursion: UseSpecifiedNetworkACL
+    technitium_dns_recursion_acl: ["{{ _client }}"]
+    technitium_dns_forwarders: ["{{ _public_ip }}"]
+    technitium_dns_block_list_urls: ["{{ _list_url }}"]
+    technitium_dns_allowed_domains: [sub.blocked.labcheck]
+  tasks:
+    - name: Draw this run's admin password
+      ansible.builtin.set_fact:
+        technitium_dns_admin_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=24, chars=['ascii_letters', 'digits']) }}"
+      no_log: true
+
+    - name: Make a scratch dir for the block list
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .technitium
+      register: _scratch
+
+    - name: Hold, change, hold again, and clean up
+      block:
+        - name: Write the block list
+          ansible.builtin.copy:
+            content: "# Title: a test list, domains only\n\nblocked.labcheck\n"
+            dest: "{{ _scratch.path }}/blocklist.txt"
+            mode: "0644"
+
+        - name: Make the test network
+          ansible.builtin.command: docker network create --subnet {{ _subnet }} {{ _net }}
+          changed_when: true
+
+        - name: Start the server and the stand-in public DNS
+          ansible.builtin.command: >-
+            docker run -d --name {{ item.name }} --network {{ _net }} --ip {{ item.ip }}
+            -p 127.0.0.1:{{ item.port }}:5380 {{ _image }}
+          changed_when: true
+          loop:
+            - { name: "{{ _server }}", ip: "{{ _server_ip }}", port: "{{ technitium_dns_http_port }}" }
+            - { name: "{{ _public }}", ip: "{{ _public_ip }}", port: "{{ _public_port }}" }
+          loop_control:
+            label: "{{ item.name }}"
+
+        - name: Serve the block list from the stand-in's web root
+          ansible.builtin.command: docker cp {{ _scratch.path }}/blocklist.txt {{ _public }}:/opt/technitium/dns/www/blocklist.txt
+          changed_when: true
+
+        - name: Wait for the APIs to answer, as Docker's proxy accepts before them
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:{{ item }}/"
+          register: _up
+          until: _up.status == 200
+          retries: 60
+          delay: 2
+          loop: ["{{ technitium_dns_http_port }}", "{{ _public_port }}"]
+
+        - name: Log in to the stand-in public DNS
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/user/login"
+            method: POST
+            body_format: form-urlencoded
+            body: { user: admin, pass: admin }
+          register: _public_login
+          until: _public_login.json.status | default('') == 'ok'
+          retries: 10
+          delay: 2
+
+        - name: Publish the public records
+          ansible.builtin.uri:
+            url: "{{ _public_api }}/{{ item }}"
+            headers: { Authorization: "Bearer {{ _public_login.json.token }}" }
+          register: _published
+          failed_when: _published.json.status != 'ok'
+          loop:
+            - zones/create?zone=blocked.labcheck&type=Primary
+            - zones/records/add?zone=blocked.labcheck&domain=blocked.labcheck&type=A&ipAddress=192.0.2.31
+            - zones/records/add?zone=blocked.labcheck&domain=sub.blocked.labcheck&type=A&ipAddress=192.0.2.32
+            - zones/records/add?zone=blocked.labcheck&domain=deep.sub.blocked.labcheck&type=A&ipAddress=192.0.2.33
+            - zones/records/add?zone=blocked.labcheck&domain=other.blocked.labcheck&type=A&ipAddress=192.0.2.34
+
+        - name: Hold the settings
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: settings
+
+        - name: Wait for the block list to take effect
+          ansible.builtin.command: "{{ _dig }} sub.blocked.labcheck A"
+          register: _blocked
+          until: _blocked.stdout == '0.0.0.0'
+          retries: 15
+          delay: 2
+          changed_when: false
+
+        - name: Allow a name the way someone might in the console
+          ansible.builtin.uri:
+            url: "{{ _api }}/allowed/add?domain=other.blocked.labcheck"
+            headers: "{{ _auth }}"
+          register: _console
+          failed_when: _console.json.status != 'ok'
+
+        - name: Hold the allowed names
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: allowed
+
+        - name: Wait for the allowed name to resolve
+          ansible.builtin.command: "{{ _dig }} sub.blocked.labcheck A"
+          register: _allowed
+          until: _allowed.stdout == '192.0.2.32'
+          retries: 20
+          delay: 2
+          changed_when: false
+
+        - name: Ask for a subdomain of the allowed name, its parent and a sibling
+          ansible.builtin.command: "{{ _dig }} {{ item }} A"
+          register: _answers
+          changed_when: false
+          loop: [deep.sub.blocked.labcheck, blocked.labcheck, other.blocked.labcheck]
+
+        - name: Export the allowed names
+          ansible.builtin.uri:
+            url: "{{ _api }}/allowed/export"
+            headers: "{{ _auth }}"
+            return_content: true
+          register: _export
+
+        - name: Assert only the listed name and its subdomains get past the list
+          vars:
+            _got: "{{ _answers.results | map(attribute='stdout') | list }}"
+          ansible.builtin.assert:
+            that:
+              - _got == ['192.0.2.33', '0.0.0.0', '0.0.0.0']
+              - _export.content.split() == ['sub.blocked.labcheck']
+            fail_msg: "deep, parent, sibling answered {{ _got }}; allowed: {{ _export.content.split() }}"
+
+        - name: Hold them again with nothing to change
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: allowed
+
+        - name: Assert a rerun changed nothing
+          ansible.builtin.assert:
+            that:
+              - _allowed_added is skipped
+              - _allowed_removed is skipped
+            fail_msg: the role wrote to the Allowed zone with nothing to change
+
+        - name: Hold an empty list
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: allowed
+          vars:
+            technitium_dns_allowed_domains: []
+
+        - name: Wait for the name to be blocked again
+          ansible.builtin.command: "{{ _dig }} sub.blocked.labcheck A"
+          register: _reblocked
+          until: _reblocked.stdout == '0.0.0.0'
+          retries: 20
+          delay: 2
+          changed_when: false
+
+        - name: Hold a name Technitium rejects
+          ansible.builtin.include_tasks: allowed_refused.yml
+          vars:
+            technitium_dns_allowed_domains: [trailing.dot.labcheck.]
+            _failing_task: Allow each listed name the server doesn't
+
+        - name: Hold a name Technitium stores under another spelling
+          ansible.builtin.include_tasks: allowed_refused.yml
+          vars:
+            technitium_dns_allowed_domains: [Mixed.Case.labcheck]
+            _failing_task: Check the server holds the listed names
+
+        - name: Read the allowed names with a token the server refuses
+          ansible.builtin.include_tasks: allowed_refused.yml
+          vars:
+            _login: { json: { token: not-a-token } }
+            _failing_task: Export the allowed names
+      rescue:
+        - name: Fail the test with the failed task's message
+          ansible.builtin.fail:
+            msg: "{{ ansible_failed_task.name }}: {{ ansible_failed_result.msg | default(ansible_failed_result) }}"
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: docker rm -f {{ _server }} {{ _public }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent

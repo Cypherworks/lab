@@ -19,6 +19,10 @@
   ansible.builtin.include_tasks: permissions.yml
   when: technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'
 
+- name: Hold the allowed names
+  ansible.builtin.include_tasks: allowed.yml
+  when: technitium_dns_cluster_domain | length == 0 or technitium_dns_cluster_role == 'primary'
+
 - name: Hold the SSO settings
   ansible.builtin.include_tasks: sso.yml
   when:

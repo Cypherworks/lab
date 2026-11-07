@@ -1,0 +1,46 @@
+---
+# Hold the Allowed zone to technitium_dns_allowed_domains exactly. An allowed
+# name and its subdomains get past every block list, so one allowed in the
+# console is removed on the next run. A joined secondary takes the zone from
+# the primary.
+- name: Log in
+  ansible.builtin.include_tasks: login.yml
+
+- name: Read the allowed names
+  ansible.builtin.include_tasks: allowed_read.yml
+
+- name: Allow each listed name the server doesn't
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/allowed/add"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body: { domain: "{{ item }}" }
+  loop: "{{ technitium_dns_allowed_domains | difference(_allowed_domains) }}"
+  register: _allowed_added
+  failed_when: _allowed_added.json.status | default('') != 'ok'
+  changed_when: true
+
+- name: Remove each allowed name the list doesn't hold
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/allowed/delete"
+    method: POST
+    body_format: form-urlencoded
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    body: { domain: "{{ item }}" }
+  loop: "{{ _allowed_domains | difference(technitium_dns_allowed_domains) }}"
+  register: _allowed_removed
+  failed_when: _allowed_removed.json.status | default('') != 'ok'
+  changed_when: true
+
+# The server lowercases a name it stores, so a mixed-case one never matches.
+- name: Check the writes
+  when: _allowed_added is changed or _allowed_removed is changed
+  block:
+    - name: Read the allowed names back
+      ansible.builtin.include_tasks: allowed_read.yml
+
+    - name: Check the server holds the listed names
+      ansible.builtin.assert:
+        that: _allowed_domains | sort == technitium_dns_allowed_domains | unique | sort
+        fail_msg: "The server holds {{ _allowed_domains }}, not {{ technitium_dns_allowed_domains }}"

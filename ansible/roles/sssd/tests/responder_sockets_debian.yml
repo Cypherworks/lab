@@ -1,0 +1,138 @@
+---
+# Debian 13's sssd 2.10 ships no sssd-pam-priv.socket, which Ubuntu 24.04's
+# has. Puts a Debian 13 host in the failed state the workbench instance sits
+# in, with the responders named in `services =` and their sockets enabled,
+# and has the role clear it. Needs Docker, community.docker, and internet for
+# the image and its apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/sssd/tests/responder_sockets_debian.yml
+- name: Boot a Debian 13 host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: sssd-role-debian-test
+    _boot: >-
+      apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+      python3 sudo ca-certificates && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on Debian 13, as the instances run
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - debian:13
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Make a throwaway CA for the role to trust
+      ansible.builtin.shell: >-
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout /dev/null -days 1
+        -subj /CN=sssd-role-test 2>/dev/null
+      register: _ca
+      changed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: sssd_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+        sssd_ldap_ca_cert: "{{ _ca.stdout }}"
+
+- name: Clear the failed sockets on Debian 13
+  hosts: sssd_target
+  gather_facts: false
+  vars:
+    sssd_ldap_uris: ["ldaps://ldap.example.test:636"]
+    sssd_ldap_base_dn: dc=example,dc=test
+    sssd_ldap_bind_dn: cn=ldap-search,ou=users,dc=example,dc=test
+    ldap_search_password: test-only
+    sssd_enable_pam_auth: true
+    _sockets: [sssd-nss.socket, sssd-pam.socket]
+    _read_sockets: >-
+      for s in {{ _sockets | join(' ') }}; do
+      echo "$s $(systemctl is-enabled $s) $(systemctl is-failed $s)"; done
+  tasks:
+    - name: Run the role on a fresh host
+      ansible.builtin.include_role:
+        name: sssd
+
+    - name: Put the host in the state the workbench is in
+      ansible.builtin.shell: |
+        set -e
+        systemctl enable {{ _sockets | join(' ') }}
+        systemctl restart sssd
+        systemctl stop {{ _sockets | join(' ') }}
+        systemctl start {{ _sockets | join(' ') }} || true
+      changed_when: true
+
+    - name: Read the failed state
+      ansible.builtin.shell: "{{ _read_sockets }}"  # noqa command-instead-of-shell
+      register: _before
+      changed_when: false
+
+    - name: Assert the failure reproduces
+      ansible.builtin.assert:
+        that:
+          - _before.stdout is search('sssd-nss.socket enabled failed')
+          - _before.stdout is search('sssd-pam.socket enabled failed')
+        fail_msg: "{{ _before.stdout }}"
+
+    - name: Run the role on the failed host
+      ansible.builtin.include_role:
+        name: sssd
+
+    - name: Read the sockets and the responders
+      ansible.builtin.shell: |
+        {{ _read_sockets }}
+        systemctl is-active sssd
+        systemctl --failed --no-legend --plain | grep sssd || echo no-failed-sssd
+      register: _cleared
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the sockets are disabled, cleared, and sssd still runs
+      ansible.builtin.assert:
+        that:
+          - _cleared.stdout is search('sssd-nss.socket disabled inactive')
+          - _cleared.stdout is search('sssd-pam.socket disabled inactive')
+          - _cleared.stdout_lines[2] == 'active'
+          - _cleared.stdout is search('no-failed-sssd')
+        fail_msg: "{{ _cleared.stdout }}"
+
+- name: Remove the target
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Clean up
+      ansible.builtin.command: docker rm -f sssd-role-debian-test
+      changed_when: true
