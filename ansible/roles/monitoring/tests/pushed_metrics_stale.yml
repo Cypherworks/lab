@@ -1,0 +1,122 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up push
+# timestamps, and checks the rule is left out when no pushed source is listed.
+# Needs Docker, and internet to pull the image once. From ansible/:
+#
+#   ansible-playbook -i localhost, \
+#     roles/monitoring/tests/pushed_metrics_stale.yml
+- name: Verify the pushed metrics stale alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.pushed_metrics_stale"
+    _image: prom/prometheus:v2.53.4
+    _fired:
+      - exp_labels:
+          severity: warning
+          instance: Headscale
+        exp_annotations:
+          summary: "No metrics pushed from Headscale"
+          description: "Its last push is over 300 seconds old, or there has been none."
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a push every minute stays quiet
+          interval: 1m
+          input_series:
+            - series: 'headscale_metrics_collected_timestamp_seconds{job="headscale"}'
+              values: '0+60x20'
+          alert_rule_test:
+            - eval_time: 15m
+              alertname: PushedMetricsStale
+        - name: pushes stopping fire once the last is stale for two minutes
+          interval: 1m
+          input_series:
+            - series: 'headscale_metrics_collected_timestamp_seconds{job="headscale"}'
+              values: '0+60x2'
+          alert_rule_test:
+            - eval_time: 6m
+              alertname: PushedMetricsStale
+            - eval_time: 10m
+              alertname: PushedMetricsStale
+              exp_alerts: {{ _fired | to_json }}
+        - name: a source that never pushed fires
+          interval: 1m
+          input_series:
+            - series: 'up{job="node"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 3m
+              alertname: PushedMetricsStale
+              exp_alerts: {{ _fired | to_json }}
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules with no pushed source listed
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Read the rules rendered with no pushed source listed
+      ansible.builtin.slurp:
+        src: "{{ _dir }}/alert-rules.yml"
+      register: _unlisted
+
+    - name: List Headscale as a pushed source
+      ansible.builtin.set_fact:
+        monitoring_pushed_metrics:
+          - { name: Headscale, metric: headscale_metrics_collected_timestamp_seconds }
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alert behaves
+      ansible.builtin.assert:
+        that:
+          - "'PushedMetricsStale' not in (_unlisted.content | b64decode)"
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"

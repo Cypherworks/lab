@@ -77,6 +77,10 @@ monitoring_incus_instances: []
 monitoring_incus_metrics_cert: ""
 monitoring_incus_metrics_key: ""
 
+# Pushing sources, {name, metric: its push timestamp}, for PushedMetricsStale.
+monitoring_pushed_metrics: []
+monitoring_pushed_metrics_stale_seconds: 300
+
 # Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
 monitoring_headscale_target: ""
 

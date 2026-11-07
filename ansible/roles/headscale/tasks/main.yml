@@ -130,3 +130,6 @@
   when:
     - headscale_oidc_enabled | bool
     - headscale_watchdog_script is changed or headscale_watchdog_units is changed
+
+- name: Push the tailnet's state to VictoriaMetrics
+  ansible.builtin.include_tasks: metrics.yml

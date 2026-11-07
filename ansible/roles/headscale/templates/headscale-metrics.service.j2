@@ -1,0 +1,26 @@
+{# Managed by Ansible (headscale). One push; the timer runs it. #}
+[Unit]
+Description=Push the tailnet's state from Headscale to VictoriaMetrics
+After=headscale.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/headscale-metrics --url {{ headscale_metrics_push_url }} --label job=headscale --label instance={{ inventory_hostname }}
+User=headscale
+Group=headscale
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow={{ headscale_metrics_push_url | urlsplit('hostname') }}

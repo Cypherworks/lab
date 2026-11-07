@@ -1,0 +1,11 @@
+{# Managed by Ansible (tailscale). #}
+[Unit]
+Description=Write this node's tailnet peer counts on a timer
+
+[Timer]
+OnBootSec={{ tailscale_metrics_interval }}
+OnUnitActiveSec={{ tailscale_metrics_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

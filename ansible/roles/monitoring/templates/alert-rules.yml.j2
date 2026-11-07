@@ -113,3 +113,16 @@ groups:
         annotations:
           summary: "Redis unreachable: {{ '{{ $labels.instance }}' }}"
           description: "redis_exporter cannot reach the instance."
+{% for source in monitoring_pushed_metrics %}
+
+      # A pushed source has no scrape to fail, so watch its push timestamp.
+      - alert: PushedMetricsStale
+        expr: (time() - max({{ source.metric }}) > {{ monitoring_pushed_metrics_stale_seconds }}) or absent({{ source.metric }})
+        for: 2m
+        labels:
+          severity: warning
+          instance: "{{ source.name }}"
+        annotations:
+          summary: "No metrics pushed from {{ source.name }}"
+          description: "Its last push is over {{ monitoring_pushed_metrics_stale_seconds }} seconds old, or there has been none."
+{% endfor %}
