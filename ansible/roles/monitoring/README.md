@@ -86,6 +86,9 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_vmalert_logs_image` | `victoriametrics/vmalert:v1.154.0` | vmalert-logs' image. LogsQL rules need v1.106.0 or later; the main vmalert stays on `monitoring_vmalert_image`. |
 | `monitoring_log_rules` | `[]` | Recording rules over VictoriaLogs, as `{record, expr}` with `expr` LogsQL ending in `stats`. vmalert-logs, a second vmalert since one takes a single datasource, evaluates them and writes the counts to vmsingle; `stats by (field)` fields become labels. Empty leaves vmalert-logs out of the compose. |
 | `monitoring_log_rules_interval` | `1m` | How often vmalert-logs evaluates; vmalert appends `_time:<interval>`, so each sample counts that much of the log, and `sum_over_time` adds them up. |
+| `monitoring_not_logging_metric` | `""` | A `monitoring_log_rules` record counted `by (host)`. `NotLogging` fires for a system in `monitoring_not_logging_jobs` that is up but has no sample in `monitoring_not_logging_window`, for five minutes; a down system is left to `TargetDown`, and an absent record fires for every system. Empty leaves the rule out. |
+| `monitoring_not_logging_jobs` | `[]` | Scrape jobs whose instances must log. |
+| `monitoring_not_logging_window` | `30m` | How long a system may go without a log line before `NotLogging` counts it silent. |
 | `monitoring_incus_metrics_cert` | `""` | Metrics scraper client cert (PEM); the TF-generated keypair, mounted as a docker secret. |
 | `monitoring_incus_metrics_key` | `""` | Metrics scraper client key (PEM); mounted as a docker secret. |
 | `monitoring_headscale_target` | `""` | Headscale control-plane `/metrics` over the overlay (`tailnet-ip:9090`). |
