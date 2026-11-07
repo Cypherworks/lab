@@ -12,13 +12,25 @@
   ansible.builtin.command: "{{ caddy_binary }} reload --adapter caddyfile --config {{ caddy_config_path }}"
   changed_when: true
 
-# Full restart — for a trust-store or secret env change, which a reload can't pick up
-# (Caddy caches the system cert pool and reads its environment at startup). Reloads
-# systemd first, for a new or removed drop-in. Defined last so if a run also changed
-# the Caddyfile, the reload runs first and this restart lands on the current config.
-- name: Restart Caddy
+# Restarts 3s after returning, as Ansible's connection may run through Caddy.
+- name: Schedule a Caddy restart
   become: true
-  ansible.builtin.systemd_service:
-    name: caddy
-    state: restarted
-    daemon_reload: true
+  ansible.builtin.command: >-
+    systemd-run --on-active=3 /bin/sh -c 'systemctl daemon-reload && systemctl restart caddy'
+  changed_when: true
+  listen: Restart Caddy
+
+- name: Wait for the host after Caddy's restart
+  ansible.builtin.wait_for_connection:
+    delay: 10
+    timeout: 120
+  listen: Restart Caddy
+
+- name: Check Caddy came back
+  become: true
+  ansible.builtin.service_facts:
+  register: _caddy_services
+  until: _caddy_services.ansible_facts.services['caddy.service'].state | default('') == 'running'
+  retries: 10
+  delay: 3
+  listen: Restart Caddy
