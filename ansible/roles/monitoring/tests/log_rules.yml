@@ -1,8 +1,10 @@
 ---
 # Runs the compose's vmalert-logs as rendered, with real VictoriaLogs and
-# vmsingle, and feeds VictoriaLogs known lines. Checks each recording rule
-# counts its lines by host into vmsingle, and that vmalert-logs is left out of
-# the compose with no rules. Needs Docker, and internet for the images.
+# vmsingle, and feeds VictoriaLogs known lines, some as USG syslog over UDP.
+# Checks each recording rule counts its lines by host into vmsingle, that the
+# firewall's drops are counted and its accepts aren't, and that vmalert-logs
+# and the syslog listener are left out of the compose when unset. Needs Docker,
+# and internet for the images.
 # From ansible/:
 #
 #   ansible-playbook -i localhost, roles/monitoring/tests/log_rules.yml
@@ -19,11 +21,14 @@
     _dir: "{{ playbook_dir }}/.log_rules"
     _rules:
       monitoring_log_rules_interval: 15s
+      monitoring_victorialogs_syslog_port: 514
       monitoring_log_rules:
         - record: test_ssh_failures
           expr: '_SYSTEMD_UNIT:ssh.service "Failed password" | stats by (host) count() lines'
         - record: test_lines
           expr: '* | stats by (host) count() lines'
+        - record: test_fw_drops
+          expr: 'app_name:kernel ~"-D\\] ?IN=" | stats count() drops'
     _ingest: |
       import datetime, json, sys, urllib.request
       now = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -35,6 +40,17 @@
       url = "http://victorialogs:9428/insert/jsonline?_stream_fields=host,_SYSTEMD_UNIT"
       headers = {"Content-Type": "application/stream+json"}  # a form type would be parsed as a form
       urllib.request.urlopen(urllib.request.Request(url, data=body.encode(), method="POST", headers=headers), timeout=10)
+      import socket
+      # A year-old RFC3164 stamp: only a listener stamping on receipt counts these now.
+      usg = [
+          "<4>Jan  1 00:00:00 usg kernel: [LAN_IN-2900-D] IN=eth1.40 OUT=eth1.20 SRC=192.0.2.10 DST=192.0.2.20 PROTO=TCP SPT=1 DPT=22",
+          "<4>Jan  1 00:00:00 usg kernel: [LAN_LOCAL-2000-D]IN=eth1.55 OUT= SRC=192.0.2.11 DST=192.0.2.1 PROTO=TCP SPT=2 DPT=443",
+          "<4>Jan  1 00:00:00 usg kernel: [LAN_IN-2010-A] IN=eth1.40 OUT=eth1.20 SRC=192.0.2.10 DST=192.0.2.20 PROTO=TCP SPT=3 DPT=445",
+          "<6>Jan  1 00:00:00 usg dhcpd: DHCPACK on 192.0.2.12 to 00:00:5e:00:53:01 via eth1.40",
+      ]
+      udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      for line in usg:
+          udp.sendto(line.encode(), ("victorialogs", 514))
     _recorded: |
       import json, time, urllib.parse, urllib.request
       url = "http://vmsingle:8428/api/v1/export?" + urllib.parse.urlencode({"match[]": '{__name__=~"test_.*"}'})
@@ -44,8 +60,9 @@
           for line in urllib.request.urlopen(url, timeout=10).read().decode().splitlines():
               s = json.loads(line)
               key = s["metric"]["__name__"] + "|" + s["metric"].get("host", "")
-              seen[key] = max(seen.get(key, 0), max(s["values"]))
-          if seen.get("test_ssh_failures|b") and seen.get("test_lines|c"):
+              # vmalert's staleness markers export as null.
+              seen[key] = max([seen.get(key, 0)] + [v for v in s["values"] if v is not None])
+          if seen.get("test_ssh_failures|b") and seen.get("test_lines|c") and seen.get("test_fw_drops|"):
               break
           time.sleep(3)
       rules = json.load(urllib.request.urlopen("http://vmalert-logs:8880/api/v1/rules", timeout=10))
@@ -87,13 +104,18 @@
           ansible.builtin.command: docker network create {{ _net }}
           changed_when: true
 
-        - name: Start VictoriaLogs and vmsingle as the compose names them
-          ansible.builtin.command: >-
-            docker run -d --name {{ item.name }} --network {{ _net }} --network-alias {{ item.alias }} {{ item.image }}
+        - name: Start VictoriaLogs with the compose's image and command
+          vars:
+            _service: "{{ _with.services.victorialogs }}"
+          ansible.builtin.command:
+            argv: "{{ ['docker', 'run', '-d', '--name', _vl, '--network', _net,
+                       '--network-alias', 'victorialogs', _service.image] + _service.command }}"
           changed_when: true
-          loop:
-            - { name: "{{ _vl }}", alias: victorialogs, image: "{{ monitoring_victorialogs_image }}" }
-            - { name: "{{ _vm }}", alias: vmsingle, image: "{{ monitoring_vmsingle_image }}" }
+
+        - name: Start vmsingle as the compose names it
+          ansible.builtin.command: >-
+            docker run -d --name {{ _vm }} --network {{ _net }} --network-alias vmsingle {{ monitoring_vmsingle_image }}
+          changed_when: true
 
         - name: Start vmalert-logs with the compose's image, rules file and command
           vars:
@@ -136,7 +158,7 @@
             path: "{{ _dir }}"
             state: absent
 
-    - name: Assert each rule counted its lines by host, and no rules means no vmalert-logs
+    - name: Assert each rule counted its lines, and unset means no vmalert-logs and no syslog
       vars:
         _seen: "{{ (_recorded_out.stdout | from_json).seen }}"
       ansible.builtin.assert:
@@ -147,4 +169,8 @@
           - "'test_ssh_failures|c' not in _seen"
           - _seen.get('test_lines|a') == 4
           - _seen.get('test_lines|c') == 1
+          - _seen.get('test_fw_drops|') == 2
+          - "'514:514/udp' in _with.services.victorialogs.ports"
+          - _without.services.victorialogs.ports == ['9428:9428']
+          - _without.services.victorialogs.command | select('search', 'syslog') | list == []
         fail_msg: "{{ _recorded_out.stdout }} {{ _vmalert_log.stdout_lines | default([]) }} {{ _vmalert_log.stderr_lines | default([]) }}"
