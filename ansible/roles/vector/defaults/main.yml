@@ -13,10 +13,13 @@ vector_deb_checksums:
   amd64: "sha256:15978ce37ea17e8228bfd7ce28810237c06b77fdeb6943d8aa3de834cb19d4b1"
   arm64: "sha256:6515dfa01f98940cecf5343b73778b041b30a51e349e3726130a031a5e895e41"
 
-# VictoriaLogs ingestion endpoint (host:port), e.g. 10.200.30.50:9428. Set by the deploy.
+# VictoriaLogs ingestion endpoint (host:port), e.g. 192.0.2.50:9428. Set by the deploy.
 vector_victorialogs_endpoint: ""
 # https for a host that reaches it through a TLS proxy, not on its own port.
 vector_victorialogs_scheme: http
+# Who the agent signs in to VictoriaLogs' vmauth as (SOPS). Empty signs in as nobody.
+vector_victorialogs_user: ""
+vector_victorialogs_password: ""
 
 # Fields VictoriaLogs groups streams by — host + the systemd unit give one stream per
 # service per host.

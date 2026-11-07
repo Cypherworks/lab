@@ -24,6 +24,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `caddy_authentik_upstreams` | `[]` | Authentik embedded-outpost upstreams (server on `:9000`) that back a route's `authentik_gated` forward-auth. Empty means gating is unavailable. |
 | `caddy_allowed_sources` | `[]` | Source CIDRs allowed to reach the site. Others get 403, except on routes with `any_source: true`. Covers the fallback response and any new route. Empty leaves every route open. Layer4 proxies aren't covered. |
 | `caddy_l4_proxies` | `[]` | Raw-TCP (layer4) passthrough proxies. Each entry renders a `:port` block proxying to `upstreams` with no TLS termination. |
+| `caddy_secret_env` | `{}` | Secrets. Map of `NAME` to value that routes read at run time as `{env.NAME}`, in `header_up` say. Kept in a root-only env file the service loads, so the value is in neither the Caddyfile nor the admin API's config. Names are upper case letters, digits and underscores; values have no whitespace, quotes or backslashes. |
 | `caddy_trusted_ca_certs` | `{}` | Site data. Map of name to PEM content, installed into the system trust store so routes can verify internal HTTPS upstreams. |
 
 Each `caddy_routes` entry: `name` (matcher id), `host` (FQDN), and one of `upstream` (single backend), `upstreams` (a list, load-balanced) or `page` (a fixed HTML page served from the Caddyfile, which can't contain a backtick; give it `paths`). Optional: `lb_policy` (defaults to `round_robin` when more than one upstream), `health_uri` and `health_interval` (default `10s`) for active health checks, `tls_skip_verify` for self-signed backends, `header_up` (a map of headers to set upstream), `header_up_remove` (a list of headers to strip), `authentik_gated` (front the route with an Authentik login via `caddy_authentik_upstreams`), `any_source` (exempt the host from `caddy_allowed_sources`), and `sources` and `paths` (lists that narrow the route to those client CIDRs and request paths). A narrowed route has to come before the host's main route in `caddy_routes`, as the first match wins. That's how one client skips a gate: a narrowed route with no `authentik_gated`.
@@ -37,13 +38,14 @@ None.
 ## What it does
 
 1. Installs each entry of `caddy_trusted_ca_certs` to `/usr/local/share/ca-certificates/<name>.crt` (`0644`). A change notifies both `Update CA trust` and `Restart Caddy`.
-2. Renders the Caddyfile to `caddy_config_path` (`0644`) from `Caddyfile.j2`: one `*.{{ caddy_domain }}` site with a Route53 DNS-01 wildcard cert, a `handle` block per route, and a default `respond "lab ingress" 200`. The global `servers` block sets `strict_sni_host on`, so a request whose Host differs from its TLS SNI gets 421 Misdirected Request. When `caddy_l4_proxies` is set, a global `layer4` block renders each raw-TCP passthrough (no TLS termination, so mutual-TLS backends and cert-pinning clients survive end to end). Notifies `Reload Caddy`.
-3. Runs `caddy validate --adapter caddyfile` against the rendered file (`changed_when: false`). This gates the change: a bad config fails the play before any handler runs, so Caddy keeps serving the previous config.
+2. Writes `caddy_secret_env` to `secrets.env` beside the Caddyfile (`0600` `root`) and a `caddy.service.d/secrets.conf` drop-in that loads it, or removes both when the map is empty. A change notifies `Restart Caddy`, as Caddy reads its environment only at start.
+3. Renders the Caddyfile to `caddy_config_path` (`0644`) from `Caddyfile.j2`: one `*.{{ caddy_domain }}` site with a Route53 DNS-01 wildcard cert, a `handle` block per route, and a default `respond "lab ingress" 200`. The global `servers` block sets `strict_sni_host on`, so a request whose Host differs from its TLS SNI gets 421 Misdirected Request. When `caddy_l4_proxies` is set, a global `layer4` block renders each raw-TCP passthrough (no TLS termination, so mutual-TLS backends and cert-pinning clients survive end to end). Notifies `Reload Caddy`.
+4. Runs `caddy validate --adapter caddyfile` against the rendered file (`changed_when: false`). This gates the change: a bad config fails the play before any handler runs, so Caddy keeps serving the previous config.
 
 Handlers, ordered deliberately:
 - `Update CA trust` runs `update-ca-certificates`. Defined before `Reload Caddy` so the store is refreshed first.
 - `Reload Caddy` does a graceful, sub-second config swap (`caddy reload`).
-- `Restart Caddy` does a full systemd restart, only for a trust-store change. Caddy caches the system cert pool at startup, so a graceful reload keeps the stale pool and a new CA would never be trusted. Defined last so if a run also changed the Caddyfile, the reload runs first and the restart lands on the current config.
+- `Restart Caddy` reloads systemd and does a full restart, only for a trust-store or secret env change. Caddy caches the system cert pool and reads its environment at startup, so a graceful reload keeps the stale pool and the old environment. Defined last so if a run also changed the Caddyfile, the reload runs first and the restart lands on the current config.
 
 ## Example
 
@@ -69,6 +71,6 @@ Handlers, ordered deliberately:
 ## Notes
 
 - This role does not install or update Caddy. If the deployed binary lacks the Route53 DNS module, the wildcard cert block fails at runtime even though `caddy validate` passes.
-- Trust changes require the full restart (brief connection drop). Ordinary route changes reload gracefully with no dropped connections.
+- Trust and secret env changes require the full restart (brief connection drop). Ordinary route changes reload gracefully with no dropped connections.
 - Prefer trusting an internal CA via `caddy_trusted_ca_certs` over `tls_skip_verify`, so upstream identity is actually verified.
 - `strict_sni_host` is what makes an L4 SNI passthrough in front of this role safe. Without it the single wildcard site routes on Host alone, so a passthrough that forwards one SNI exposes every route. Verify a live path with `scripts/check-sni-host-binding.sh --ip <relay> --sni <forwarded-name> <other-host>...`. Browsers that reuse one HTTP/2 connection across hostnames on the same wildcard cert get a 421, which HTTP allows them to retry on a fresh connection.

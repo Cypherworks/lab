@@ -1,33 +1,52 @@
 ---
-# vmauth in front of vmsingle for readers and writers outside the stack, and
-# the key that locks the admin endpoints of both. vmauth holds the passwords
-# in plain text, so its config is root-only.
+# vmauth in front of vmsingle and VictoriaLogs for readers and writers outside
+# the stack, and the keys that lock the admin endpoints. vmauth holds the
+# passwords in plain text, so its config is root-only.
 - name: Name everyone who signs in to vmauth
   ansible.builtin.set_fact:
-    _vmauth_users: "{{ monitoring_vmsingle_readers + monitoring_vmsingle_writers }}"
+    _vmauth_users: >-
+      {{ monitoring_vmsingle_readers + monitoring_vmsingle_writers
+         + monitoring_victorialogs_readers + monitoring_victorialogs_writers }}
   no_log: true
 
-- name: Require the admin key, and valid readers and writers
+- name: Require the admin keys, and valid readers and writers
   ansible.builtin.assert:
     that:
       - monitoring_vmsingle_admin_key | length > 0
+      - monitoring_victorialogs_admin_key | length > 0
       - _vmauth_users | map(attribute='name', default='') | reject | list | length == 0
       - _vmauth_users | map(attribute='password', default='') | reject | list | length == 0
       - _vmauth_users | map(attribute='password') | select('search', '%\{') | list | length == 0
       - _vmauth_users | map(attribute='name') | unique | list | length == _vmauth_users | length
       - monitoring_vmsingle_writers | map(attribute='job', default='') | reject | list | length == 0
       - monitoring_vmsingle_writers | map(attribute='instance', default='') | reject | list | length == 0
+      - monitoring_victorialogs_writers | map(attribute='host', default='') | reject('match', '^[A-Za-z0-9._-]+$') | list | length == 0
     fail_msg: >-
       Each reader and writer needs a name and a password, with no %{ in it
       (vmauth reads that as a placeholder), and names must be unique across
-      monitoring_vmsingle_readers and monitoring_vmsingle_writers. Each writer
-      needs a job and an instance, and monitoring_vmsingle_admin_key must be set.
+      monitoring_vmsingle_readers, monitoring_vmsingle_writers,
+      monitoring_victorialogs_readers and monitoring_victorialogs_writers. Each
+      vmsingle writer needs a job and an instance, each VictoriaLogs writer a
+      host of letters, digits, dots, dashes and underscores, and
+      monitoring_vmsingle_admin_key and monitoring_victorialogs_admin_key must
+      be set.
 
 - name: Write the key for vmsingle's and vmauth's admin endpoints
   become: true
   ansible.builtin.copy:
     content: "{{ monitoring_vmsingle_admin_key }}"
     dest: "{{ monitoring_config_dir }}/vmsingle-admin-key"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: Restart monitoring
+
+- name: Write the key for VictoriaLogs' admin endpoints
+  become: true
+  ansible.builtin.copy:
+    content: "{{ monitoring_victorialogs_admin_key }}"
+    dest: "{{ monitoring_config_dir }}/victorialogs-admin-key"
     owner: root
     group: root
     mode: "0400"

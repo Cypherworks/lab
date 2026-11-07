@@ -1,0 +1,356 @@
+---
+# Runs the role's vmauth tasks on a throwaway Debian 13 container, then real
+# VictoriaLogs and vmauth on what they wrote, each started with the command
+# the rendered compose gives it. Checks log readers can only query, writers
+# can only bulk-ingest and every line they send lands under their pinned host
+# whatever host they claim, the two stores' users can't cross, VictoriaLogs'
+# admin endpoints refuse without the key while its metrics and in-stack
+# queries stay open, a second run changes nothing, a changed password or
+# dropped user stops working, and bad settings fail the run. Also renders the
+# compose with log users, vmsingle users, both and neither. Needs Docker, and
+# internet for the images and apt. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/victorialogs_auth.yml
+- name: Verify the VictoriaLogs auth
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _host: monitoring-vlauth-host
+    _net: monitoring-vlauth-test
+    _vl: monitoring-vlauth-victorialogs
+    _vmauth: monitoring-vlauth-vmauth
+    _dir: "{{ playbook_dir }}/.vlauth"
+    _config: /opt/monitoring/config
+    _key: logs-admin-test-only
+    _converge: >-
+      ansible-playbook -i {{ _host }}, -c community.docker.docker
+      {{ playbook_dir }}/vmauth_converge.yml -e @{{ _dir }}
+    _first:
+      monitoring_vmsingle_admin_key: vm-admin-test-only
+      monitoring_victorialogs_admin_key: logs-admin-test-only
+      monitoring_vmsingle_readers:
+        - {name: dashboard, password: dashboard-test-only}
+      monitoring_victorialogs_readers:
+        - {name: logsui, password: first-test-only}
+        - {name: retired, password: retired-test-only}
+      monitoring_victorialogs_writers:
+        - {name: vector-host-a, password: writer-test-only, host: host-a}
+    _second:
+      monitoring_vmsingle_admin_key: vm-admin-test-only
+      monitoring_victorialogs_admin_key: logs-admin-test-only
+      monitoring_victorialogs_readers:
+        - {name: logsui, password: second-test-only}
+      monitoring_victorialogs_writers:
+        - {name: vector-host-a, password: writer-test-only, host: host-a}
+    _probe: |
+      import base64, json, sys, time, urllib.error, urllib.parse, urllib.request
+      spec = json.loads(sys.argv[1])
+      def ask(url, cred="", body=None, headers=None):
+          request = urllib.request.Request(url, data=body.encode() if body else None)
+          for name, value in (headers or {}).items():
+              request.add_header(name, value)
+          if cred:
+              token = base64.b64encode(cred.encode()).decode()
+              request.add_header("Authorization", "Basic " + token)
+          try:
+              with urllib.request.urlopen(request, timeout=5) as reply:
+                  return reply.status, reply.read().decode()[:300]
+          except urllib.error.HTTPError as err:
+              return err.code, err.read().decode()[:300]
+          except OSError as err:
+              return 0, str(err)
+      for _ in range(30):
+          if ask("http://victorialogs:9428/health")[0] == 200 and ask("http://vmauth:8427/health")[0] == 200:
+              break
+          time.sleep(1)
+      codes = {}
+      for name, request in spec["requests"].items():
+          codes[name] = ask(request["url"], request.get("cred", ""), request.get("body"),
+                            request.get("headers"))[0]
+      ask("http://victorialogs:9428/internal/force_flush?authKey=" + spec["key"])
+      time.sleep(1)
+      found = ask("http://victorialogs:9428/select/logsql/query?" + urllib.parse.urlencode(
+          {"query": "probe-line | stats by (host) count() n"}))[1]
+      hosts = {row["host"]: int(row["n"]) for row in map(json.loads, found.splitlines()) if row}
+      print(json.dumps({"codes": codes, "hosts": hosts}))
+    _vmauth_url: http://vmauth:8427
+    _vl_url: http://victorialogs:9428
+    _bulk_type: {Content-Type: application/x-ndjson}
+    # One ES bulk line per claim, stamped now so retention keeps it; Vector
+    # sends message and timestamp fields.
+    _bulk: >-
+      {"create":{}}
+
+      {"message":"probe-line","host":"%s","timestamp":"{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"}
+
+    _bulk_url: "{{ _vmauth_url }}/insert/elasticsearch/_bulk?_msg_field=message&_time_field=timestamp&_stream_fields=host"
+    _first_requests:
+      nobody: {url: "{{ _vmauth_url }}/select/logsql/query?query=*"}
+      wrong: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "logsui:not-it"}
+      reader_query: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "logsui:first-test-only"}
+      reader_ui: {url: "{{ _vmauth_url }}/select/vmui/", cred: "logsui:first-test-only"}
+      retired_query: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "retired:retired-test-only"}
+      reader_bulk:
+        url: "{{ _bulk_url }}"
+        cred: "logsui:first-test-only"
+        body: "{{ _bulk | format('forged-by-reader') }}"
+        headers: "{{ _bulk_type }}"
+      reader_detach: {url: "{{ _vmauth_url }}/internal/partition/detach?name=20260101", cred: "logsui:first-test-only"}
+      reader_metrics: {url: "{{ _vmauth_url }}/metrics", cred: "logsui:first-test-only"}
+      reader_vmsingle: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "logsui:first-test-only"}
+      dashboard_logs: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "dashboard:dashboard-test-only"}
+      writer_bulk:
+        url: "{{ _bulk_url }}"
+        cred: "vector-host-a:writer-test-only"
+        body: "{{ _bulk | format('host-a') }}"
+        headers: "{{ _bulk_type }}"
+      writer_body_claim:
+        url: "{{ _bulk_url }}"
+        cred: "vector-host-a:writer-test-only"
+        body: "{{ _bulk | format('forged-in-body') }}"
+        headers: "{{ _bulk_type }}"
+      writer_query_claim:
+        url: "{{ _bulk_url }}&extra_fields=host%3Dforged-in-query"
+        cred: "vector-host-a:writer-test-only"
+        body: "{{ _bulk | format('forged-in-query') }}"
+        headers: "{{ _bulk_type }}"
+      writer_header_claim:
+        url: "{{ _bulk_url }}"
+        cred: "vector-host-a:writer-test-only"
+        body: "{{ _bulk | format('forged-in-header') }}"
+        headers: {Content-Type: application/x-ndjson, VL-Extra-Fields: host=forged-in-header}
+      writer_jsonline:
+        url: "{{ _vmauth_url }}/insert/jsonline"
+        cred: "vector-host-a:writer-test-only"
+        body: '{"_msg":"probe-line","host":"forged-by-jsonline"}'
+        headers: {Content-Type: application/stream+json}
+      writer_query: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "vector-host-a:writer-test-only"}
+      vl_partitions: {url: "{{ _vl_url }}/internal/partition/list"}
+      vl_partitions_key: {url: "{{ _vl_url }}/internal/partition/list?authKey={{ _key }}"}
+      vl_detach: {url: "{{ _vl_url }}/internal/partition/detach?name=20260101"}
+      vl_force_merge: {url: "{{ _vl_url }}/internal/force_merge"}
+      vl_force_flush: {url: "{{ _vl_url }}/internal/force_flush"}
+      vl_new_streams: {url: "{{ _vl_url }}/internal/log_new_streams"}
+      vl_flags: {url: "{{ _vl_url }}/flags"}
+      vl_pprof: {url: "{{ _vl_url }}/debug/pprof/"}
+      vl_delete: {url: "{{ _vl_url }}/delete/run_task"}
+      vl_metrics: {url: "{{ _vl_url }}/metrics"}
+      in_stack_query: {url: "{{ _vl_url }}/select/logsql/query?query=*"}
+    _second_requests:
+      old: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "logsui:first-test-only"}
+      reader_query: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "logsui:second-test-only"}
+      retired_query: {url: "{{ _vmauth_url }}/select/logsql/query?query=*", cred: "retired:retired-test-only"}
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _host }} {{ _vl }} {{ _vmauth }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directories
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [first, second]
+
+    - name: Write the test settings
+      ansible.builtin.copy:
+        content: "{{ item.content | to_json }}"
+        dest: "{{ _dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {content: "{{ _first }}", dest: first.json}
+        - {content: "{{ _second }}", dest: second.json}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Start a Debian 13 host
+      ansible.builtin.command: docker run -d --name {{ _host }} debian:13 sleep infinity
+      changed_when: true
+
+    - name: Give it Python for Ansible
+      ansible.builtin.command: >-
+        docker exec {{ _host }} sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 >/dev/null'
+      changed_when: true
+
+    - name: Converge with a vmsingle reader, two log readers and a log writer
+      ansible.builtin.command: "{{ _converge }}/first.json"
+      register: _run_first
+      changed_when: true
+
+    - name: Converge again with nothing changed
+      ansible.builtin.command: "{{ _converge }}/first.json"
+      register: _run_again
+      changed_when: false
+
+    - name: Converge with settings the role must refuse
+      ansible.builtin.command: "{{ _converge }}/first.json -e '{{ item.vars | to_json }}'"
+      loop:
+        - {vars: {monitoring_victorialogs_admin_key: ""}, says: monitoring_victorialogs_admin_key}
+        - vars: {monitoring_victorialogs_writers: [{name: w, password: p}]}
+          says: a writer with no host
+        - vars: {monitoring_victorialogs_writers: [{name: w, password: p, host: "a,b=c"}]}
+          says: a host that would add a field
+        - vars: {monitoring_victorialogs_readers: [{name: r, password: ""}]}
+          says: a reader with no password
+        - vars: {monitoring_victorialogs_readers: [{name: dashboard, password: p}]}
+          says: a name the vmsingle reader has
+        - vars: {monitoring_vmsingle_writers: [{name: vector-host-a, password: p, job: j, instance: i}]}
+          says: a name the log writer has
+      loop_control:
+        label: "{{ item.says }}"
+      register: _run_refused
+      changed_when: false
+      failed_when: false
+
+    - name: Read how the logs' admin key is kept
+      ansible.builtin.command: docker exec {{ _host }} stat -c '%n %u %a' {{ _config }}/victorialogs-admin-key
+      register: _mode
+      changed_when: false
+
+    - name: Copy out what the first run wrote
+      ansible.builtin.shell: >-
+        docker cp {{ _host }}:{{ _config }}/{{ item }} {{ _dir }}/first/{{ item }}
+        && chmod 0644 {{ _dir }}/first/{{ item }}
+      loop: [vmauth.yml, vmsingle-admin-key, victorialogs-admin-key]
+      changed_when: true
+
+    - name: Converge with a new password and one reader dropped
+      ansible.builtin.command: "{{ _converge }}/second.json"
+      register: _run_second
+      changed_when: true
+
+    - name: Copy out what the second run wrote
+      ansible.builtin.shell: >-
+        docker cp {{ _host }}:{{ _config }}/vmauth.yml {{ _dir }}/second/vmauth.yml
+        && chmod 0644 {{ _dir }}/second/vmauth.yml
+      changed_when: true
+
+    - name: Render the compose with log users, vmsingle users, both, neither, and syslog on
+      vars:
+        _logs_only: "{{ _first | combine({'monitoring_vmsingle_readers': []}) }}"
+        _vm_only: "{{ _first | combine({'monitoring_victorialogs_readers': [], 'monitoring_victorialogs_writers': []}) }}"
+        _with_syslog: "{{ _first | combine({'monitoring_victorialogs_syslog_port': 5514}) }}"
+      ansible.builtin.set_fact:
+        _both: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_first) | from_yaml }}"
+        _logs: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_logs_only) | from_yaml }}"
+        _vm: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_vm_only) | from_yaml }}"
+        _internal: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+        _syslog: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_with_syslog) | from_yaml }}"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start VictoriaLogs as the compose has it
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vl, '--network', _net, '--network-alias', 'victorialogs',
+                  '-v', _dir ~ '/first/victorialogs-admin-key:/etc/victorialogs/admin-key:ro',
+                  monitoring_victorialogs_image] + _both.services.victorialogs.command }}"
+      changed_when: true
+
+    - name: Start vmauth on the first run's config, as the compose has it
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vmauth, '--network', _net, '--network-alias', 'vmauth',
+                  '-v', _dir ~ '/first/vmauth.yml:/etc/vmauth/auth.yml:ro',
+                  '-v', _dir ~ '/first/vmsingle-admin-key:/etc/vmauth/admin-key:ro',
+                  monitoring_vmauth_image] + _both.services.vmauth.command }}"
+      changed_when: true
+
+    - name: Ask as each user after the first run
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _probe }}", "{{ _spec | to_json }}"]
+      vars:
+        _spec: {key: "{{ _key }}", requests: "{{ _first_requests }}"}
+      register: _probe_first
+      changed_when: false
+
+    - name: Stop vmauth
+      ansible.builtin.command:
+        argv: [docker, rm, -f, "{{ _vmauth }}"]
+      changed_when: true
+
+    - name: Start vmauth on the second run's config
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vmauth, '--network', _net, '--network-alias', 'vmauth',
+                  '-v', _dir ~ '/second/vmauth.yml:/etc/vmauth/auth.yml:ro',
+                  '-v', _dir ~ '/first/vmsingle-admin-key:/etc/vmauth/admin-key:ro',
+                  monitoring_vmauth_image] + _both.services.vmauth.command }}"
+      changed_when: true
+
+    - name: Ask as each user after the second run
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _probe }}", "{{ _spec | to_json }}"]
+      vars:
+        _spec: {key: "{{ _key }}", requests: "{{ _second_requests }}"}
+      register: _probe_second
+      changed_when: false
+
+    - name: Keep the logs for a failure
+      ansible.builtin.shell: docker logs --tail 10 {{ _vmauth }} 2>&1; docker logs --tail 10 {{ _vl }} 2>&1
+      register: _logs_kept
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: docker rm -f {{ _host }} {{ _vl }} {{ _vmauth }}; docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert who gets in, where, and what the compose publishes
+      vars:
+        _first_seen: "{{ _probe_first.stdout | from_json }}"
+        _second_seen: "{{ _probe_second.stdout | from_json }}"
+        _key_flags: >-
+          {{ ['flagsAuthKey', 'forceFlushAuthKey', 'forceMergeAuthKey', 'logNewStreamsAuthKey',
+              'partitionManageAuthKey', 'pprofAuthKey']
+             | map('regex_replace', '^(.*)$', '--\1=file:///etc/victorialogs/admin-key') | list }}
+        _refused: "{{ _run_refused.results }}"
+      ansible.builtin.assert:
+        that:
+          - "'changed=0' in _run_again.stdout"
+          - "'restart requested' in _run_first.stdout"
+          - "'restart requested' not in _run_again.stdout"
+          - "'restart requested' in _run_second.stdout"
+          - _refused | rejectattr('rc') | list | length == 0
+          - _refused | selectattr('stdout', 'search', 'msg') | list | length == _refused | length
+          - _refused | rejectattr('stdout', 'search', 'Each reader') | list | length == 0
+          - _refused[0].stdout is search('monitoring_victorialogs_admin_key')
+          - _mode.stdout.endswith(' 0 400')
+          - "_first_seen.codes == {'nobody': 401, 'wrong': 401, 'reader_query': 200, 'reader_ui': 200,
+             'retired_query': 200, 'reader_bulk': 400, 'reader_detach': 400, 'reader_metrics': 401,
+             'reader_vmsingle': 400, 'dashboard_logs': 400,
+             'writer_bulk': 200, 'writer_body_claim': 200, 'writer_query_claim': 200,
+             'writer_header_claim': 200, 'writer_jsonline': 400, 'writer_query': 400,
+             'vl_partitions': 401, 'vl_partitions_key': 200, 'vl_detach': 401, 'vl_force_merge': 401,
+             'vl_force_flush': 401, 'vl_new_streams': 401, 'vl_flags': 401, 'vl_pprof': 401,
+             'vl_delete': 400, 'vl_metrics': 200, 'in_stack_query': 200}"
+          - "_first_seen.hosts == {'host-a': 4}"
+          - "_second_seen.codes == {'old': 401, 'reader_query': 200, 'retired_query': 401}"
+          - _both.services.victorialogs.ports is not defined
+          - _internal.services.victorialogs.ports is not defined
+          - _syslog.services.victorialogs.ports == ['5514:514/udp']
+          - _key_flags | difference(_both.services.victorialogs.command) | length == 0
+          - _key_flags | difference(_internal.services.victorialogs.command) | length == 0
+          - "'--metricsAuthKey=file:///etc/victorialogs/admin-key' not in _both.services.victorialogs.command"
+          - "_both.services.victorialogs.volumes | select('search', '/victorialogs-admin-key:/etc/victorialogs/admin-key:ro$') | list | length == 1"
+          - _both.services.vmauth.ports == ['8428:8427', '9428:8427']
+          - _logs.services.vmauth.ports == ['9428:8427']
+          - _vm.services.vmauth.ports == ['8428:8427']
+          - "'vmauth' not in _internal.services"
+        fail_msg: >-
+          {{ _probe_first.stdout }} {{ _probe_second.stdout }} {{ _mode.stdout }}
+          {{ _run_again.stdout[-300:] }} {{ (_refused | map(attribute='stdout') | map('regex_search', 'msg.{0,200}') | list) }}
+          {{ _logs_kept.stdout[-1500:] }}

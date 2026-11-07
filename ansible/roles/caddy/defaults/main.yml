@@ -36,3 +36,9 @@ caddy_l4_proxies: []
 # tls_skip_verify. A map of name -> PEM content; installed into the system trust
 # store. Supplied by the deploy (the CA cert is public, but site-specific).
 caddy_trusted_ca_certs: {}
+
+# Secrets a route needs at run time, as a map of NAME -> value (SOPS). Written to a
+# root-only env file the service loads; a route reads one as {env.NAME} (in header_up,
+# say), so it stays out of the Caddyfile and the admin API. A change restarts Caddy,
+# as the service reads its environment at start. Empty removes the file.
+caddy_secret_env: {}
