@@ -1,9 +1,9 @@
 ---
 # Runs the rendered Caddyfile on real Caddy, with clients at fixed addresses
 # inside and outside the allowed range, a stub backend and a stub Authentik
-# outpost that refuses everyone. Only the DNS-01 TLS line changes, as the stock
-# image has no route53 module. Needs Docker and internet for images. From
-# ansible/:
+# outpost that refuses everyone, plus one fixed page. Only the DNS-01 TLS line
+# changes, as the stock image has no route53 module. Needs Docker and internet
+# for images. From ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
 #     roles/caddy/tests/source_guard.yml
@@ -25,10 +25,16 @@
     caddy_authentik_upstreams: ["http://stub:9000"]
     caddy_routes:
       - { name: scoped, host: gatedopen.guard.test, upstream: "http://stub:8080", any_source: true, sources: ["{{ _outside }}/32"], paths: ["/api/*"] }
+      - { name: guardedpage, host: guarded.guard.test, paths: ["/page.html"], page: "{{ _page }}" }
       - { name: guarded, host: guarded.guard.test, upstream: "http://stub:8080" }
       - { name: gated, host: gated.guard.test, upstream: "http://stub:8080", authentik_gated: true }
       - { name: open, host: open.guard.test, upstream: "http://stub:8080", any_source: true }
       - { name: gatedopen, host: gatedopen.guard.test, upstream: "http://stub:8080", authentik_gated: true, any_source: true }
+    # No doctype first, so Go's sniffing can't supply the content type.
+    _page: |
+      <meta charset="utf-8">
+      <style>video-stream .info { display: none }</style>
+      <script type="module">const a = {"b": 'c'};</script>
     _stub: |
       import http.server
       class H(http.server.BaseHTTPRequestHandler):
@@ -134,6 +140,24 @@
       changed_when: false
       failed_when: false
 
+    - name: Fetch the fixed page from inside the allowed range
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip {{ _inside }} curlimages/curl:8.11.1
+        -sk -D /dev/stderr --resolve guarded.guard.test:443:{{ _caddy_ip }}
+        https://guarded.guard.test/page.html
+      register: _page_inside
+      changed_when: false
+      failed_when: false
+
+    - name: Ask for the fixed page from outside the allowed range
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} --ip {{ _outside }} curlimages/curl:8.11.1
+        -sk -o /dev/null -w '%{http_code}' --resolve guarded.guard.test:443:{{ _caddy_ip }}
+        https://guarded.guard.test/page.html
+      register: _page_outside
+      changed_when: false
+      failed_when: false
+
     - name: Remove the containers
       ansible.builtin.shell: >-
         docker rm -f caddy-guard-caddy caddy-guard-stub;
@@ -155,6 +179,14 @@
       loop: "{{ _from_inside.results | zip(_from_outside.results) | list }}"
       loop_control:
         label: "{{ item.0.item.host }}"
+
+    - name: Assert the page comes back whole, as HTML, behind the guard
+      ansible.builtin.assert:
+        that:
+          - _page_inside.stdout == _page.rstrip('\n')
+          - "'content-type: text/html; charset=utf-8' in (_page_inside.stderr | lower)"
+          - _page_outside.stdout == "403"
+        fail_msg: "{{ [_page_inside.stdout, _page_inside.stderr, _page_outside.stdout] | to_json }}"
 
     - name: Assert only the named source on the named path skips the gate
       ansible.builtin.assert:
