@@ -93,6 +93,11 @@ monitoring_pushed_metrics_stale_seconds: 300
 monitoring_log_rules: []           # empty omits vmalert-logs
 monitoring_log_rules_interval: 1m  # each evaluation counts this much of the log
 
+# NotLogging: a log_rules record counted by host; empty leaves the rule out.
+monitoring_not_logging_metric: ""
+monitoring_not_logging_jobs: []    # scrape jobs whose instances must log
+monitoring_not_logging_window: 30m
+
 # Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
 monitoring_headscale_target: ""
 
