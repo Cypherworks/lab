@@ -216,10 +216,20 @@ services:
       - "--storageDataPath=/victoria-logs-data"
       - "--retentionPeriod={{ monitoring_logs_retention }}"
       - "--httpListenAddr=:9428"
+{% if monitoring_victorialogs_syslog_port %}
+      # Devices that only speak syslog, such as the firewall. RFC3164 stamps
+      # carry no zone or year, so lines are stamped on receipt.
+      - "--syslog.listenAddr.udp=:514"
+      - "--syslog.useLocalTimestamp.udp=true"
+      - "--syslog.useRemoteIP.udp=true"
+{% endif %}
     volumes:
       - victorialogsdata:/victoria-logs-data
     ports:
       - "9428:9428"
+{% if monitoring_victorialogs_syslog_port %}
+      - "{{ monitoring_victorialogs_syslog_port }}:514/udp"
+{% endif %}
 
 volumes:
   vmdata:
