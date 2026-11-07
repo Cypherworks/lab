@@ -39,6 +39,7 @@ technitium_dns_blocking: true
 technitium_dns_blocking_type: AnyAddress  # 0.0.0.0, or NxDomain
 technitium_dns_block_list_urls: []
 technitium_dns_block_list_update_hours: 24
+technitium_dns_allowed_domains: []  # past every list; held exactly
 
 technitium_dns_dnssec_validation: true
 
