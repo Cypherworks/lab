@@ -1,0 +1,14 @@
+---
+# Sets _allowed_domains: the names in the server's Allowed zone. The export is
+# plain text, one name a line; an error comes back as JSON instead.
+- name: Export the allowed names
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ technitium_dns_http_port }}/api/allowed/export"
+    headers: { Authorization: "Bearer {{ _login.json.token }}" }
+    return_content: true
+  register: _allowed_export
+  failed_when: "'text/plain' not in _allowed_export.content_type | default('')"
+
+- name: Name the allowed names
+  ansible.builtin.set_fact:
+    _allowed_domains: "{{ _allowed_export.content.split() }}"

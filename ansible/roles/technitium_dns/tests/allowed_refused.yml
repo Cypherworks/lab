@@ -1,0 +1,22 @@
+---
+# Holds the caller's allowed names and checks which task stops the hold.
+- name: Hold the allowed names
+  block:
+    - name: Hold the allowed names
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: allowed
+
+    - name: Record that the hold went through
+      ansible.builtin.set_fact:
+        _allowed_refused: ""
+  rescue:
+    - name: Record which task failed
+      ansible.builtin.set_fact:
+        _allowed_refused: "{{ ansible_failed_task.name }}"
+
+- name: Assert the hold failed where expected
+  ansible.builtin.assert:
+    that: _allowed_refused == _failing_task
+    fail_msg: "expected '{{ _failing_task }}' to fail, got '{{ _allowed_refused }}'"
+    success_msg: "{{ _failing_task }} failed as expected"

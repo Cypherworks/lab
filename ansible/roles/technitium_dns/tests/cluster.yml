@@ -45,6 +45,7 @@
     technitium_dns_recursion_acl: ["{{ _listed_client }}", "{{ _other_client }}"]
     technitium_dns_forwarders: ["{{ _public_ip }}"]
     technitium_dns_block_list_urls: ["http://{{ _public_ip }}:5380/blocklist.txt"]
+    technitium_dns_allowed_domains: [allowed.blocked.labcheck]
     # On the primary before the secondary joins, as when rebuilding a node.
     technitium_dns_sso_authority: https://auth.example.invalid/application/o/technitium/
     technitium_dns_sso_client_id: test-client
@@ -143,6 +144,7 @@
             - zones/records/add?zone={{ _split }}&domain=www.{{ _split }}&type=A&ipAddress=192.0.2.10
             - zones/records/add?zone={{ _private }}&domain=www.{{ _private }}&type=A&ipAddress=192.0.2.20
             - zones/records/add?zone=blocked.labcheck&domain=blocked.labcheck&type=A&ipAddress=192.0.2.31
+            - zones/records/add?zone=blocked.labcheck&domain=allowed.blocked.labcheck&type=A&ipAddress=192.0.2.32
 
         # The zones exist first, as they will on a server joining a cluster.
         - name: Hold the primary before there's a cluster
@@ -187,6 +189,14 @@
           ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} blocked.labcheck A"
           register: _block_synced
           until: _block_synced.stdout == '0.0.0.0'
+          retries: 30
+          delay: 2
+          changed_when: false
+
+        - name: Wait for the allowed name to reach the secondary
+          ansible.builtin.command: "{{ _dig }} @{{ _node2_ip }} allowed.blocked.labcheck A"
+          register: _allowed_synced
+          until: _allowed_synced.stdout == '192.0.2.32'
           retries: 30
           delay: 2
           changed_when: false
@@ -411,8 +421,9 @@
         - name: Hold a primary as a secondary
           ansible.builtin.include_tasks: cluster_refused.yml
           vars:
-            <<: *primary
+            technitium_dns_http_port: "{{ _node1_port }}"
             technitium_dns_cluster_role: secondary
+            technitium_dns_cluster_node_ip: "{{ _node1_ip }}"
             _failing_task: Refuse a node of the other role
 
         - name: Hold a node from another cluster
@@ -425,8 +436,9 @@
         - name: Hold an unknown role
           ansible.builtin.include_tasks: cluster_refused.yml
           vars:
-            <<: *primary
+            technitium_dns_http_port: "{{ _node1_port }}"
             technitium_dns_cluster_role: tertiary
+            technitium_dns_cluster_node_ip: "{{ _node1_ip }}"
             _failing_task: Check the cluster settings
 
         - name: Join with a primary that doesn't exist
