@@ -1,0 +1,358 @@
+---
+# Runs the role's vmsingle auth tasks on a throwaway Debian 13 container, then
+# real vmsingle, vmauth and vmalert on what they wrote, each started with the
+# command the rendered compose gives it. Checks readers can only query,
+# writers can only import and only under their pinned job and instance, the
+# admin endpoints of vmsingle and vmauth refuse without the key, vmalert still
+# records into vmsingle inside the stack, a second run changes nothing, a
+# changed password or dropped user stops working, and bad settings fail the
+# run. Also renders the compose with and without users. Needs Docker, and
+# internet for the images and apt. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/vmsingle_auth.yml
+- name: Verify the vmsingle auth
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _host: monitoring-vmauth-host
+    _net: monitoring-vmauth-test
+    _vm: monitoring-vmauth-vmsingle
+    _vmauth: monitoring-vmauth-vmauth
+    _vmalert: monitoring-vmauth-vmalert
+    _dir: "{{ playbook_dir }}/.vmauth"
+    _config: /opt/monitoring/config
+    _key: admin-test-only
+    _converge: >-
+      ansible-playbook -i {{ _host }}, -c community.docker.docker
+      {{ playbook_dir }}/vmsingle_auth_converge.yml -e @{{ _dir }}
+    _first:
+      monitoring_vmsingle_admin_key: admin-test-only
+      monitoring_vmsingle_readers:
+        - {name: dashboard, password: first-test-only}
+        - {name: retired, password: retired-test-only}
+      monitoring_vmsingle_writers:
+        - {name: headscale, password: writer-test-only, job: headscale, instance: headscale-1}
+    _second:
+      monitoring_vmsingle_admin_key: admin-test-only
+      monitoring_vmsingle_readers:
+        - {name: dashboard, password: second-test-only}
+      monitoring_vmsingle_writers:
+        - {name: headscale, password: writer-test-only, job: headscale, instance: headscale-1}
+    _scrape: |
+      scrape_configs: []
+    _rules: |
+      groups:
+        - name: test
+          interval: 2s
+          rules:
+            - record: test_recorded
+              expr: vector(1)
+    _probe: |
+      import base64, json, sys, time, urllib.error, urllib.parse, urllib.request
+      spec = json.loads(sys.argv[1])
+      def ask(url, cred="", body=None):
+          request = urllib.request.Request(url, data=body.encode() if body else None)
+          if cred:
+              token = base64.b64encode(cred.encode()).decode()
+              request.add_header("Authorization", "Basic " + token)
+          try:
+              with urllib.request.urlopen(request, timeout=5) as reply:
+                  return reply.status, reply.read().decode()[:300]
+          except urllib.error.HTTPError as err:
+              return err.code, err.read().decode()[:300]
+          except OSError as err:
+              return 0, str(err)
+      query = "http://vmauth:8427/api/v1/query?" + urllib.parse.urlencode({"query": "test_recorded"})
+      recorded = False
+      for _ in range(90):
+          status, body = ask(query, spec["reader"])
+          if status == 200 and '"result":[{' in body:
+              recorded = True
+              break
+          time.sleep(1)
+      codes = {}
+      for name, request in spec["requests"].items():
+          codes[name] = ask(request["url"], request.get("cred", ""), request.get("body"))[0]
+      time.sleep(2)
+      ask("http://vmsingle:8428/internal/force_flush?authKey=" + spec["key"])
+      exported = ask("http://vmsingle:8428/api/v1/export?" + urllib.parse.urlencode({"match[]": "probe_metric"}))[1]
+      labels = json.loads(exported.splitlines()[0])["metric"] if exported.strip() else {}
+      print(json.dumps({"recorded": recorded, "codes": codes, "labels": labels}))
+    _vmauth_url: http://vmauth:8427
+    _vm_url: http://vmsingle:8428
+    _first_requests:
+      nobody: {url: "{{ _vmauth_url }}/api/v1/query?query=up"}
+      wrong: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "dashboard:not-it"}
+      reader_query: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "dashboard:first-test-only"}
+      reader_range: {url: "{{ _vmauth_url }}/api/v1/query_range?query=up&start=1&end=61&step=60", cred: "dashboard:first-test-only"}
+      retired_query: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "retired:retired-test-only"}
+      reader_export: {url: "{{ _vmauth_url }}/api/v1/export?match[]=up", cred: "dashboard:first-test-only"}
+      reader_import: {url: "{{ _vmauth_url }}/api/v1/import/prometheus", cred: "dashboard:first-test-only", body: "forged 1"}
+      reader_delete: {url: "{{ _vmauth_url }}/api/v1/admin/tsdb/delete_series?match[]=up", cred: "dashboard:first-test-only"}
+      writer_import:
+        url: "{{ _vmauth_url }}/api/v1/import/prometheus?extra_label=job=node&extra_label=instance=forged"
+        cred: "headscale:writer-test-only"
+        body: 'probe_metric{a="1"} 7'
+      writer_query: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "headscale:writer-test-only"}
+      writer_write: {url: "{{ _vmauth_url }}/api/v1/write", cred: "headscale:writer-test-only", body: "x"}
+      vmauth_metrics: {url: "{{ _vmauth_url }}/metrics"}
+      vmauth_metrics_key: {url: "{{ _vmauth_url }}/metrics?authKey={{ _key }}"}
+      vmauth_flags: {url: "{{ _vmauth_url }}/flags"}
+      vmauth_reload: {url: "{{ _vmauth_url }}/-/reload"}
+      vmauth_pprof: {url: "{{ _vmauth_url }}/debug/pprof/"}
+      vm_delete: {url: "{{ _vm_url }}/api/v1/admin/tsdb/delete_series?match[]=nothing"}
+      vm_delete_key: {url: "{{ _vm_url }}/api/v1/admin/tsdb/delete_series?match[]=nothing&authKey={{ _key }}"}
+      vm_snapshot: {url: "{{ _vm_url }}/snapshot/list"}
+      vm_force_merge: {url: "{{ _vm_url }}/internal/force_merge"}
+      vm_force_flush: {url: "{{ _vm_url }}/internal/force_flush"}
+      vm_reset_cache: {url: "{{ _vm_url }}/internal/resetRollupResultCache"}
+      vm_config: {url: "{{ _vm_url }}/config"}
+      vm_reload: {url: "{{ _vm_url }}/-/reload"}
+      vm_flags: {url: "{{ _vm_url }}/flags"}
+      vm_pprof: {url: "{{ _vm_url }}/debug/pprof/"}
+      vm_metrics: {url: "{{ _vm_url }}/metrics"}
+      in_stack_query: {url: "{{ _vm_url }}/api/v1/query?query=up"}
+    _second_requests:
+      old: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "dashboard:first-test-only"}
+      reader_query: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "dashboard:second-test-only"}
+      retired_query: {url: "{{ _vmauth_url }}/api/v1/query?query=up", cred: "retired:retired-test-only"}
+      writer_import:
+        url: "{{ _vmauth_url }}/api/v1/import/prometheus"
+        cred: "headscale:writer-test-only"
+        body: 'probe_metric{a="1"} 8'
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _host }} {{ _vm }} {{ _vmauth }} {{ _vmalert }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directories
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [first, second, config]
+
+    - name: Write the test settings and configs
+      ansible.builtin.copy:
+        content: "{{ item.content }}"
+        dest: "{{ _dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - {content: "{{ _first | to_json }}", dest: first.json}
+        - {content: "{{ _second | to_json }}", dest: second.json}
+        - {content: "{{ _scrape }}", dest: config/scrape.yml}
+        - {content: "{{ _rules }}", dest: config/alert-rules.yml}
+      loop_control:
+        label: "{{ item.dest }}"
+
+    - name: Start a Debian 13 host
+      ansible.builtin.command: docker run -d --name {{ _host }} debian:13 sleep infinity
+      changed_when: true
+
+    - name: Give it Python for Ansible
+      ansible.builtin.command: >-
+        docker exec {{ _host }} sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 >/dev/null'
+      changed_when: true
+
+    - name: Converge with two readers and a writer
+      ansible.builtin.command: "{{ _converge }}/first.json"
+      register: _run_first
+      changed_when: true
+
+    - name: Converge again with nothing changed
+      ansible.builtin.command: "{{ _converge }}/first.json"
+      register: _run_again
+      changed_when: false
+
+    - name: Converge with settings the role must refuse
+      ansible.builtin.command: "{{ _converge }}/first.json -e '{{ item.vars | to_json }}'"
+      loop:
+        - {vars: {monitoring_vmsingle_admin_key: ""}, says: monitoring_vmsingle_admin_key}
+        - vars: {monitoring_vmsingle_writers: [{name: w, password: p, job: j}]}
+          says: monitoring_vmsingle_writers
+        - vars: {monitoring_vmsingle_readers: [{name: r, password: ""}]}
+          says: monitoring_vmsingle_readers
+        - vars: {monitoring_vmsingle_readers: [{name: headscale, password: p}]}
+          says: names must be unique
+        - vars: {monitoring_vmsingle_readers: [{name: r, password: "a%{HOME}"}]}
+          says: "%{"
+      loop_control:
+        label: "{{ item.says }}"
+      register: _run_refused
+      changed_when: false
+      failed_when: false
+
+    - name: Read how the auth files are kept
+      ansible.builtin.command: >-
+        docker exec {{ _host }} stat -c '%n %u %a'
+        {{ _config }}/vmauth.yml {{ _config }}/vmsingle-admin-key
+      register: _modes
+      changed_when: false
+
+    - name: Copy out what the first run wrote
+      ansible.builtin.shell: >-
+        docker cp {{ _host }}:{{ _config }}/{{ item }} {{ _dir }}/first/{{ item }}
+        && chmod 0644 {{ _dir }}/first/{{ item }}
+      loop: [vmauth.yml, vmsingle-admin-key]
+      changed_when: true
+
+    - name: Converge with a new password and one reader dropped
+      ansible.builtin.command: "{{ _converge }}/second.json"
+      register: _run_second
+      changed_when: true
+
+    - name: Copy out what the second run wrote
+      ansible.builtin.shell: >-
+        docker cp {{ _host }}:{{ _config }}/vmauth.yml {{ _dir }}/second/vmauth.yml
+        && chmod 0644 {{ _dir }}/second/vmauth.yml
+      changed_when: true
+
+    - name: Converge with no readers or writers
+      ansible.builtin.command: >-
+        {{ _converge }}/second.json -e '{"monitoring_vmsingle_readers": [], "monitoring_vmsingle_writers": []}'
+      register: _run_none
+      changed_when: true
+
+    - name: Read whether the vmauth config is gone
+      ansible.builtin.command: docker exec {{ _host }} test -e {{ _config }}/vmauth.yml
+      register: _gone
+      changed_when: false
+      failed_when: false
+
+    - name: Render the compose with and without users
+      ansible.builtin.set_fact:
+        _published: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_first) | from_yaml }}"
+        _internal: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start vmsingle as the compose has it
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vm, '--network', _net, '--network-alias', 'vmsingle',
+                  '-v', _dir ~ '/config/scrape.yml:/etc/vm/scrape.yml:ro',
+                  '-v', _dir ~ '/first/vmsingle-admin-key:/etc/vm/admin-key:ro',
+                  monitoring_vmsingle_image] + _published.services.vmsingle.command }}"
+      changed_when: true
+
+    - name: Start vmauth on the first run's config, as the compose has it
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vmauth, '--network', _net, '--network-alias', 'vmauth',
+                  '-v', _dir ~ '/first/vmauth.yml:/etc/vmauth/auth.yml:ro',
+                  '-v', _dir ~ '/first/vmsingle-admin-key:/etc/vmauth/admin-key:ro',
+                  monitoring_vmauth_image] + _published.services.vmauth.command }}"
+      changed_when: true
+
+    - name: Start vmalert, recording into vmsingle as the compose has it
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vmalert, '--network', _net,
+                  '-v', _dir ~ '/config/alert-rules.yml:/etc/vmalert/alert-rules.yml:ro',
+                  monitoring_vmalert_image] + _published.services.vmalert.command }}"
+      changed_when: true
+
+    - name: Ask as each user after the first run
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _probe }}", "{{ _spec | to_json }}"]
+      vars:
+        _spec: {reader: "dashboard:first-test-only", key: "{{ _key }}", requests: "{{ _first_requests }}"}
+      register: _probe_first
+      changed_when: false
+
+    - name: Stop vmauth
+      ansible.builtin.command:
+        argv: [docker, rm, -f, "{{ _vmauth }}"]
+      changed_when: true
+
+    - name: Start vmauth on the second run's config
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'run', '-d', '--name', _vmauth, '--network', _net, '--network-alias', 'vmauth',
+                  '-v', _dir ~ '/second/vmauth.yml:/etc/vmauth/auth.yml:ro',
+                  '-v', _dir ~ '/first/vmsingle-admin-key:/etc/vmauth/admin-key:ro',
+                  monitoring_vmauth_image] + _published.services.vmauth.command }}"
+      changed_when: true
+
+    - name: Ask as each user after the second run
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _probe }}", "{{ _spec | to_json }}"]
+      vars:
+        _spec: {reader: "dashboard:second-test-only", key: "{{ _key }}", requests: "{{ _second_requests }}"}
+      register: _probe_second
+      changed_when: false
+
+    - name: Keep the logs for a failure
+      ansible.builtin.shell: >-
+        docker logs --tail 10 {{ _vmauth }} 2>&1; docker logs --tail 10 {{ _vmalert }} 2>&1;
+        docker logs --tail 10 {{ _vm }} 2>&1
+      register: _logs
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f {{ _host }} {{ _vm }} {{ _vmauth }} {{ _vmalert }};
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert who gets in, where, and what the compose publishes
+      vars:
+        _first_seen: "{{ _probe_first.stdout | from_json }}"
+        _second_seen: "{{ _probe_second.stdout | from_json }}"
+        _vmauth_up: "{{ _published.services.vmauth }}"
+        _key_flags: >-
+          {{ ['deleteAuthKey', 'snapshotAuthKey', 'forceMergeAuthKey', 'forceFlushAuthKey',
+              'search.resetCacheAuthKey', 'configAuthKey', 'reloadAuthKey', 'flagsAuthKey',
+              'pprofAuthKey', 'metricsAuthKey']
+             | map('regex_replace', '^(.*)$', '--\1=file:///etc/vm/admin-key') | list }}
+        _refused: "{{ _run_refused.results }}"
+      ansible.builtin.assert:
+        that:
+          - "'changed=0' in _run_again.stdout"
+          - "'restart requested' in _run_first.stdout"
+          - "'restart requested' not in _run_again.stdout"
+          - "'restart requested' in _run_second.stdout"
+          - "'restart requested' in _run_none.stdout"
+          - _refused | rejectattr('rc') | list | length == 0
+          - _refused | selectattr('stdout', 'search', 'msg') | list | length == _refused | length
+          - _refused | rejectattr('stdout', 'search', 'Each reader') | list | length == 0
+          - _refused[0].stdout is search('monitoring_vmsingle_admin_key')
+          - _modes.stdout_lines[0].endswith(' 0 600')
+          - _modes.stdout_lines[1].endswith(' 0 400')
+          - _gone.rc != 0
+          - _first_seen.recorded
+          - "_first_seen.codes == {'nobody': 401, 'wrong': 401, 'reader_query': 200, 'reader_range': 200,
+             'retired_query': 200, 'reader_export': 400, 'reader_import': 400, 'reader_delete': 400,
+             'writer_import': 204, 'writer_query': 400, 'writer_write': 400,
+             'vmauth_metrics': 401, 'vmauth_metrics_key': 200, 'vmauth_flags': 401,
+             'vmauth_reload': 401, 'vmauth_pprof': 401,
+             'vm_delete': 401, 'vm_delete_key': 204, 'vm_snapshot': 401, 'vm_force_merge': 401,
+             'vm_force_flush': 401, 'vm_reset_cache': 401, 'vm_config': 401, 'vm_reload': 401,
+             'vm_flags': 401, 'vm_pprof': 401, 'vm_metrics': 401, 'in_stack_query': 200}"
+          - "_first_seen.labels == {'__name__': 'probe_metric', 'a': '1', 'job': 'headscale', 'instance': 'headscale-1'}"
+          - "_second_seen.codes == {'old': 401, 'reader_query': 200, 'retired_query': 401, 'writer_import': 204}"
+          - _published.services.vmsingle.ports is not defined
+          - _internal.services.vmsingle.ports is not defined
+          - _key_flags | difference(_published.services.vmsingle.command) | length == 0
+          - _key_flags | difference(_internal.services.vmsingle.command) | length == 0
+          - _vmauth_up.ports == ['8428:8427']
+          - "_vmauth_up.volumes == [monitoring_config_dir ~ '/vmauth.yml:/etc/vmauth/auth.yml:ro',
+             monitoring_config_dir ~ '/vmsingle-admin-key:/etc/vmauth/admin-key:ro']"
+          - "'vmauth' not in _internal.services"
+        fail_msg: >-
+          {{ _probe_first.stdout }} {{ _probe_second.stdout }} {{ _modes.stdout_lines }}
+          {{ _run_again.stdout[-300:] }} {{ (_refused | map(attribute='stdout') | map('regex_search', 'msg.{0,200}') | list) }}
+          {{ _logs.stdout[-1500:] }}

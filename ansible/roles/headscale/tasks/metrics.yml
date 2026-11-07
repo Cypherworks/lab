@@ -1,10 +1,35 @@
 ---
 # A timer pushes the tailnet's state, as Headscale sees it, to VictoriaMetrics.
 # Without a push URL, the collector is removed.
+- name: Require both push credentials or neither
+  ansible.builtin.assert:
+    that:
+      - (headscale_metrics_push_user | length > 0) == (headscale_metrics_push_password | length > 0)
+    fail_msg: >-
+      Set headscale_metrics_push_user and headscale_metrics_push_password
+      together, or leave both empty.
+
 - name: Install the tailnet collector
   when: headscale_metrics_push_url | length > 0
   become: true
   block:
+    # Readable by the collector's group only, never on its command line.
+    - name: Write the push password
+      ansible.builtin.copy:
+        content: "{{ headscale_metrics_push_password }}\n"
+        dest: /etc/headscale/metrics-push-password
+        owner: root
+        group: headscale
+        mode: "0640"
+      when: headscale_metrics_push_user | length > 0
+      no_log: true
+
+    - name: Remove the push password when the collector signs in as nobody
+      ansible.builtin.file:
+        path: /etc/headscale/metrics-push-password
+        state: absent
+      when: headscale_metrics_push_user | length == 0
+
     - name: Install the collector script
       ansible.builtin.copy:
         src: headscale-metrics
@@ -54,6 +79,7 @@
         - /etc/systemd/system/headscale-metrics.timer
         - /etc/systemd/system/headscale-metrics.service
         - /usr/local/sbin/headscale-metrics
+        - /etc/headscale/metrics-push-password
       register: _headscale_metrics_removed
 
     - name: Forget the removed units

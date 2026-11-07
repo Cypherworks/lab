@@ -23,6 +23,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_config_dir` | `{{ monitoring_compose_dir }}/config` | Rendered config root (scrape, rules, Grafana provisioning, etc.). |
 | `monitoring_vmsingle_image` | `victoriametrics/victoria-metrics:v1.102.1` | VictoriaMetrics single-node (storage + scraping). |
 | `monitoring_vmalert_image` | `victoriametrics/vmalert:v1.102.1` | vmalert (rule evaluation). |
+| `monitoring_vmauth_image` | `victoriametrics/vmauth:v1.102.1` | vmauth, the only way in to vmsingle from outside the stack. Keep it on vmsingle's version. |
 | `monitoring_alertmanager_image` | `prom/alertmanager:v0.34.2` | Alertmanager. `webhook_url_file` needs 0.28 or later. |
 | `monitoring_grafana_image` | `grafana/grafana:13.3.0` | Grafana. 13.0 moves dashboards into unified storage with a one-way migration, so roll back from a snapshot, not by pinning an older image. Grafana runs only the plugins the image ships: startup plugin installs are off and the plugins directory is an empty read-only mount. |
 | `monitoring_redis_exporter_image` | `oliver006/redis_exporter:v1.62.0` | Redis exporter. |
@@ -39,6 +40,18 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `monitoring_logs_retention` | `"30d"` | VictoriaLogs retention, on the same constrained budget. |
 | `monitoring_scrape_interval` | `"30s"` | Global scrape interval. |
 | `monitoring_grafana_anonymous_enabled` | `false` | Anonymous view-only Grafana access (for the wall kiosk); admin/edit stays behind Authentik OIDC. |
+
+### vmsingle access
+
+vmsingle is never published. vmauth answers on 8428 in its place, and only when there are readers or writers; with neither, vmsingle is reachable only on the compose network. vmalert and Grafana stay on the compose network and talk to vmsingle directly.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `monitoring_vmsingle_readers` | `[]` | Secrets. `{name, password}` users who may run instant and range queries (`/api/v1/query`, `/api/v1/query_range`) and nothing else. |
+| `monitoring_vmsingle_writers` | `[]` | Secrets. `{name, password, job, instance}` users who may import Prometheus text (`/api/v1/import/prometheus`) and nothing else. vmauth pins `job` and `instance` on every series a writer sends and drops any `extra_label` it asks for, so a writer's password can't write under another source's name. |
+| `monitoring_vmsingle_admin_key` | `""` | Secret, required. The key vmsingle's admin endpoints (delete, snapshots, force merge and flush, cache reset, config, reload, flags, pprof, metrics) and vmauth's own (metrics, flags, pprof, reload) want as `authKey`. vmauth routes no admin path to anyone, so only something on the compose network can use it. |
+
+Names are unique across readers and writers, and a password can't hold `%{`, which vmauth reads as an environment placeholder. vmauth compares passwords in plain text, so its config is a root-only `0600` file.
 
 ### Scrape targets (from inventory, no IPs in the role)
 
@@ -144,7 +157,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 
 ## What it does
 
-Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config and its text template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the `lab-kiosk` dashboard laid out for a 1080p wall screen. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`, `lab-overview.json`) so Grafana stops serving them, and the dropped ntfy config files. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. With API users set, it hashes each password on the host with `htpasswd` (bcrypt, read from stdin), rehashing only one that changed, drops users the deploy removed, and writes Alertmanager's web config and the password files vmalert and vmsingle sign in with; with none, it removes those files. It then brings the stack up with `docker_compose_v2`, removing the container of any service the compose doesn't define, and deletes the dropped ntfy volumes, which held its user database.
+Creates the compose, config, and Grafana provisioning directories, then renders every config file: the scrape config, alert rules, Alertmanager config and its text template, blackbox and snmp exporter configs, the go2rtc config, Grafana datasource and dashboard provisioning, and the `lab-kiosk` dashboard laid out for a 1080p wall screen. It then removes dropped provisioned dashboards (`cctv.json`, `lab-services-nas.json`, `lab-overview.json`) so Grafana stops serving them, and the dropped ntfy config files. Secrets (the `.env`, the HASS token file, and — when Incus metrics targets are set — the metrics client cert/key, all at mode `0600` docker-secret sources) are rendered separately. With API users set, it hashes each password on the host with `htpasswd` (bcrypt, read from stdin), rehashing only one that changed, drops users the deploy removed, and writes Alertmanager's web config and the password files vmalert and vmsingle sign in with; with none, it removes those files. It writes the admin key (`0400`) and, with readers or writers set, vmauth's users (`0600`), removing those when there are none. It then brings the stack up with `docker_compose_v2`, removing the container of any service the compose doesn't define, and deletes the dropped ntfy volumes, which held its user database.
 
 vmsingle is used instead of Prometheus for lighter storage and better compaction on the resource- and heat-constrained rig; it is PromQL-compatible, so Grafana treats it as a Prometheus datasource. Any config, env, or compose change restarts the stack.
 
@@ -167,6 +180,8 @@ vmsingle is used instead of Prometheus for lighter storage and better compaction
 ```
 
 ## Notes
+
+vmauth uses basic auth over plain HTTP, as Alertmanager's API does, so a password crosses the network in the clear. Containers on the compose network can still query and write vmsingle without signing in (not its admin endpoints): vmauth v1.102.1 couldn't be made to sign in to a vmsingle that demands basic auth. Grafana's anonymous Viewer, when on, can query every metric through Grafana. `tests/vmsingle_auth.yml` checks who gets in where, on real vmsingle, vmauth and vmalert.
 
 Grafana OIDC uses Authentik's global (not per-application) endpoints. Group-to-role mapping is done through `monitoring_grafana_role_path`.
 

@@ -18,10 +18,15 @@ The CLI's JSON carries each key's secret; only the count leaves this process.
 The whole push is built before it is sent, so a failed read pushes nothing,
 and the script exits 1.
 
+With --user and --password-file it signs in with basic auth, as a writer
+vmauth lets import.
+
   headscale-metrics --url http://192.0.2.10:8428/api/v1/import/prometheus \\
-    --label job=headscale --label instance=headscale
+    --label job=headscale --label instance=headscale \\
+    --user headscale --password-file /etc/headscale/metrics-push-password
 """
 import argparse
+import base64
 import json
 import subprocess
 import sys
@@ -70,9 +75,12 @@ def snapshot(now):
     return "\n".join(lines) + "\n"
 
 
-def push(url, extra, body):
+def push(url, extra, body, user=None, password=None):
     query = urllib.parse.urlencode([("extra_label", pair) for pair in extra])
     request = urllib.request.Request(f"{url}?{query}" if query else url, data=body.encode(), method="POST")
+    if user:
+        token = base64.b64encode(f"{user}:{password}".encode()).decode()
+        request.add_header("Authorization", f"Basic {token}")
     with urllib.request.urlopen(request, timeout=10) as reply:
         if reply.status // 100 != 2:
             raise RuntimeError(f"{url}: HTTP {reply.status}")
@@ -82,9 +90,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--url", required=True, help="vmsingle's /api/v1/import/prometheus")
     parser.add_argument("--label", action="append", default=[], help="NAME=VALUE added to every series")
+    parser.add_argument("--user", help="sign in as this vmsingle writer, with --password-file")
+    parser.add_argument("--password-file", help="file holding that writer's password")
     args = parser.parse_args()
+    if bool(args.user) != bool(args.password_file):
+        parser.error("--user and --password-file go together")
     try:
-        push(args.url, args.label, snapshot(time.time()))
+        password = None
+        if args.password_file:
+            with open(args.password_file) as fh:
+                password = fh.read().rstrip("\r\n")
+        push(args.url, args.label, snapshot(time.time()), args.user, password)
     except Exception as err:
         print(f"headscale-metrics: {err}", file=sys.stderr)
         return 1

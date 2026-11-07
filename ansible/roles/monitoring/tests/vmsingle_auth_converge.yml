@@ -1,0 +1,29 @@
+---
+# Runs the role's vmsingle auth tasks on vmsingle_auth.yml's container.
+# A stand-in handler counts restarts, as there is no compose stack to restart.
+- name: Converge the vmsingle auth
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    ansible_become: false
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make the config directory as the role does
+      ansible.builtin.file:
+        path: "{{ monitoring_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Run the role's tasks
+      ansible.builtin.include_tasks: ../tasks/vmsingle_auth.yml
+
+  handlers:
+    - name: Restart monitoring
+      ansible.builtin.debug:
+        msg: restart requested
