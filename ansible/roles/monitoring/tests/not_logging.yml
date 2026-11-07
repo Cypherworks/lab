@@ -1,0 +1,159 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up log
+# counts, and checks the rule is left out when no log count is named.
+# Needs Docker, and internet to pull the image once. From ansible/:
+#
+#   ansible-playbook -i localhost, \
+#     roles/monitoring/tests/not_logging.yml
+- name: Verify the not logging alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.not_logging"
+    _image: prom/prometheus:v2.53.4
+    _fired:
+      - exp_labels:
+          severity: warning
+          job: node
+          instance: pi-kiosk
+        exp_annotations:
+          summary: "No logs from pi-kiosk"
+          description: "Up and scraped, but no log line from it in 30m."
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a system logging every minute stays quiet
+          interval: 1m
+          input_series:
+            - series: 'up{job="node",instance="pi-kiosk"}'
+              values: '1x60'
+            - series: 'log_lines{host="pi-kiosk"}'
+              values: '1x60'
+          alert_rule_test:
+            - eval_time: 50m
+              alertname: NotLogging
+        - name: logs stopping fire once the window has none for five minutes
+          interval: 1m
+          input_series:
+            - series: 'up{job="node",instance="pi-kiosk"}'
+              values: '1x60'
+            - series: 'log_lines{host="pi-kiosk"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 38m
+              alertname: NotLogging
+            - eval_time: 50m
+              alertname: NotLogging
+              exp_alerts: {{ _fired | to_json }}
+        - name: a system that never logged fires, as when the log count stops altogether
+          interval: 1m
+          input_series:
+            - series: 'up{job="node",instance="pi-kiosk"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 6m
+              alertname: NotLogging
+              exp_alerts: {{ _fired | to_json }}
+        - name: a down system is left to TargetDown
+          interval: 1m
+          input_series:
+            - series: 'up{job="node",instance="pi-kiosk"}'
+              values: '0x60'
+          alert_rule_test:
+            - eval_time: 50m
+              alertname: NotLogging
+        - name: a system with no log path fires too
+          interval: 1m
+          input_series:
+            - series: 'up{job="node-instance",instance="claude"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 6m
+              alertname: NotLogging
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                    job: node-instance
+                    instance: claude
+                  exp_annotations:
+                    summary: "No logs from claude"
+                    description: "Up and scraped, but no log line from it in 30m."
+        - name: an unlisted job stays quiet
+          interval: 1m
+          input_series:
+            - series: 'up{job="blackbox",instance="caddy-1"}'
+              values: '1x60'
+          alert_rule_test:
+            - eval_time: 50m
+              alertname: NotLogging
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules with no log count named
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Read the rules rendered with no log count named
+      ansible.builtin.slurp:
+        src: "{{ _dir }}/alert-rules.yml"
+      register: _unnamed
+
+    - name: Name the log count and the jobs that must log
+      ansible.builtin.set_fact:
+        monitoring_not_logging_metric: log_lines
+        monitoring_not_logging_jobs: [node, node-instance]
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alert behaves
+      ansible.builtin.assert:
+        that:
+          - "'NotLogging' not in (_unnamed.content | b64decode)"
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"
