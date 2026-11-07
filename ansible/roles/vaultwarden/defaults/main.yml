@@ -12,6 +12,7 @@ vaultwarden_compose_dir: /opt/vaultwarden
 
 # Pin to a confirmed-current stable tag before apply (registry tag must exist).
 vaultwarden_image: "vaultwarden/server:1.37.1"
+vaultwarden_logging_driver: journald  # so the host's log shipper sees it
 
 # Host port -> the container's HTTP (:80). Caddy reverse-proxies to this and also
 # carries the websocket upgrade for live sync (modern Vaultwarden needs no separate

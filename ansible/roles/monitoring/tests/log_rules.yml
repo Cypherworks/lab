@@ -1,0 +1,150 @@
+---
+# Runs the compose's vmalert-logs as rendered, with real VictoriaLogs and
+# vmsingle, and feeds VictoriaLogs known lines. Checks each recording rule
+# counts its lines by host into vmsingle, and that vmalert-logs is left out of
+# the compose with no rules. Needs Docker, and internet for the images.
+# From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/log_rules.yml
+- name: Verify the log recording rules
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: monitoring-logrules-test
+    _vl: monitoring-logrules-victorialogs
+    _vm: monitoring-logrules-vmsingle
+    _vmalert: monitoring-logrules-vmalert
+    _dir: "{{ playbook_dir }}/.log_rules"
+    _rules:
+      monitoring_log_rules_interval: 15s
+      monitoring_log_rules:
+        - record: test_ssh_failures
+          expr: '_SYSTEMD_UNIT:ssh.service "Failed password" | stats by (host) count() lines'
+        - record: test_lines
+          expr: '* | stats by (host) count() lines'
+    _ingest: |
+      import datetime, json, sys, urllib.request
+      now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+      lines = [("a", "ssh.service", "Failed password for root from 192.0.2.7 port 4 ssh2")] * 3
+      lines += [("b", "ssh.service", "Failed password for admin from 192.0.2.8 port 5 ssh2")] * 2
+      lines += [("a", "ssh.service", "Accepted publickey for ansible from 192.0.2.9 port 6 ssh2")]
+      lines += [("c", "cron.service", "Failed password is not a sshd line")]
+      body = "\n".join(json.dumps({"_time": now, "host": h, "_SYSTEMD_UNIT": u, "_msg": m}) for h, u, m in lines)
+      url = "http://victorialogs:9428/insert/jsonline?_stream_fields=host,_SYSTEMD_UNIT"
+      headers = {"Content-Type": "application/stream+json"}  # a form type would be parsed as a form
+      urllib.request.urlopen(urllib.request.Request(url, data=body.encode(), method="POST", headers=headers), timeout=10)
+    _recorded: |
+      import json, time, urllib.parse, urllib.request
+      url = "http://vmsingle:8428/api/v1/export?" + urllib.parse.urlencode({"match[]": '{__name__=~"test_.*"}'})
+      seen = {}
+      for _ in range(60):
+          seen = {}
+          for line in urllib.request.urlopen(url, timeout=10).read().decode().splitlines():
+              s = json.loads(line)
+              key = s["metric"]["__name__"] + "|" + s["metric"].get("host", "")
+              seen[key] = max(seen.get(key, 0), max(s["values"]))
+          if seen.get("test_ssh_failures|b") and seen.get("test_lines|c"):
+              break
+          time.sleep(3)
+      rules = json.load(urllib.request.urlopen("http://vmalert-logs:8880/api/v1/rules", timeout=10))
+      states = [(r["name"], r.get("lastError", ""), r.get("lastSamples")) for g in rules["data"]["groups"] for r in g["rules"]]
+      logged = urllib.request.urlopen("http://victorialogs:9428/select/logsql/query?" + urllib.parse.urlencode(
+          {"query": "_time:1h | stats count() n"}), timeout=10).read().decode().strip()
+      print(json.dumps({"seen": seen, "rules": states, "logged": logged}))
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ _vl }} {{ _vm }} {{ _vmalert }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Render the compose with and without log rules
+      ansible.builtin.set_fact:
+        _with: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_rules) | from_yaml }}"
+        _without: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's log rules
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../templates/log-rules.yml.j2', template_vars=_rules) }}"
+        dest: "{{ _dir }}/log-rules.yml"
+        mode: "0644"
+
+    - name: Run the stack and count
+      block:
+        - name: Make the test network
+          ansible.builtin.command: docker network create {{ _net }}
+          changed_when: true
+
+        - name: Start VictoriaLogs and vmsingle as the compose names them
+          ansible.builtin.command: >-
+            docker run -d --name {{ item.name }} --network {{ _net }} --network-alias {{ item.alias }} {{ item.image }}
+          changed_when: true
+          loop:
+            - { name: "{{ _vl }}", alias: victorialogs, image: "{{ monitoring_victorialogs_image }}" }
+            - { name: "{{ _vm }}", alias: vmsingle, image: "{{ monitoring_vmsingle_image }}" }
+
+        - name: Start vmalert-logs with the compose's image, rules file and command
+          vars:
+            _service: "{{ _with.services['vmalert-logs'] }}"
+            _target: "{{ _service.volumes | select('search', 'log-rules.yml') | first | split(':') }}"
+          ansible.builtin.command:
+            argv: "{{ ['docker', 'run', '-d', '--name', _vmalert, '--network', _net,
+                       '--network-alias', 'vmalert-logs',
+                       '-v', _dir ~ '/log-rules.yml:' ~ _target[1] ~ ':ro', _service.image] + _service.command }}"
+          changed_when: true
+
+        - name: Wait for VictoriaLogs to take lines
+          ansible.builtin.command:
+            argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _ingest }}"]
+          register: _ingested
+          until: _ingested.rc == 0
+          retries: 20
+          delay: 2
+          changed_when: true
+
+        - name: Read what the rules recorded
+          ansible.builtin.command:
+            argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _recorded }}"]
+          register: _recorded_out
+          changed_when: false
+
+        - name: Keep vmalert-logs' log for a failure
+          ansible.builtin.command: docker logs --tail 20 {{ _vmalert }}
+          register: _vmalert_log
+          changed_when: false
+      always:
+        - name: Remove the containers and network
+          ansible.builtin.shell: >-
+            docker rm -f {{ _vl }} {{ _vm }} {{ _vmalert }} 2>/dev/null;
+            docker network rm {{ _net }} 2>/dev/null; true
+          changed_when: true
+
+        - name: Remove the working directory
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
+
+    - name: Assert each rule counted its lines by host, and no rules means no vmalert-logs
+      vars:
+        _seen: "{{ (_recorded_out.stdout | from_json).seen }}"
+      ansible.builtin.assert:
+        that:
+          - "'vmalert-logs' not in _without.services"
+          - _seen.get('test_ssh_failures|a') == 3
+          - _seen.get('test_ssh_failures|b') == 2
+          - "'test_ssh_failures|c' not in _seen"
+          - _seen.get('test_lines|a') == 4
+          - _seen.get('test_lines|c') == 1
+        fail_msg: "{{ _recorded_out.stdout }} {{ _vmalert_log.stdout_lines | default([]) }} {{ _vmalert_log.stderr_lines | default([]) }}"

@@ -42,6 +42,7 @@ replica that only backs up when it is the leader.
 | `s3_backup_aws_access_key_id` | `""` | Scoped uploader access key (from SOPS). |
 | `s3_backup_aws_secret_access_key` | `""` | Scoped uploader secret key (from SOPS). |
 | `s3_backup_aws_region` | `""` | Bucket region. |
+| `s3_backup_metrics_dir` | `""` | node_exporter's textfile directory. After each upload the script writes `s3-backup-<name>.prom` there holding `backup_last_success_timestamp_seconds{backup="<name>"}`, so a dashboard can show hours since the last good backup. A run with nothing to upload, or a failed upload, leaves it alone. Empty writes none. |
 
 ## Example
 

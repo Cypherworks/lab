@@ -6,6 +6,8 @@ services:
     image: {{ vaultwarden_image }}
     restart: unless-stopped
     env_file: ./vaultwarden.env
+    logging:
+      driver: {{ vaultwarden_logging_driver }}
     volumes:
       - vaultwardendata:/data
     ports:

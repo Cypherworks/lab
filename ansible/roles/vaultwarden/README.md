@@ -22,6 +22,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `vaultwarden_signups_allowed` | `false` | Whether public signups are open. Off by default. |
 | `vaultwarden_signups_domains_whitelist` | `""` | Comma-separated email domains signups are restricted to (rendered as `SIGNUPS_DOMAINS_WHITELIST`). Empty means no restriction. |
 | `vaultwarden_admin_token` | `""` | Admin panel token, an argon2 PHC string from SOPS. Generate with `docker run --rm -it vaultwarden/server /vaultwarden hash`. Empty disables the admin panel entirely. |
+| `vaultwarden_logging_driver` | `journald` | The container's Docker logging driver. journald puts Vaultwarden's log, failed sign-ins included (`Username or password is incorrect. Try again. IP: … Username: …`), where the host's log shipper reads it. |
 
 ## Dependencies
 

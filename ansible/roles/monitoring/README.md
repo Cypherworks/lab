@@ -69,6 +69,9 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_incus_instances` | `[]` | Instance names that should be running. `InstanceNotRunning` fires when Incus reports nothing for one for a minute, as it drops every series of a stopped instance. Empty leaves the rule out. |
 | `monitoring_pushed_metrics` | `[]` | Sources that push to vmsingle instead of being scraped, as `{name, metric}` with `metric` the source's push timestamp gauge. `PushedMetricsStale` fires for one whose last push is older than `monitoring_pushed_metrics_stale_seconds`, or that has never pushed, for two minutes. Empty leaves the rule out. |
 | `monitoring_pushed_metrics_stale_seconds` | `300` | How old a pushed source's last push may be before `PushedMetricsStale` counts it stopped. |
+| `monitoring_vmalert_logs_image` | `victoriametrics/vmalert:v1.154.0` | vmalert-logs' image. LogsQL rules need v1.106.0 or later; the main vmalert stays on `monitoring_vmalert_image`. |
+| `monitoring_log_rules` | `[]` | Recording rules over VictoriaLogs, as `{record, expr}` with `expr` LogsQL ending in `stats`. vmalert-logs, a second vmalert since one takes a single datasource, evaluates them and writes the counts to vmsingle; `stats by (field)` fields become labels. Empty leaves vmalert-logs out of the compose. |
+| `monitoring_log_rules_interval` | `1m` | How often vmalert-logs evaluates; vmalert appends `_time:<interval>`, so each sample counts that much of the log, and `sum_over_time` adds them up. |
 | `monitoring_incus_metrics_cert` | `""` | Metrics scraper client cert (PEM); the TF-generated keypair, mounted as a docker secret. |
 | `monitoring_incus_metrics_key` | `""` | Metrics scraper client key (PEM); mounted as a docker secret. |
 | `monitoring_headscale_target` | `""` | Headscale control-plane `/metrics` over the overlay (`tailnet-ip:9090`). |

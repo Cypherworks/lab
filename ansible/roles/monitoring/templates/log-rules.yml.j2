@@ -1,0 +1,11 @@
+{# Managed by the monitoring role. vmalert-logs' recording rules: LogsQL stats
+   over VictoriaLogs, each evaluation counting the last interval's lines. #}
+groups:
+  - name: logs
+    type: vlogs
+    interval: {{ monitoring_log_rules_interval }}
+    rules:
+{% for rule in monitoring_log_rules %}
+      - record: {{ rule.record }}
+        expr: {{ rule.expr | to_json }}
+{% endfor %}

@@ -19,6 +19,14 @@ trap 'rm -f "${BACKUP_FILE}"' EXIT
 # A dump command may legitimately produce nothing (e.g. a non-leader node opting out).
 if [ -s "${BACKUP_FILE}" ]; then
     aws s3 cp "${BACKUP_FILE}" "s3://{{ s3_backup_bucket }}/{{ s3_backup_name }}-${ts}.{{ s3_backup_extension }}"
+{% if s3_backup_metrics_dir %}
+    # The upload succeeded (set -e), so this is the last good backup.
+    prom="{{ s3_backup_metrics_dir }}/s3-backup-{{ s3_backup_name }}.prom"
+    printf '# TYPE backup_last_success_timestamp_seconds gauge\nbackup_last_success_timestamp_seconds{backup="%s"} %s\n' \
+        "{{ s3_backup_name }}" "$(date +%s)" > "${prom}.tmp"
+    chmod 0644 "${prom}.tmp"
+    mv "${prom}.tmp" "${prom}"
+{% endif %}
 else
     echo "No backup artifact produced; nothing to upload."
 fi

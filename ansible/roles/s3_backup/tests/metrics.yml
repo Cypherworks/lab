@@ -1,0 +1,233 @@
+---
+# Runs the role's backups under systemd in a privileged Debian 13 container,
+# uploading to moto standing in for S3. Checks that an upload writes its
+# last-success timestamp for node_exporter, that a run with nothing to upload
+# or a failed upload leaves it alone, and that no metrics directory writes
+# none. Needs Docker, community.docker, and internet for the images, apt and
+# pip. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/s3_backup/tests/metrics.yml
+- name: Boot a systemd host and a fake S3
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: s3-backup-metrics-test
+    _s3: s3-backup-metrics-s3
+    _target: s3-backup-metrics-target
+    _dir: "{{ playbook_dir }}/.metrics"
+    _common:
+      s3_backup_enabled: true
+      s3_backup_bucket: lab-backups
+      s3_backup_aws_access_key_id: test-only
+      s3_backup_aws_secret_access_key: test-only
+      s3_backup_aws_region: us-east-1
+      s3_backup_env: { AWS_ENDPOINT_URL: "http://s3:5000" }
+  tasks:
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} {{ _s3 }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start moto as S3
+      ansible.builtin.command: >-
+        docker run -d --name {{ _s3 }} --network {{ _net }} --network-alias s3 python:3.13-alpine
+        sh -c "pip install -q 'moto[server]' && exec moto_server -H 0.0.0.0 -p 5000"
+      changed_when: true
+
+    - name: Boot systemd in Debian 13, as the instances run
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }}
+        --entrypoint sh debian:13 -c
+        'apt-get update -qq && apt-get install -y -qq python3 sudo systemd systemd-sysv ca-certificates
+        && exec /usr/lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Make the settings directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Write each backup's settings
+      ansible.builtin.copy:
+        content: "{{ _common | combine(item.settings) | to_json }}"
+        dest: "{{ _dir }}/{{ item.name }}.json"
+        mode: "0600"
+      loop:
+        - name: kept
+          settings:
+            s3_backup_name: kept
+            s3_backup_command: echo dump > "$BACKUP_FILE"
+            s3_backup_metrics_dir: /var/lib/prometheus/node-exporter
+        - name: skipped
+          settings:
+            s3_backup_name: skipped
+            s3_backup_command: "true"
+            s3_backup_metrics_dir: /var/lib/prometheus/node-exporter
+        - name: unwatched
+          settings:
+            s3_backup_name: unwatched
+            s3_backup_command: echo dump > "$BACKUP_FILE"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: metrics_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Back up, fail, and clean up
+  hosts: metrics_target
+  gather_facts: false
+  vars:
+    _dir: "{{ playbook_dir }}/.metrics"
+    _textfiles: /var/lib/prometheus/node-exporter
+    _converge: >-
+      ansible-playbook -i {{ inventory_hostname }}, -c community.docker.docker
+      {{ playbook_dir }}/metrics_converge.yml -e settings={{ _dir }}
+    _s3: >-
+      env AWS_ACCESS_KEY_ID=test-only AWS_SECRET_ACCESS_KEY=test-only AWS_DEFAULT_REGION=us-east-1
+      AWS_ENDPOINT_URL=http://s3:5000 aws
+  tasks:
+    - name: Back up, fail, and clean up
+      block:
+        - name: Make node_exporter's textfile directory, as its package does
+          ansible.builtin.file:
+            path: "{{ _textfiles }}"
+            state: directory
+            mode: "0755"
+
+        - name: Converge each backup
+          ansible.builtin.command: "{{ _converge }}/{{ item }}.json"
+          delegate_to: localhost
+          connection: local
+          vars: &control_host
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          environment: &roles
+            ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../.."
+          changed_when: true
+          loop: [kept, skipped, unwatched]
+
+        - name: Make the bucket
+          ansible.builtin.command: "{{ _s3 }} s3 mb s3://lab-backups"
+          register: _bucket
+          until: _bucket.rc == 0
+          retries: 30
+          delay: 2
+          changed_when: true
+
+        - name: Run each backup
+          ansible.builtin.command: systemctl start s3-backup-{{ item }}.service
+          changed_when: true
+          loop: [kept, skipped, unwatched]
+
+        - name: List what reached the bucket
+          ansible.builtin.command: "{{ _s3 }} s3 ls s3://lab-backups/"
+          register: _uploaded
+          changed_when: false
+
+        - name: List the textfiles
+          ansible.builtin.find:
+            paths: "{{ _textfiles }}"
+          register: _written
+
+        - name: Read the kept backup's textfile
+          ansible.builtin.slurp:
+            src: "{{ _textfiles }}/s3-backup-kept.prom"
+          register: _kept
+
+        - name: Read the kept textfile's mode
+          ansible.builtin.stat:
+            path: "{{ _textfiles }}/s3-backup-kept.prom"
+          register: _kept_stat
+
+        - name: Read the clock
+          ansible.builtin.command: date +%s
+          register: _now
+          changed_when: false
+
+        - name: Stop S3
+          ansible.builtin.command: docker stop s3-backup-metrics-s3
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+
+        - name: Wait a second, so a fresh timestamp would differ
+          ansible.builtin.wait_for:
+            timeout: 2
+
+        - name: Back up with nowhere to upload
+          ansible.builtin.command: systemctl start s3-backup-kept.service
+          register: _failed
+          changed_when: true
+          failed_when: false
+
+        - name: Read the kept textfile after the failure
+          ansible.builtin.slurp:
+            src: "{{ _textfiles }}/s3-backup-kept.prom"
+          register: _kept_after
+
+        - name: Assert an upload records its success, and nothing else does
+          vars:
+            _lines: "{{ (_kept.content | b64decode).splitlines() }}"
+            _stamp: "{{ _lines | select('match', 'backup_last_success_timestamp_seconds') | first | split(' ') | last | int }}"
+          ansible.builtin.assert:
+            that:
+              - _uploaded.stdout is search('kept-')
+              - _uploaded.stdout is search('unwatched-')
+              - _uploaded.stdout is not search('skipped-')
+              - _written.files | map(attribute='path') | map('basename') | list == ['s3-backup-kept.prom']
+              - "'# TYPE backup_last_success_timestamp_seconds gauge' in _lines"
+              - _lines | select('match', 'backup_last_success_timestamp_seconds\\{backup=\"kept\"\\} [0-9]+$') | list | length == 1
+              - (_now.stdout | int) - (_stamp | int) < 120
+              - _kept_stat.stat.mode == '0644'
+              - _failed.rc != 0
+              - _kept_after.content == _kept.content
+            fail_msg: >-
+              {{ _uploaded.stdout_lines }} {{ _written.files | map(attribute='path') | list }}
+              {{ _lines }} {{ _failed.rc }} {{ _kept_after.content | b64decode }}
+      always:
+        - name: Remove the containers
+          ansible.builtin.command: docker rm -f {{ inventory_hostname }} s3-backup-metrics-s3
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm s3-backup-metrics-test
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the settings
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
