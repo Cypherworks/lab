@@ -19,7 +19,7 @@ All modules require `terraform >= 1.10` and provider `filipowm/unifi` version `1
 
 filipowm/unifi 1.0.0 was chosen over the ubiquiti-community forks because those forks could not model the lab: 0.41.x cannot set `vlan_enabled`, so it cannot create VLANs, and 0.41.25 / 0.52.x could not round-trip port forwards, tagged-VLAN port config, or multicast DNS. filipowm 1.0.0 handles all of these against controller 8.6.9.
 
-Operational constraint: filipowm 1.0.0 creates resources but cannot update them in place. Editing an existing resource returns "not found". Changes are therefore applied by rebuild (destroy and recreate the affected resource), so plan for a brief disruption when changing networks, switch ports, or firewall rules.
+Operational constraint: filipowm 1.0.0 applies an in-place edit that sets or changes a value. That was tested against controller 8.6.9 for networks, firewall groups and rules, port profiles, clients and user groups; the switch device, WLANs and port forwards use the same update code but weren't tested. It can't clear an attribute: go-unifi leaves empty strings and lists out of the update, the controller keeps the stored value, and its empty reply surfaces as "not found". Clear an attribute by recreating the resource (`terraform apply -replace=<address>`), and plan for a brief disruption when that resource is a network, port profile, or firewall rule.
 
 ## Modules
 
