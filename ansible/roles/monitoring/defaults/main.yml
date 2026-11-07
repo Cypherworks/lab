@@ -103,6 +103,9 @@ monitoring_not_logging_metric: ""
 monitoring_not_logging_jobs: []    # scrape jobs whose instances must log
 monitoring_not_logging_window: 30m
 
+# The site's own vmalert alerting rules, rendered after the role's.
+monitoring_alert_rules: []
+
 # Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
 monitoring_headscale_target: ""
 

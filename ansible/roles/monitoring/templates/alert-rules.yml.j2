@@ -138,3 +138,7 @@ groups:
           summary: "No logs from {{ '{{ $labels.instance }}' }}"
           description: "Up and scraped, but no log line from it in {{ monitoring_not_logging_window }}."
 {% endif %}
+{% for rule in monitoring_alert_rules %}
+
+{{ [rule] | to_nice_yaml(indent=2, width=1000) | trim | indent(6, first=True) }}
+{% endfor %}

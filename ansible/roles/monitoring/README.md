@@ -99,6 +99,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_not_logging_metric` | `""` | A `monitoring_log_rules` record counted `by (host)`. `NotLogging` fires for a system in `monitoring_not_logging_jobs` that is up but has no sample in `monitoring_not_logging_window`, for five minutes; a down system is left to `TargetDown`, and an absent record fires for every system. Empty leaves the rule out. |
 | `monitoring_not_logging_jobs` | `[]` | Scrape jobs whose instances must log. |
 | `monitoring_not_logging_window` | `30m` | How long a system may go without a log line before `NotLogging` counts it silent. |
+| `monitoring_alert_rules` | `[]` | The site's own vmalert alerting rules, each `{alert, expr, for, labels, annotations}` as vmalert reads them, rendered after the role's rules in the same group. Ansible templates the strings, so escape any alert templating (`description: "At {{ '{{ $value }}' }}"`). `tests/site_alert_rules.yml` runs one through promtool and vmalert. |
 | `monitoring_incus_metrics_cert` | `""` | Metrics scraper client cert (PEM); the TF-generated keypair, mounted as a docker secret. |
 | `monitoring_incus_metrics_key` | `""` | Metrics scraper client key (PEM); mounted as a docker secret. |
 | `monitoring_headscale_target` | `""` | Headscale control-plane `/metrics` over the overlay (`tailnet-ip:9090`). |
