@@ -1,0 +1,15 @@
+---
+# Runs the role on metrics.yml's target with one backup's settings.
+- name: Converge one backup
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Read the backup's settings
+      ansible.builtin.include_vars:
+        file: "{{ settings }}"
+
+    - name: Hold the backup
+      ansible.builtin.include_role:
+        name: s3_backup

@@ -25,3 +25,12 @@ trap 'rm -f "${snap}"' EXIT
 
 BAO_TOKEN="${token}" bao operator raft snapshot save "${snap}"
 aws s3 cp "${snap}" "s3://{{ openbao_snapshot_bucket }}/$(basename "${snap}")"
+{% if openbao_snapshot_metrics_dir %}
+
+# The upload succeeded (set -e), so this is the last good snapshot.
+prom="{{ openbao_snapshot_metrics_dir }}/openbao-snapshot.prom"
+printf '# TYPE backup_last_success_timestamp_seconds gauge\nbackup_last_success_timestamp_seconds{backup="openbao"} %s\n' \
+  "$(date +%s)" > "${prom}.tmp"
+chmod 0644 "${prom}.tmp"
+mv "${prom}.tmp" "${prom}"
+{% endif %}

@@ -1,0 +1,32 @@
+---
+# Renders the compose and checks every Authentik service logs to journald by
+# default, so the host's log shipper sees failed sign-ins, and to whatever
+# driver is set otherwise. From ansible/:
+#
+#   ansible-playbook -i localhost, \
+#     roles/authentik_app/tests/compose_logging.yml
+- name: Verify the Authentik compose's logging driver
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    ldaps_cert: ""
+    ldaps_key: ""
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Render the compose by default and with another driver
+      ansible.builtin.set_fact:
+        _default: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+        _other: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars={'authentik_logging_driver': 'json-file'}) | from_yaml }}"
+
+    - name: Assert each service's driver follows the variable, journald by default
+      ansible.builtin.assert:
+        that:
+          - "_default.services | dict2items | map(attribute='value.logging', default={}) | list | unique == [{'driver': 'journald'}]"
+          - "_other.services | dict2items | map(attribute='value.logging', default={}) | list | unique == [{'driver': 'json-file'}]"
+          - _default.services | length == 3
+        fail_msg: "{{ _default.services | dict2items | map(attribute='key') | list }}"

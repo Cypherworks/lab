@@ -74,6 +74,7 @@
   loop:
     - { src: scrape.yml.j2, dest: scrape.yml }
     - { src: alert-rules.yml.j2, dest: alert-rules.yml }
+    - { src: log-rules.yml.j2, dest: log-rules.yml }
     - { src: alertmanager.yml.j2, dest: alertmanager.yml }
     - { src: alert-text.tmpl.j2, dest: alertmanager-templates/alert-text.tmpl }
     - { src: blackbox.yml.j2, dest: blackbox.yml }

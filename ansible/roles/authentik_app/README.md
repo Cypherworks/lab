@@ -73,6 +73,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `technitium_oidc_client_secret` | `""` | Technitium OIDC client secret. |
 | `technitium_oidc_redirect_uri` | `""` | Technitium's `/sso/callback` URL. |
 | `vcenter_oidc_redirect_uris` | `[]` | vCenter OIDC callbacks (site data). |
+| `authentik_logging_driver` | `journald` | Docker logging driver for the server, worker and LDAP outpost. journald puts Authentik's event log, failed sign-ins included (a `"Created Event"` line with `"action": "login_failed"`), where the host's log shipper reads it. |
 
 ## Dependencies
 

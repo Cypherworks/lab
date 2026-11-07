@@ -1,0 +1,265 @@
+---
+# Takes real raft snapshots through the role's snapshot tasks, on systemd in a
+# privileged Debian 13 container, with moto standing in for AWS KMS (so the
+# awskms seal unseals) and for S3. Checks that an upload writes the snapshot's
+# last-success timestamp for node_exporter, that a failed upload leaves it
+# alone, and that the script writes none without a metrics directory. Needs
+# Docker, community.docker, and internet for images, debs and pip. From
+# ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/openbao/tests/snapshot_metrics.yml
+- name: Boot a fake AWS and a systemd host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: openbao-snapshot-test
+    _aws: openbao-snapshot-aws
+    _target: openbao-snapshot-target
+    _make_key: >-
+      import boto3;
+      print(boto3.client('kms', endpoint_url='http://127.0.0.1:5000',
+      region_name='eu-west-2', aws_access_key_id='fake',
+      aws_secret_access_key='fake').create_key()['KeyMetadata']['KeyId'])
+  tasks:
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} {{ _aws }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start moto as KMS and S3
+      ansible.builtin.command: >-
+        docker run -d --name {{ _aws }} --network {{ _net }} python:3.13-alpine
+        sh -c "pip install -q 'moto[server]' && exec moto_server -H 0.0.0.0 -p 5000"
+      changed_when: true
+
+    - name: Create the seal key
+      ansible.builtin.command: docker exec {{ _aws }} python3 -c "{{ _make_key }}"
+      register: _key
+      until: _key.rc == 0
+      retries: 40
+      delay: 3
+      changed_when: true
+
+    - name: Boot systemd on Debian 13, as the service containers run
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+        python3 python3-apt ca-certificates jq && exec /lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Read the architecture
+      ansible.builtin.command: docker exec {{ _target }} dpkg --print-architecture
+      register: _arch
+      changed_when: false
+
+    - name: Target the container
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: snapshot_target
+        ansible_connection: community.docker.docker
+        ansible_become: false
+        ansible_python_interpreter: /usr/bin/python3
+        openbao_arch: "{{ _arch.stdout }}"
+        openbao_kms_key_id: "{{ _key.stdout }}"
+        openbao_kms_endpoint: "http://{{ _aws }}:5000"
+
+- name: Snapshot, fail, and check the timestamp
+  hosts: snapshot_target
+  gather_facts: false
+  vars:
+    openbao_api_addr: https://127.0.0.1:8200
+    openbao_cluster_addr: https://127.0.0.1:8201
+    openbao_node_id: snapshot-test
+    openbao_aws_region: eu-west-2
+    openbao_aws_access_key_id: fake-access
+    openbao_aws_secret_access_key: fake-secret
+    openbao_snapshot_enabled: true
+    openbao_snapshot_bucket: lab-snapshots
+    openbao_snapshot_aws_access_key_id: fake-access
+    openbao_snapshot_aws_secret_access_key: fake-secret
+    openbao_snapshot_aws_region: eu-west-2
+    openbao_snapshot_metrics_dir: /var/lib/prometheus/node-exporter
+    _prom: /var/lib/prometheus/node-exporter/openbao-snapshot.prom
+    _deb_sha256:
+      amd64: 42bd0890a8e2060e5f29410ea828ee047aa2de21028045731a0516d5a532928c
+      arm64: f9f40f906aaf673f536e59e45be3f485408b36cdb75697e89bb5201b8545dc46
+    _plugin_binary:
+      amd64: openbao-plugin-kms-aws_linux_amd64_v1
+      arm64: openbao-plugin-kms-aws_linux_arm64_v8
+    _plugin_sha256:
+      amd64: f00ebed7fa1cbec080e0fed908e167125bc14b266df7e4af845f82aa4650ed4e
+      arm64: 8f173d8590d3df52c3501dd3af79b5f90fbc8ae4386b04abb706ca8b82a55b23
+    _env:
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_SKIP_VERIFY: "true"
+    _s3: >-
+      env AWS_ACCESS_KEY_ID=fake-access AWS_SECRET_ACCESS_KEY=fake-secret AWS_DEFAULT_REGION=eu-west-2
+      AWS_ENDPOINT_URL=http://openbao-snapshot-aws:5000 aws
+  tasks:
+    - name: Snapshot, fail, and clean up
+      block:
+        - name: Install OpenBao through the role, with the seal built in
+          ansible.builtin.include_role:
+            name: openbao
+            tasks_from: install
+          vars:
+            openbao_deb_sha256: "{{ _deb_sha256[openbao_arch] }}"
+            openbao_kms_plugin_binary: "{{ _plugin_binary[openbao_arch] }}"
+            openbao_kms_plugin_sha256: "{{ _plugin_sha256[openbao_arch] }}"
+
+        - name: Initialise it
+          environment: "{{ _env }}"
+          ansible.builtin.command: bao operator init -recovery-shares=1 -recovery-threshold=1 -format=json
+          register: _init
+          until: _init.rc == 0
+          retries: 12
+          delay: 5
+          changed_when: true
+          no_log: true
+
+        - name: Wait for KMS to unseal it
+          environment: "{{ _env }}"
+          ansible.builtin.command: bao status -format=json
+          register: _unsealed
+          until: _unsealed.rc == 0 and not (_unsealed.stdout | from_json).sealed
+          retries: 12
+          delay: 5
+          changed_when: false
+
+        - name: Make node_exporter's textfile directory, as its package does
+          ansible.builtin.file:
+            path: /var/lib/prometheus/node-exporter
+            state: directory
+            mode: "0755"
+
+        - name: Hold the snapshots through the role
+          ansible.builtin.include_role:
+            name: openbao
+            tasks_from: snapshots
+          vars:
+            openbao_mgmt_token: "{{ (_init.stdout | from_json).root_token }}"
+
+        - name: Make the snapshot unit's drop-in directory
+          ansible.builtin.file:
+            path: /etc/systemd/system/openbao-snapshot.service.d
+            state: directory
+            mode: "0755"
+
+        - name: Point the snapshot's AWS CLI at moto
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/openbao-snapshot.service.d/s3.conf
+            mode: "0644"
+            content: |
+              [Service]
+              Environment=AWS_ENDPOINT_URL=http://openbao-snapshot-aws:5000
+
+        - name: Reload systemd for the drop-in
+          ansible.builtin.systemd_service:
+            daemon_reload: true
+
+        - name: Make the bucket
+          ansible.builtin.command: "{{ _s3 }} s3 mb s3://lab-snapshots"
+          changed_when: true
+
+        - name: Snapshot once
+          ansible.builtin.systemd_service:
+            name: openbao-snapshot.service
+            state: started
+
+        - name: List what reached the bucket
+          ansible.builtin.command: "{{ _s3 }} s3 ls s3://lab-snapshots/"
+          register: _uploaded
+          changed_when: false
+
+        - name: Read the textfile
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _textfile
+
+        - name: Read the textfile's mode
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _textfile_stat
+
+        - name: Read the clock
+          ansible.builtin.command: date +%s
+          register: _now
+          changed_when: false
+
+        - name: Stop moto
+          ansible.builtin.command: docker stop openbao-snapshot-aws
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          changed_when: true
+
+        - name: Wait a second, so a fresh timestamp would differ
+          ansible.builtin.wait_for:
+            timeout: 2
+
+        - name: Snapshot with nowhere to upload
+          ansible.builtin.systemd_service:
+            name: openbao-snapshot.service
+            state: started
+          register: _failed
+          failed_when: false
+
+        - name: Read the textfile after the failure
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _textfile_after
+
+        - name: Assert an upload records its success and a failure doesn't
+          vars:
+            _lines: "{{ (_textfile.content | b64decode).splitlines() }}"
+            _stamp: "{{ _lines | select('match', 'backup_last_success_timestamp_seconds') | first | split(' ') | last | int }}"
+            _unwatched: "{{ lookup('ansible.builtin.template', '../templates/openbao-snapshot.sh.j2', template_vars={'openbao_snapshot_metrics_dir': '', 'openbao_snapshot_dir': '/var/lib/openbao-snapshots'}) }}"
+          ansible.builtin.assert:
+            that:
+              - _uploaded.stdout is search('openbao-.*\\.snapshot')
+              - "'# TYPE backup_last_success_timestamp_seconds gauge' in _lines"
+              - _lines | select('match', 'backup_last_success_timestamp_seconds\\{backup=\"openbao\"\\} [0-9]+$') | list | length == 1
+              - (_now.stdout | int) - (_stamp | int) < 120
+              - _textfile_stat.stat.mode == '0644'
+              - _failed.msg is search('Unable to start service openbao-snapshot.service')
+              - _textfile_after.content == _textfile.content
+              - "'backup_last_success' not in _unwatched"
+            fail_msg: "{{ _uploaded.stdout_lines }} {{ _lines }} {{ _failed.msg }}"
+
+      always:
+        - name: Remove the target and moto
+          ansible.builtin.command: docker rm -f openbao-snapshot-target openbao-snapshot-aws
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the network
+          ansible.builtin.command: docker network rm openbao-snapshot-test
+          delegate_to: localhost
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          changed_when: true
+          failed_when: false

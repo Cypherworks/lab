@@ -1,0 +1,30 @@
+---
+# Renders the compose and checks Vaultwarden logs to journald by default, so
+# the host's log shipper sees its failed sign-ins, and to whatever driver is
+# set otherwise. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/vaultwarden/tests/compose_logging.yml
+- name: Verify the Vaultwarden compose's logging driver
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Render the compose by default and with another driver
+      ansible.builtin.set_fact:
+        _default: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+        _other: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_json_file) | from_yaml }}"
+      vars:
+        _json_file: { vaultwarden_logging_driver: json-file }
+
+    - name: Assert the driver follows the variable, journald by default
+      ansible.builtin.assert:
+        that:
+          - "(_default.services.vaultwarden.logging | default({})) == {'driver': 'journald'}"
+          - "(_other.services.vaultwarden.logging | default({})) == {'driver': 'json-file'}"
+        fail_msg: "{{ _default.services.vaultwarden | to_json }}"

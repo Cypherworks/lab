@@ -12,6 +12,8 @@ services:
     restart: unless-stopped
     command: server
     env_file: ./.env
+    logging: &logging
+      driver: {{ authentik_logging_driver }}
     ports:
       - "9000:9000"
     volumes:
@@ -23,6 +25,7 @@ services:
     restart: unless-stopped
     command: worker
     env_file: ./.env
+    logging: *logging
 {% if ldaps_cert and ldaps_key %}
     # LDAPS cert/key for the blueprint keypair, via !Env (PEMs can't use .env).
     environment:
@@ -46,6 +49,7 @@ services:
   ldap-outpost:
     image: {{ authentik_ldap_outpost_image }}
     restart: unless-stopped
+    logging: *logging
     environment:
       AUTHENTIK_HOST: "{{ authentik_ldap_outpost_host }}"
       AUTHENTIK_INSECURE: "false"

@@ -14,6 +14,7 @@ monitoring_config_dir: "{{ monitoring_compose_dir }}/config"
 monitoring_vmsingle_image: "victoriametrics/victoria-metrics:v1.102.1"
 monitoring_vmalert_image: "victoriametrics/vmalert:v1.102.1"
 monitoring_vmauth_image: "victoriametrics/vmauth:v1.102.1"
+monitoring_vmalert_logs_image: "victoriametrics/vmalert:v1.154.0"  # LogsQL rules need >= v1.106.0
 monitoring_alertmanager_image: "prom/alertmanager:v0.34.2"
 monitoring_grafana_image: "grafana/grafana:13.3.0"
 monitoring_redis_exporter_image: "oliver006/redis_exporter:v1.62.0"
@@ -86,6 +87,10 @@ monitoring_incus_metrics_key: ""
 # Pushing sources, {name, metric: its push timestamp}, for PushedMetricsStale.
 monitoring_pushed_metrics: []
 monitoring_pushed_metrics_stale_seconds: 300
+
+# Log counts as metrics, {record, expr: LogsQL ending in stats}.
+monitoring_log_rules: []           # empty omits vmalert-logs
+monitoring_log_rules_interval: 1m  # each evaluation counts this much of the log
 
 # Headscale control-plane /metrics, reached over the overlay. "tailnet-ip:9090".
 monitoring_headscale_target: ""

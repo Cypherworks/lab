@@ -11,6 +11,7 @@ authentik_image: "ghcr.io/goauthentik/server:2025.6.4"
 # LDAP outpost image — MUST track the server version (outpost protocol is tied to
 # the core release). Pin the same tag as authentik_image in the deploy.
 authentik_ldap_outpost_image: "ghcr.io/goauthentik/ldap:2025.6.4"
+authentik_logging_driver: journald  # every service, so the host's log shipper sees it
 
 authentik_compose_dir: /opt/authentik
 authentik_server_port: 9000

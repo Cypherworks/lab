@@ -143,6 +143,7 @@ The CA is generated exactly once (guarded); regenerating it would invalidate eve
 | `openbao_snapshot_aws_access_key_id` | `""` | S3 uploader access key (scoped IAM user; from SOPS). |
 | `openbao_snapshot_aws_secret_access_key` | `""` | S3 uploader secret key (from SOPS). |
 | `openbao_snapshot_aws_region` | `""` | S3 uploader region. |
+| `openbao_snapshot_metrics_dir` | `""` | node_exporter's textfile directory. After each snapshot upload the script writes `openbao-snapshot.prom` there holding `backup_last_success_timestamp_seconds{backup="openbao"}`; a failed upload leaves it alone. Empty writes none. `tests/snapshot_metrics.yml` takes real raft snapshots to moto's S3. |
 
 ## Dependencies
 
