@@ -36,10 +36,13 @@ services:
 {% if monitoring_alertmanager_api_users %}
       - {{ monitoring_config_dir }}/vmsingle-alertmanager-password:/etc/vm/alertmanager-password:ro
 {% endif %}
-{% if monitoring_vmsingle_readers or monitoring_vmsingle_writers %}
+{% set _vmsingle_users = monitoring_vmsingle_readers + monitoring_vmsingle_writers %}
+{% set _victorialogs_users = monitoring_victorialogs_readers + monitoring_victorialogs_writers %}
+{% if _vmsingle_users or _victorialogs_users %}
 
-  # The only way in to vmsingle from outside the stack, on 8428, the port its
-  # clients know it by. Readers and writers sign in; admin paths go nowhere.
+  # The only way in to vmsingle and VictoriaLogs from outside the stack, on
+  # 8428 and 9428, the ports their clients know them by. Readers and writers
+  # sign in; admin paths go nowhere.
   vmauth:
     image: {{ monitoring_vmauth_image }}
     restart: unless-stopped
@@ -53,9 +56,15 @@ services:
       - {{ monitoring_config_dir }}/vmauth.yml:/etc/vmauth/auth.yml:ro
       - {{ monitoring_config_dir }}/vmsingle-admin-key:/etc/vmauth/admin-key:ro
     ports:
+{% if _vmsingle_users %}
       - "8428:8427"
+{% endif %}
+{% if _victorialogs_users %}
+      - "9428:8427"
+{% endif %}
     depends_on:
       - vmsingle
+      - victorialogs
 {% endif %}
 
   vmalert:
@@ -208,7 +217,8 @@ services:
 
   # Central log store. Vector agents on every host/container ship journald here via the
   # Elasticsearch bulk endpoint; read it in its own UI, not Grafana (anonymous Viewer).
-  # Port published so off-box agents on VLAN 20/30 can reach it.
+  # Its HTTP port is never published: off-box agents and readers sign in to vmauth
+  # on 9428. Syslog, when on, is published as it is: UDP syslog can't sign in.
   victorialogs:
     image: {{ monitoring_victorialogs_image }}
     restart: unless-stopped
@@ -223,11 +233,17 @@ services:
       - "--syslog.useLocalTimestamp.udp=true"
       - "--syslog.useRemoteIP.udp=true"
 {% endif %}
+      # Partitions, merges, flags and the rest refuse without the key. Its
+      # metrics stay open, as vmsingle scrapes them inside the stack.
+{% for flag in ['flagsAuthKey', 'forceFlushAuthKey', 'forceMergeAuthKey', 'logNewStreamsAuthKey',
+                'partitionManageAuthKey', 'pprofAuthKey'] %}
+      - "--{{ flag }}=file:///etc/victorialogs/admin-key"
+{% endfor %}
     volumes:
       - victorialogsdata:/victoria-logs-data
-    ports:
-      - "9428:9428"
+      - {{ monitoring_config_dir }}/victorialogs-admin-key:/etc/victorialogs/admin-key:ro
 {% if monitoring_victorialogs_syslog_port %}
+    ports:
       - "{{ monitoring_victorialogs_syslog_port }}:514/udp"
 {% endif %}
 

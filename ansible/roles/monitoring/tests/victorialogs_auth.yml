@@ -234,15 +234,17 @@
         && chmod 0644 {{ _dir }}/second/vmauth.yml
       changed_when: true
 
-    - name: Render the compose with log users, vmsingle users, both and neither
+    - name: Render the compose with log users, vmsingle users, both, neither, and syslog on
       vars:
         _logs_only: "{{ _first | combine({'monitoring_vmsingle_readers': []}) }}"
         _vm_only: "{{ _first | combine({'monitoring_victorialogs_readers': [], 'monitoring_victorialogs_writers': []}) }}"
+        _with_syslog: "{{ _first | combine({'monitoring_victorialogs_syslog_port': 5514}) }}"
       ansible.builtin.set_fact:
         _both: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_first) | from_yaml }}"
         _logs: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_logs_only) | from_yaml }}"
         _vm: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_vm_only) | from_yaml }}"
         _internal: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2') | from_yaml }}"
+        _syslog: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_with_syslog) | from_yaml }}"
 
     - name: Make the test network
       ansible.builtin.command: docker network create {{ _net }}
@@ -339,6 +341,7 @@
           - "_second_seen.codes == {'old': 401, 'reader_query': 200, 'retired_query': 401}"
           - _both.services.victorialogs.ports is not defined
           - _internal.services.victorialogs.ports is not defined
+          - _syslog.services.victorialogs.ports == ['5514:514/udp']
           - _key_flags | difference(_both.services.victorialogs.command) | length == 0
           - _key_flags | difference(_internal.services.victorialogs.command) | length == 0
           - "'--metricsAuthKey=file:///etc/victorialogs/admin-key' not in _both.services.victorialogs.command"

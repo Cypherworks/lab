@@ -170,7 +170,7 @@
           - _seen.get('test_lines|a') == 4
           - _seen.get('test_lines|c') == 1
           - _seen.get('test_fw_drops|') == 2
-          - "'514:514/udp' in _with.services.victorialogs.ports"
-          - _without.services.victorialogs.ports == ['9428:9428']
+          - _with.services.victorialogs.ports == ['514:514/udp']
+          - _without.services.victorialogs.ports is not defined
           - _without.services.victorialogs.command | select('search', 'syslog') | list == []
         fail_msg: "{{ _recorded_out.stdout }} {{ _vmalert_log.stdout_lines | default([]) }} {{ _vmalert_log.stderr_lines | default([]) }}"

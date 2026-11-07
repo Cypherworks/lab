@@ -54,7 +54,7 @@ vmsingle is never published. vmauth answers on 8428 in its place, and only when 
 
 ### VictoriaLogs access
 
-VictoriaLogs is never published either. The same vmauth answers on 9428 in its place, only when there are VictoriaLogs readers or writers. vmalert-logs reads it on the compose network directly, and vmsingle scrapes its metrics there.
+VictoriaLogs' HTTP port is never published either. The same vmauth answers on 9428 in its place, only when there are VictoriaLogs readers or writers. vmalert-logs reads it on the compose network directly, and vmsingle scrapes its metrics there. The syslog port, when `monitoring_victorialogs_syslog_port` is set, is published as it is: UDP syslog can't sign in, so anything that reaches it can write lines, under any `hostname`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
