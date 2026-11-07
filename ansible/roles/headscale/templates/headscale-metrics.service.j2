@@ -5,7 +5,8 @@ After=headscale.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -I /usr/local/sbin/headscale-metrics --url {{ headscale_metrics_push_url }} --label job=headscale --label instance={{ inventory_hostname }}
+ExecStart=/usr/bin/python3 -I /usr/local/sbin/headscale-metrics --url {{ headscale_metrics_push_url }} --label job=headscale --label instance={{ inventory_hostname }}{% if headscale_metrics_push_user %} --user {{ headscale_metrics_push_user }} --password-file /etc/headscale/metrics-push-password{% endif %}
+
 User=headscale
 Group=headscale
 CapabilityBoundingSet=

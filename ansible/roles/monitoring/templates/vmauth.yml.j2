@@ -1,0 +1,19 @@
+{# Managed by the monitoring role. vmauth's users: readers may query, writers
+   may import, under the job and instance the url_prefix pins; vmauth drops
+   any extra_label a writer sends. Any other path gets "missing route". #}
+users:
+{% for reader in monitoring_vmsingle_readers %}
+  - username: {{ reader.name | to_json }}
+    password: {{ reader.password | to_json }}
+    url_map:
+      - src_paths: ["/api/v1/query", "/api/v1/query_range"]
+        url_prefix: "http://vmsingle:8428"
+{% endfor %}
+{% for writer in monitoring_vmsingle_writers %}
+  - username: {{ writer.name | to_json }}
+    password: {{ writer.password | to_json }}
+    url_map:
+      - src_paths: ["/api/v1/import/prometheus"]
+        url_prefix: {{ ('http://vmsingle:8428/?extra_label=' ~ ('job=' ~ writer.job) | urlencode
+                        ~ '&extra_label=' ~ ('instance=' ~ writer.instance) | urlencode) | to_json }}
+{% endfor %}

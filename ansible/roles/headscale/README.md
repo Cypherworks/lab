@@ -41,6 +41,8 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `headscale_selfjoin_user` | `""` | When set, the role ensures this Headscale user exists and resolves its numeric id into `headscale_selfjoin_user_id`, so the host can mint its own pre-auth key and self-join. Empty on standalone control planes. |
 | `headscale_metrics_push_url` | `""` | VictoriaMetrics' `/api/v1/import/prometheus` URL for the tailnet collector. Its host must be an IP address, as the collector's sandbox may reach only that. Empty removes the collector. See notes. |
 | `headscale_metrics_push_interval` | `1min` | How often the collector pushes. |
+| `headscale_metrics_push_user` | `""` | The vmsingle writer the collector signs in to vmauth as, with basic auth. Empty sends no credentials. |
+| `headscale_metrics_push_password` | `""` | Secret. That writer's password, set together with the user. |
 
 ## Dependencies
 
@@ -55,7 +57,7 @@ None.
 5. Probes the listen port and enables the service, restarting it when the config changed, the sysctl changed, or nothing is listening, otherwise just ensuring it is started; then `wait_for`s the port.
 6. When `headscale_selfjoin_user` is set, ensures that user exists (tolerating "already exists") and resolves its numeric id into `headscale_selfjoin_user_id`.
 7. When `headscale_oidc_enabled`, installs the OIDC self-heal watchdog (`headscale-oidc-watchdog.sh` plus its `.service`/`.timer` units) and enables the timer. Headscale loads OIDC discovery only at startup, so an issuer unreachable then leaves it in CLI-only enrolment; the watchdog restarts Headscale once the issuer is reachable. A one-shot heal runs on install when the script or units changed, so a currently-degraded server recovers without waiting for the first timer interval.
-8. With `headscale_metrics_push_url` set, installs the tailnet collector (`/usr/local/sbin/headscale-metrics` and its `.service`/`.timer` units) and enables its timer. Cleared, it stops the timer and removes them.
+8. With `headscale_metrics_push_url` set, installs the tailnet collector (`/usr/local/sbin/headscale-metrics` and its `.service`/`.timer` units) and enables its timer. With a push user, it writes the password to `/etc/headscale/metrics-push-password` (`0640`, group `headscale`), so it's on no command line; without one, it removes that file. Cleared, it stops the timer and removes them, the password file included.
 
 Handlers: none — the running service is reconciled to the on-disk config directly in tasks (see Notes).
 
