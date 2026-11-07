@@ -82,8 +82,8 @@ The switch must already be adopted by the controller; this module manages its co
 
 An LACP aggregate is one port entry with `aggregate_num_ports` set. The bond covers this port plus the next consecutive ports (`aggregate_num_ports = 4` on port 17 bonds 17-20), so leave the following ports out of `ports`. This supersedes the former `unifi-switch-lag` module.
 
-The provider derives `forward` from the resolved VLAN config (native-only becomes `customize`, the primary LAN becomes `all`), so it never matches the literal sent on create; `tagged_vlan_mgmt` likewise comes back as `auto` on native/access profiles. The profile resource ignores changes to both to keep re-applies clean.
+The controller derives `forward` from the resolved VLAN config (native-only becomes `customize`, the primary LAN becomes `all`), so it never matches the literal sent on create; `tagged_vlan_mgmt` likewise comes back as `auto` on native/access profiles. An update carrying either changes nothing on the controller and fails as "not found", so the profile resource ignores changes to both to keep re-applies clean.
 
 List every port, including a `disabled` profile for unused ones (and SFP ports), for full IaC coverage.
 
-The filipowm/unifi 1.0.0 provider creates resources but cannot update them in place; an edit returns "not found". Apply profile or port changes by rebuild (destroy and recreate the affected resource).
+The filipowm/unifi 1.0.0 provider applies an in-place edit that changes a port profile value. The switch device's port overrides use the same update code but weren't tested. Removing an optional attribute can't be applied in place: it returns "not found" and the controller keeps the old value. Recreate the affected resource for that (`terraform apply -replace=<address>`); a recreated profile gets a new ID, which the ports that use it then change to.

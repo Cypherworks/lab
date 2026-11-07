@@ -102,4 +102,4 @@ The USG Pro-4 on a self-hosted controller uses legacy rulesets (`LAN_IN`, `LAN_L
 
 Rules reference groups by key, not ID: the module resolves `src_group_keys` / `dst_group_keys` against the groups it created, so group and rule ordering is handled internally.
 
-The filipowm/unifi 1.0.0 provider creates resources but cannot update them in place; an edit to an existing group or rule returns "not found". Apply changes by rebuild (destroy and recreate the affected resource).
+The filipowm/unifi 1.0.0 provider applies an in-place edit that changes a group or rule value, such as a rule's `logging` or a group's members. Removing an optional attribute from a rule, such as `dst_port`, can't be applied in place: it returns "not found" and the controller keeps the old value. Recreate the rule for that (`terraform apply -replace=<address>`); until the new rule exists, the traffic it matched falls through to the rules after it.
