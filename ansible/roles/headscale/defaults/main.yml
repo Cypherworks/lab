@@ -65,3 +65,6 @@ headscale_oidc_watchdog_interval: "5min"
 # VictoriaMetrics' /api/v1/import/prometheus; an IP host, the sandbox's one.
 headscale_metrics_push_url: ""  # empty removes the collector
 headscale_metrics_push_interval: 1min
+# vmsingle writer the collector signs in as (basic auth); empty sends none.
+headscale_metrics_push_user: ""
+headscale_metrics_push_password: ""  # SOPS

@@ -23,14 +23,40 @@ services:
       - "--retentionPeriod={{ monitoring_retention }}"
       - "--promscrape.config=/etc/vm/scrape.yml"
       - "--httpListenAddr=:8428"
+      # Delete, snapshots, flags, metrics and the rest refuse without the key.
+{% for flag in ['deleteAuthKey', 'snapshotAuthKey', 'forceMergeAuthKey', 'forceFlushAuthKey',
+                'search.resetCacheAuthKey', 'configAuthKey', 'reloadAuthKey', 'flagsAuthKey',
+                'pprofAuthKey', 'metricsAuthKey'] %}
+      - "--{{ flag }}=file:///etc/vm/admin-key"
+{% endfor %}
     volumes:
       - vmdata:/victoria-metrics-data
       - {{ monitoring_config_dir }}/scrape.yml:/etc/vm/scrape.yml:ro
+      - {{ monitoring_config_dir }}/vmsingle-admin-key:/etc/vm/admin-key:ro
 {% if monitoring_alertmanager_api_users %}
       - {{ monitoring_config_dir }}/vmsingle-alertmanager-password:/etc/vm/alertmanager-password:ro
 {% endif %}
+{% if monitoring_vmsingle_readers or monitoring_vmsingle_writers %}
+
+  # The only way in to vmsingle from outside the stack, on 8428, the port its
+  # clients know it by. Readers and writers sign in; admin paths go nowhere.
+  vmauth:
+    image: {{ monitoring_vmauth_image }}
+    restart: unless-stopped
+    command:
+      - "--auth.config=/etc/vmauth/auth.yml"
+      - "--httpListenAddr=:8427"
+{% for flag in ['metricsAuthKey', 'flagsAuthKey', 'pprofAuthKey', 'reloadAuthKey'] %}
+      - "--{{ flag }}=file:///etc/vmauth/admin-key"
+{% endfor %}
+    volumes:
+      - {{ monitoring_config_dir }}/vmauth.yml:/etc/vmauth/auth.yml:ro
+      - {{ monitoring_config_dir }}/vmsingle-admin-key:/etc/vmauth/admin-key:ro
     ports:
-      - "8428:8428"
+      - "8428:8427"
+    depends_on:
+      - vmsingle
+{% endif %}
 
   vmalert:
     image: {{ monitoring_vmalert_image }}

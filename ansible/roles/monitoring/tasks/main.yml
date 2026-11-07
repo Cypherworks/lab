@@ -60,6 +60,9 @@
   when: monitoring_alertmanager_api_users | length == 0
   notify: Restart monitoring
 
+- name: Put vmauth in front of vmsingle and lock the admin endpoints
+  ansible.builtin.include_tasks: vmsingle_auth.yml
+
 - name: Render the monitoring config files
   become: true
   ansible.builtin.template:

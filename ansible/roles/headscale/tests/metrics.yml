@@ -2,9 +2,11 @@
 # Exercises the tailnet collector end to end on a host booted like the EC2:
 # systemd runs in a privileged Ubuntu 24.04 container with the pinned
 # Headscale package, three Tailscale nodes join it, and a real vmsingle takes
-# the push. Checks what each node, route and key reports, that no key secret
-# reaches VictoriaMetrics, that a second converge changes nothing, that a
-# failed read pushes nothing, and that turning it off removes it. Needs
+# the push through vmauth, signed in. Checks what each node, route and key
+# reports, that no key secret reaches VictoriaMetrics, that the password file
+# is kept from other users, that a second converge changes nothing, that a
+# failed read or a wrong password pushes nothing, that a user with no password
+# fails the run, and that turning it off removes it. Needs
 # Docker, community.docker, and internet for the images, the package and apt.
 # From ansible/:
 #
@@ -20,13 +22,24 @@
     _vm_name: headscale-metrics-vm
     # victoriametrics/victoria-metrics:v1.102.1, as monitoring runs.
     _vm: victoriametrics/victoria-metrics@sha256:8d34a7572df2ef57ef3e55257c112b1ba1c3ca0fecb138fea5cfed882c0cdb07
+    _vmauth_name: headscale-metrics-vmauth
+    # victoriametrics/vmauth:v1.102.1, as monitoring runs.
+    _vmauth: victoriametrics/vmauth@sha256:c21c510c4910ebd23c912ceefe1bcd76b59f2ea180aede3b4553b9997b2dd1ec
+    _push: http://172.30.99.31:8427/api/v1/import/prometheus
+    _vmauth_config: |
+      users:
+        - username: headscale
+          password: writer-test-only
+          url_map:
+            - src_paths: ["/api/v1/import/prometheus"]
+              url_prefix: http://172.30.99.30:8428
     _nodes: [headscale-metrics-router, headscale-metrics-peer, headscale-metrics-gone]
     _net: headscale-metrics-test
     _dir: "{{ playbook_dir }}/.metrics"
   tasks:
     - name: Clear what a failed run left behind
       ansible.builtin.shell: >-
-        docker rm -f {{ ([_target, _vm_name] + _nodes) | join(' ') }} 2>/dev/null;
+        docker rm -f {{ ([_target, _vm_name, _vmauth_name] + _nodes) | join(' ') }} 2>/dev/null;
         docker network rm {{ _net }} 2>/dev/null; true
       changed_when: false
 
@@ -63,7 +76,7 @@
         state: directory
         mode: "0700"
 
-    - name: Write the converge settings, with the collector on and off
+    - name: Write the converge settings, with the collector on, misconfigured and off
       ansible.builtin.copy:
         content: "{{ item.settings | to_json }}"
         dest: "{{ _dir }}/{{ item.name }}.json"
@@ -71,12 +84,36 @@
       loop:
         - name: "on"
           settings:
-            headscale_metrics_push_url: http://172.30.99.30:8428/api/v1/import/prometheus
+            headscale_metrics_push_url: "{{ _push }}"
+            headscale_metrics_push_user: headscale
+            headscale_metrics_push_password: writer-test-only
+        - name: wrong
+          settings:
+            headscale_metrics_push_url: "{{ _push }}"
+            headscale_metrics_push_user: headscale
+            headscale_metrics_push_password: not-it
+        - name: no-password
+          settings:
+            headscale_metrics_push_url: "{{ _push }}"
+            headscale_metrics_push_user: headscale
+            headscale_metrics_push_password: ""
         - name: "off"
           settings:
             headscale_metrics_push_url: ""
       loop_control:
         label: "{{ item.name }}"
+
+    - name: Write vmauth's config, letting the collector import
+      ansible.builtin.copy:
+        content: "{{ _vmauth_config }}"
+        dest: "{{ _dir }}/vmauth.yml"
+        mode: "0644"
+
+    - name: Put vmauth in front of the metrics store, as monitoring does
+      ansible.builtin.command: >-
+        docker run -d --name {{ _vmauth_name }} --network {{ _net }} --ip 172.30.99.31
+        -v {{ _dir }}/vmauth.yml:/etc/vmauth/auth.yml:ro {{ _vmauth }} -auth.config=/etc/vmauth/auth.yml
+      changed_when: true
 
     - name: Address the target through Docker
       ansible.builtin.add_host:
@@ -271,6 +308,11 @@
             name: headscale-metrics.timer
           register: _timer
 
+        - name: Read how the push password is kept
+          ansible.builtin.stat:
+            path: /etc/headscale/metrics-push-password
+          register: _password_file
+
         - name: Push once
           ansible.builtin.command: "{{ _collect }}"
           changed_when: true
@@ -301,6 +343,9 @@
               - "'changed=0' in _again.stdout"
               - _timer.status.UnitFileState == 'enabled'
               - _timer.status.ActiveState == 'active'
+              - _password_file.stat.pw_name == 'root'
+              - _password_file.stat.gr_name == 'headscale'
+              - _password_file.stat.mode == '0640'
               - _series | map(attribute='metric.job') | unique | list == ['headscale']
               - _series | map(attribute='metric.instance') | unique | list == [inventory_hostname]
               - _value['headscale_node_online|headscale-metrics-router||'] == 1
@@ -346,6 +391,57 @@
             return_content: true
           register: _after_break
 
+        - name: Start Headscale again
+          ansible.builtin.systemd_service:
+            name: headscale
+            state: started
+
+        - name: Wait for the CLI to reach the server again
+          ansible.builtin.command: headscale users list -o json
+          register: _ready_again
+          until: _ready_again.rc == 0
+          retries: 30
+          delay: 1
+          changed_when: false
+
+        - name: Converge with the wrong push password
+          ansible.builtin.command: "{{ _converge }}/wrong.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          changed_when: true
+
+        - name: Push with the wrong password
+          ansible.builtin.command: "{{ _collect }}"
+          register: _refused
+          changed_when: true
+          failed_when: false
+
+        - name: Read why the push failed
+          ansible.builtin.command: journalctl -u headscale-metrics.service -n 5 --no-pager
+          register: _refused_log
+          changed_when: false
+
+        - name: Converge with a push user and no password
+          ansible.builtin.command: "{{ _converge }}/no-password.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _no_password
+          changed_when: false
+          failed_when: false
+
+        - name: Assert a wrong password pushes nothing, and a missing one fails the run
+          ansible.builtin.assert:
+            that:
+              - _refused.rc != 0
+              - "'HTTP Error 401' in _refused_log.stdout"
+              - _no_password.rc != 0
+              - "'headscale_metrics_push_password' in _no_password.stdout"
+            fail_msg: "{{ _refused.rc }} {{ _refused_log.stdout }} {{ _no_password.stdout[-600:] }}"
+
         - name: Converge with the collector off
           ansible.builtin.command: "{{ _converge }}/off.json"
           delegate_to: localhost
@@ -362,6 +458,7 @@
             - /etc/systemd/system/headscale-metrics.timer
             - /etc/systemd/system/headscale-metrics.service
             - /usr/local/sbin/headscale-metrics
+            - /etc/headscale/metrics-push-password
 
         - name: Assert a failed read pushes nothing, and turning it off removes the collector
           vars:
@@ -378,7 +475,7 @@
       always:
         - name: Remove the containers
           ansible.builtin.command: >-
-            docker rm -f {{ inventory_hostname }} {{ _vm_name }}
+            docker rm -f {{ inventory_hostname }} {{ _vm_name }} headscale-metrics-vmauth
             headscale-metrics-router headscale-metrics-peer headscale-metrics-gone
           delegate_to: localhost
           connection: local
