@@ -25,6 +25,7 @@ monitoring_victorialogs_image: "victoriametrics/victoria-logs:v1.51.0"
 
 monitoring_retention: "30d"          # modest, given constrained storage
 monitoring_logs_retention: "30d"     # VictoriaLogs retention, same constrained budget
+monitoring_victorialogs_syslog_port: null  # UDP syslog into VictoriaLogs; null keeps it off
 monitoring_scrape_interval: "30s"
 
 # Who reaches vmsingle through vmauth on 8428 (SOPS); none leaves it internal.

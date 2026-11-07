@@ -38,6 +38,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 |----------|---------|-------------|
 | `monitoring_retention` | `"30d"` | Metric retention. Modest, given constrained storage. |
 | `monitoring_logs_retention` | `"30d"` | VictoriaLogs retention, on the same constrained budget. |
+| `monitoring_victorialogs_syslog_port` | `null` | Host UDP port published to VictoriaLogs' syslog listener, for devices with no log shipper. Lines are stamped on receipt and carry the sender as `remote_ip`; fields are `app_name`, `hostname`, `level` and `_msg`, with `{app_name, hostname}` as the stream. Unauthenticated and cleartext, like the HTTP ingest on 9428. `null` leaves the listener off. |
 | `monitoring_scrape_interval` | `"30s"` | Global scrape interval. |
 | `monitoring_grafana_anonymous_enabled` | `false` | Anonymous view-only Grafana access (for the wall kiosk); admin/edit stays behind Authentik OIDC. |
 
