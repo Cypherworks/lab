@@ -80,4 +80,4 @@ Pin `ref` to a specific commit SHA or tag, never a moving branch.
 
 DHCP is enabled for a network when a `dhcp` object is supplied and disabled when it is omitted. Client DNS servers come from `dhcp.dns`. IPv6 is off by default across the lab.
 
-The filipowm/unifi 1.0.0 provider creates networks but cannot update them in place; an edit to an existing network returns "not found". Apply changes (subnet, DHCP pool, isolation, etc.) by rebuild (destroy and recreate the affected network).
+The filipowm/unifi 1.0.0 provider applies an in-place edit that changes a network value, such as the DHCP pool. Removing an optional attribute can't be applied in place: it returns "not found" and the controller keeps the old value. Recreate the network for that (`terraform apply -replace=<address>`); it gets a new ID, which everything that references it then changes to.

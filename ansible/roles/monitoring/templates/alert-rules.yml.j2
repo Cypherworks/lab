@@ -126,3 +126,15 @@ groups:
           summary: "No metrics pushed from {{ source.name }}"
           description: "Its last push is over {{ monitoring_pushed_metrics_stale_seconds }} seconds old, or there has been none."
 {% endfor %}
+{% if monitoring_not_logging_metric %}
+
+      # A down system is TargetDown's; an absent log count fires for every system.
+      - alert: NotLogging
+        expr: (up{job=~"{{ monitoring_not_logging_jobs | join('|') }}"} == 1) unless on(instance) label_replace(max_over_time({{ monitoring_not_logging_metric }}[{{ monitoring_not_logging_window }}]), "instance", "$1", "host", "(.*)")
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No logs from {{ '{{ $labels.instance }}' }}"
+          description: "Up and scraped, but no log line from it in {{ monitoring_not_logging_window }}."
+{% endif %}
