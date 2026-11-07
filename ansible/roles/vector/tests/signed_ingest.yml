@@ -1,0 +1,237 @@
+---
+# Ships journal lines with the role's rendered config, signed in, through the
+# monitoring role's vmauth into real VictoriaLogs: one agent straight to
+# vmauth, one through the caddy role's ingest-only route as an untrusted host
+# does, and one with the wrong password. Each line must land under the host
+# its writer is pinned to, not the one its journal names, and the wrong
+# password must store nothing. The direct agent's password holds a "$", which
+# Vector would otherwise read as an environment variable. Also checks a host
+# with no user renders no auth. journalctl is a stub printing one entry.
+# Needs Docker and internet for images. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/vector/tests/signed_ingest.yml
+- name: Verify signed ingest
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: vector-signed-test
+    _dir: "{{ playbook_dir }}/.signed_ingest"
+    _subnet: 172.30.96.0/24
+    _caddy_ip: 172.30.96.10
+    _logs_image: victoriametrics/victoria-logs:v1.51.0
+    _vmauth_image: victoriametrics/vmauth:v1.102.1
+    _vector_image: timberio/vector:0.56.0-debian
+    _containers: >-
+      vector-signed-logs vector-signed-vmauth vector-signed-caddy
+      vector-signed-direct vector-signed-kiosk vector-signed-wrong
+    vector_stream_fields: host,_SYSTEMD_UNIT
+    vector_file_sources: []
+    monitoring_vmsingle_readers: []
+    monitoring_vmsingle_writers: []
+    monitoring_victorialogs_readers: []
+    monitoring_victorialogs_writers:
+      - {name: vector-direct, password: "direct-$HOME-test-only", host: direct-host}
+      - {name: vector-kiosk, password: kiosk-test-only, host: kiosk-host}
+    _agents:
+      - name: direct
+        ip: 172.30.96.30
+        vars:
+          vector_victorialogs_scheme: http
+          vector_victorialogs_endpoint: vmauth:8427
+          vector_victorialogs_user: vector-direct
+          vector_victorialogs_password: "direct-$HOME-test-only"
+      - name: kiosk
+        ip: 172.30.96.40
+        vars:
+          vector_victorialogs_scheme: https
+          vector_victorialogs_endpoint: logs.vector.test:443
+          vector_victorialogs_user: vector-kiosk
+          vector_victorialogs_password: kiosk-test-only
+      - name: wrong
+        ip: 172.30.96.50
+        vars:
+          vector_victorialogs_scheme: http
+          vector_victorialogs_endpoint: vmauth:8427
+          vector_victorialogs_user: vector-direct
+          vector_victorialogs_password: not-it
+    caddy_domain: vector.test
+    caddy_acme_email: test@vector.test
+    caddy_l4_proxies: []
+    caddy_allowed_sources: ["{{ _subnet }}"]
+    caddy_routes:
+      - name: logs
+        host: logs.vector.test
+        upstream: "http://vmauth:8427"
+        sources: [172.30.96.40/32]
+        paths: [/insert/elasticsearch/_bulk]
+    _journalctl: |
+      #!/bin/sh
+      case "$*" in *--version*) echo "systemd 255 (255.4-1ubuntu8)"; exit 0;; esac
+      id='"__CURSOR":"c1","_BOOT_ID":"b1","_HOSTNAME":"journal-host"'
+      entry='"_SYSTEMD_UNIT":"probe.service","MESSAGE":"vector-signed-%s"'
+      echo "{$id,$entry,\"__REALTIME_TIMESTAMP\":\"$(date +%%s)000000\"}"
+      exec sleep 600
+    _stored_query: "vector-signed | stats by (_msg, host, _SYSTEMD_UNIT) count() n"
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _containers }} 2>/dev/null; docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render vmauth's users as the monitoring role does
+      ansible.builtin.template:
+        src: ../../monitoring/templates/vmauth.yml.j2
+        dest: "{{ _dir }}/vmauth.yml"
+        mode: "0644"
+
+    - name: Render the Caddyfile
+      ansible.builtin.template:
+        src: ../../caddy/templates/Caddyfile.j2
+        dest: "{{ _dir }}/Caddyfile"
+        mode: "0644"
+
+    - name: Swap DNS-01 for an internal issuer
+      ansible.builtin.replace:
+        path: "{{ _dir }}/Caddyfile"
+        regexp: 'dns route53'
+        replace: 'issuer internal'
+
+    - name: Render each agent's Vector config
+      ansible.builtin.template:
+        src: ../templates/vector.yaml.j2
+        dest: "{{ _dir }}/vector-{{ item.name }}.yaml"
+        mode: "0644"
+      vars:
+        vector_victorialogs_scheme: "{{ item.vars.vector_victorialogs_scheme }}"
+        vector_victorialogs_endpoint: "{{ item.vars.vector_victorialogs_endpoint }}"
+        vector_victorialogs_user: "{{ item.vars.vector_victorialogs_user }}"
+        vector_victorialogs_password: "{{ item.vars.vector_victorialogs_password }}"
+      loop: "{{ _agents }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Render a Vector config for a host with no user
+      ansible.builtin.set_fact:
+        _unsigned: "{{ lookup('ansible.builtin.template', '../templates/vector.yaml.j2', template_vars=_defaults) | from_yaml }}"
+      vars:
+        _defaults: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../defaults/main.yml') | from_yaml
+                       | combine({'vector_victorialogs_endpoint': 'logs.example.test:9428', 'vector_arch': 'amd64'}) }}"
+
+    - name: Write each agent's journalctl stub
+      ansible.builtin.copy:
+        content: "{{ _journalctl | format(item.name) }}"
+        dest: "{{ _dir }}/journalctl-{{ item.name }}"
+        mode: "0755"
+      loop: "{{ _agents }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet {{ _subnet }} {{ _net }}
+      changed_when: true
+
+    - name: Start VictoriaLogs and vmauth
+      ansible.builtin.shell: >-
+        docker run -d --name vector-signed-logs --network {{ _net }} --network-alias victorialogs
+        {{ _logs_image }} --httpListenAddr=:9428 &&
+        docker run -d --name vector-signed-vmauth --network {{ _net }} --network-alias vmauth
+        -v {{ _dir }}/vmauth.yml:/etc/vmauth/auth.yml:ro
+        {{ _vmauth_image }} --auth.config=/etc/vmauth/auth.yml --httpListenAddr=:8427
+      changed_when: true
+
+    - name: Start Caddy
+      ansible.builtin.command: >-
+        docker run -d --name vector-signed-caddy --network {{ _net }} --ip {{ _caddy_ip }}
+        -v {{ _dir }}/Caddyfile:/etc/caddy/Caddyfile:ro caddy:2
+      changed_when: true
+
+    - name: Wait for Caddy's internal CA
+      ansible.builtin.command: docker exec vector-signed-caddy cat /data/caddy/pki/authorities/local/root.crt
+      register: _root
+      until: _root.rc == 0
+      retries: 20
+      delay: 2
+      changed_when: false
+
+    - name: Trust that CA in the agents, as a host trusts the public one
+      ansible.builtin.copy:
+        content: "{{ _root.stdout }}\n"
+        dest: "{{ _dir }}/root.crt"
+        mode: "0644"
+
+    - name: Start each agent with its rendered config
+      ansible.builtin.command: >-
+        docker run -d --name vector-signed-{{ item.name }} --network {{ _net }} --ip {{ item.ip }}
+        --add-host logs.vector.test:{{ _caddy_ip }} -e SSL_CERT_FILE=/root.crt
+        -v {{ _dir }}/root.crt:/root.crt:ro
+        -v {{ _dir }}/journalctl-{{ item.name }}:/usr/local/bin/journalctl:ro
+        -v {{ _dir }}/vector-{{ item.name }}.yaml:/etc/vector/vector.yaml:ro
+        {{ _vector_image }} --config /etc/vector/vector.yaml
+      loop: "{{ _agents }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+
+    - name: Ask VictoriaLogs for the signed-in agents' lines
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} curlimages/curl:8.11.1 -s
+        http://victorialogs:9428/select/logsql/query --data-urlencode "query={{ _stored_query }}"
+      register: _stored
+      until: _stored.stdout is search('vector-signed-direct') and _stored.stdout is search('vector-signed-kiosk')
+      retries: 20
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Read whether the wrong password was refused
+      ansible.builtin.command: docker logs vector-signed-wrong
+      register: _wrong_log
+      until: _wrong_log.stderr is search('http_response_401') or _wrong_log.stdout is search('http_response_401')
+      retries: 10
+      delay: 2
+      changed_when: false
+      failed_when: false
+
+    - name: Ask again, after the wrong agent has had its chance
+      ansible.builtin.command: >-
+        docker run --rm --network {{ _net }} curlimages/curl:8.11.1 -s
+        http://victorialogs:9428/select/logsql/query --data-urlencode "query={{ _stored_query }}"
+      register: _stored_last
+      changed_when: false
+
+    - name: Keep the agents' logs for a failure message
+      ansible.builtin.shell: >-
+        for a in direct kiosk; do docker logs --tail 8 vector-signed-$a 2>&1; done;
+        docker logs --tail 8 vector-signed-vmauth 2>&1
+      register: _agent_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: docker rm -f {{ _containers }}; docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert each line landed under its writer's host, and the wrong password stored nothing
+      vars:
+        _rows: "{{ _stored_last.stdout_lines | map('from_json') | list }}"
+        _by_msg: "{{ _rows | items2dict(key_name='_msg', value_name='host') }}"
+      ansible.builtin.assert:
+        that:
+          - "_by_msg == {'vector-signed-direct': 'direct-host', 'vector-signed-kiosk': 'kiosk-host'}"
+          - _rows | map(attribute='_SYSTEMD_UNIT') | unique | list == ['probe.service']
+          - (_wrong_log.stdout ~ _wrong_log.stderr) is search('http_response_401')
+          - _unsigned.sinks.victorialogs.auth is not defined
+        fail_msg: "{{ _stored_last.stdout }} {{ _agent_logs.stdout[-2500:] }}"

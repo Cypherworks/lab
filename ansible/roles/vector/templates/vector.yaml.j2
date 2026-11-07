@@ -22,6 +22,13 @@ sinks:
       - "{{ vector_victorialogs_scheme }}://{{ vector_victorialogs_endpoint }}/insert/elasticsearch/"
     api_version: v8
     compression: gzip
+{% if vector_victorialogs_user %}
+{# Vector reads $NAME in its config as an environment variable; $$ is a literal $. #}
+    auth:
+      strategy: basic
+      user: {{ vector_victorialogs_user | replace('$', '$$') | to_json }}
+      password: {{ vector_victorialogs_password | replace('$', '$$') | to_json }}
+{% endif %}
     healthcheck:
       enabled: false
     query:

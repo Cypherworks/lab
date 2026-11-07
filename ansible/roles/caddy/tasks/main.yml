@@ -18,6 +18,9 @@
     - Update CA trust
     - Restart Caddy
 
+- name: Give Caddy the secrets its routes read
+  ansible.builtin.include_tasks: secret_env.yml
+
 - name: Render the Caddyfile
   become: true
   ansible.builtin.template:

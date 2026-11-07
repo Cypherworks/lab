@@ -1,6 +1,9 @@
-{# Managed by the monitoring role. vmauth's users: readers may query, writers
-   may import, under the job and instance the url_prefix pins; vmauth drops
-   any extra_label a writer sends. Any other path gets "missing route". #}
+{# Managed by the monitoring role. vmauth's users: vmsingle readers may query,
+   writers may import, under the job and instance the url_prefix pins; vmauth
+   drops any extra_label a writer sends. VictoriaLogs readers may use /select/
+   (queries and the UI), writers may bulk-ingest, every line under the host
+   the url_prefix pins, whatever host the line or the request names. Any
+   other path gets "missing route". #}
 users:
 {% for reader in monitoring_vmsingle_readers %}
   - username: {{ reader.name | to_json }}
@@ -16,4 +19,18 @@ users:
       - src_paths: ["/api/v1/import/prometheus"]
         url_prefix: {{ ('http://vmsingle:8428/?extra_label=' ~ ('job=' ~ writer.job) | urlencode
                         ~ '&extra_label=' ~ ('instance=' ~ writer.instance) | urlencode) | to_json }}
+{% endfor %}
+{% for reader in monitoring_victorialogs_readers %}
+  - username: {{ reader.name | to_json }}
+    password: {{ reader.password | to_json }}
+    url_map:
+      - src_paths: ["/select/.*"]
+        url_prefix: "http://victorialogs:9428"
+{% endfor %}
+{% for writer in monitoring_victorialogs_writers %}
+  - username: {{ writer.name | to_json }}
+    password: {{ writer.password | to_json }}
+    url_map:
+      - src_paths: ["/insert/elasticsearch/_bulk"]
+        url_prefix: {{ ('http://victorialogs:9428/?extra_fields=' ~ ('host=' ~ writer.host) | urlencode) | to_json }}
 {% endfor %}

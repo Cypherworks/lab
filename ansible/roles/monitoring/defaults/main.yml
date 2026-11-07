@@ -32,6 +32,11 @@ monitoring_vmsingle_readers: []      # [{name, password}]: queries only
 monitoring_vmsingle_writers: []      # [{name, password, job, instance}]: imports, labels pinned
 monitoring_vmsingle_admin_key: ""    # SOPS, required: unlocks the admin endpoints
 
+# Who reaches VictoriaLogs through vmauth on 9428 (SOPS); none leaves it internal.
+monitoring_victorialogs_readers: []    # [{name, password}]: /select/ only
+monitoring_victorialogs_writers: []    # [{name, password, host}]: bulk ingest, host pinned
+monitoring_victorialogs_admin_key: ""  # SOPS, required: unlocks the admin endpoints
+
 # Anonymous view-only access, for the wall kiosk. Off by default; the deploy
 # enables it. Admin/edit stays behind Authentik OIDC.
 monitoring_grafana_anonymous_enabled: false

@@ -1,7 +1,7 @@
 ---
-# Runs the role's vmsingle auth tasks on vmsingle_auth.yml's container.
+# Runs the role's vmauth tasks on the container a vmauth test made.
 # A stand-in handler counts restarts, as there is no compose stack to restart.
-- name: Converge the vmsingle auth
+- name: Converge the vmauth users and admin keys
   hosts: all
   gather_facts: false
   vars:
@@ -21,7 +21,7 @@
         mode: "0755"
 
     - name: Run the role's tasks
-      ansible.builtin.include_tasks: ../tasks/vmsingle_auth.yml
+      ansible.builtin.include_tasks: ../tasks/vmauth.yml
 
   handlers:
     - name: Restart monitoring

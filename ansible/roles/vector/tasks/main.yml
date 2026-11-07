@@ -31,6 +31,11 @@
     append: true
   notify: Restart vector
 
+- name: Require a password with a user
+  ansible.builtin.assert:
+    that: vector_victorialogs_user | length == 0 or vector_victorialogs_password | length > 0
+    fail_msg: vector_victorialogs_user is set, so vector_victorialogs_password must be too.
+
 - name: Render the Vector configuration
   become: true
   ansible.builtin.template:
@@ -39,6 +44,7 @@
     owner: root
     group: vector
     mode: "0640"
+  no_log: "{{ vector_victorialogs_password | length > 0 }}"
   notify: Restart vector
 
 - name: Ensure the Vector service override directory exists

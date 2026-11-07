@@ -22,6 +22,8 @@
     _vector_image: timberio/vector:0.56.0-debian
     vector_victorialogs_scheme: https
     vector_victorialogs_endpoint: logs.vector.test:443
+    vector_victorialogs_user: ""
+    vector_victorialogs_password: ""
     vector_stream_fields: host,_SYSTEMD_UNIT
     vector_file_sources: []
     caddy_domain: vector.test

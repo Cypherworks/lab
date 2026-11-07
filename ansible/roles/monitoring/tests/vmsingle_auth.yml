@@ -26,9 +26,10 @@
     _key: admin-test-only
     _converge: >-
       ansible-playbook -i {{ _host }}, -c community.docker.docker
-      {{ playbook_dir }}/vmsingle_auth_converge.yml -e @{{ _dir }}
+      {{ playbook_dir }}/vmauth_converge.yml -e @{{ _dir }}
     _first:
       monitoring_vmsingle_admin_key: admin-test-only
+      monitoring_victorialogs_admin_key: logs-admin-test-only
       monitoring_vmsingle_readers:
         - {name: dashboard, password: first-test-only}
         - {name: retired, password: retired-test-only}
@@ -36,6 +37,7 @@
         - {name: headscale, password: writer-test-only, job: headscale, instance: headscale-1}
     _second:
       monitoring_vmsingle_admin_key: admin-test-only
+      monitoring_victorialogs_admin_key: logs-admin-test-only
       monitoring_vmsingle_readers:
         - {name: dashboard, password: second-test-only}
       monitoring_vmsingle_writers:
