@@ -137,8 +137,9 @@
           changed_when: true
 
         - name: Run each backup
-          ansible.builtin.command: systemctl start s3-backup-{{ item }}.service
-          changed_when: true
+          ansible.builtin.systemd_service:
+            name: s3-backup-{{ item }}.service
+            state: started
           loop: [kept, skipped, unwatched]
 
         - name: List what reached the bucket
@@ -178,9 +179,10 @@
             timeout: 2
 
         - name: Back up with nowhere to upload
-          ansible.builtin.command: systemctl start s3-backup-kept.service
+          ansible.builtin.systemd_service:
+            name: s3-backup-kept.service
+            state: started
           register: _failed
-          changed_when: true
           failed_when: false
 
         - name: Read the kept textfile after the failure
@@ -202,11 +204,11 @@
               - _lines | select('match', 'backup_last_success_timestamp_seconds\\{backup=\"kept\"\\} [0-9]+$') | list | length == 1
               - (_now.stdout | int) - (_stamp | int) < 120
               - _kept_stat.stat.mode == '0644'
-              - _failed.rc != 0
+              - _failed.msg is search('Unable to start service s3-backup-kept.service')
               - _kept_after.content == _kept.content
             fail_msg: >-
               {{ _uploaded.stdout_lines }} {{ _written.files | map(attribute='path') | list }}
-              {{ _lines }} {{ _failed.rc }} {{ _kept_after.content | b64decode }}
+              {{ _lines }} {{ _failed.msg }} {{ _kept_after.content | b64decode }}
       always:
         - name: Remove the containers
           ansible.builtin.command: docker rm -f {{ inventory_hostname }} s3-backup-metrics-s3

@@ -180,8 +180,9 @@
           changed_when: true
 
         - name: Snapshot once
-          ansible.builtin.command: systemctl start openbao-snapshot.service
-          changed_when: true
+          ansible.builtin.systemd_service:
+            name: openbao-snapshot.service
+            state: started
 
         - name: List what reached the bucket
           ansible.builtin.command: "{{ _s3 }} s3 ls s3://lab-snapshots/"
@@ -216,9 +217,10 @@
             timeout: 2
 
         - name: Snapshot with nowhere to upload
-          ansible.builtin.command: systemctl start openbao-snapshot.service
+          ansible.builtin.systemd_service:
+            name: openbao-snapshot.service
+            state: started
           register: _failed
-          changed_when: true
           failed_when: false
 
         - name: Read the textfile after the failure
@@ -238,10 +240,10 @@
               - _lines | select('match', 'backup_last_success_timestamp_seconds\\{backup=\"openbao\"\\} [0-9]+$') | list | length == 1
               - (_now.stdout | int) - (_stamp | int) < 120
               - _textfile_stat.stat.mode == '0644'
-              - _failed.rc != 0
+              - _failed.msg is search('Unable to start service openbao-snapshot.service')
               - _textfile_after.content == _textfile.content
               - "'backup_last_success' not in _unwatched"
-            fail_msg: "{{ _uploaded.stdout_lines }} {{ _lines }} {{ _failed.rc }}"
+            fail_msg: "{{ _uploaded.stdout_lines }} {{ _lines }} {{ _failed.msg }}"
 
       always:
         - name: Remove the target and moto
