@@ -45,7 +45,7 @@ None.
 Handlers, ordered deliberately:
 - `Update CA trust` runs `update-ca-certificates`. Defined before `Reload Caddy` so the store is refreshed first.
 - `Reload Caddy` does a graceful, sub-second config swap (`caddy reload`).
-- `Restart Caddy` reloads systemd and does a full restart, only for a trust-store or secret env change. Caddy caches the system cert pool and reads its environment at startup, so a graceful reload keeps the stale pool and the old environment. Defined last so if a run also changed the Caddyfile, the reload runs first and the restart lands on the current config.
+- `Restart Caddy` (three handlers listening on that name) reloads systemd and does a full restart, only for a trust-store or secret env change. Caddy caches the system cert pool and reads its environment at startup, so a graceful reload keeps the stale pool and the old environment. A transient systemd timer runs the restart 3s after the handler returns, because Ansible's own connection can pass through this Caddy: the lab reaches its Incus API through Caddy's layer4 proxy, and a restart inside the task cut the connection the task reports back on. The role then waits for the host to answer again and checks Caddy is active. Defined last so if a run also changed the Caddyfile, the reload runs first and the restart lands on the current config.
 
 ## Example
 
@@ -71,6 +71,6 @@ Handlers, ordered deliberately:
 ## Notes
 
 - This role does not install or update Caddy. If the deployed binary lacks the Route53 DNS module, the wildcard cert block fails at runtime even though `caddy validate` passes.
-- Trust and secret env changes require the full restart (brief connection drop). Ordinary route changes reload gracefully with no dropped connections.
+- Trust and secret env changes require the full restart (brief connection drop, including any Incus or SSH session proxied through this Caddy). Ordinary route changes reload gracefully with no dropped connections.
 - Prefer trusting an internal CA via `caddy_trusted_ca_certs` over `tls_skip_verify`, so upstream identity is actually verified.
 - `strict_sni_host` is what makes an L4 SNI passthrough in front of this role safe. Without it the single wildcard site routes on Host alone, so a passthrough that forwards one SNI exposes every route. Verify a live path with `scripts/check-sni-host-binding.sh --ip <relay> --sni <forwarded-name> <other-host>...`. Browsers that reuse one HTTP/2 connection across hostnames on the same wildcard cert get a 421, which HTTP allows them to retry on a fresh connection.
