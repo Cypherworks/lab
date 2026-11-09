@@ -1,0 +1,125 @@
+---
+# Two Patroni clusters scraped side by side must not hide each other: each
+# target carries its cluster label, and a cluster with no primary alerts
+# even while the other has one. Renders the role's scrape config and runs
+# its alert rules through promtool and vmalert. Needs Docker, and internet
+# to pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/patroni_clusters.yml
+- name: Verify Patroni monitoring per cluster
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.patroni_clusters"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 1m
+      tests:
+        - name: one cluster without a primary alerts for that cluster only
+          interval: 1m
+          input_series:
+            - series: 'patroni_primary{cluster="authentik", instance="pg-1"}'
+              values: '1x5'
+            - series: 'patroni_primary{cluster="authentik", instance="pg-2"}'
+              values: '0x5'
+            - series: 'patroni_primary{cluster="apps", instance="apps-pg-1"}'
+              values: '0x5'
+            - series: 'patroni_primary{cluster="apps", instance="apps-pg-2"}'
+              values: '0x5'
+          alert_rule_test:
+            - eval_time: 3m
+              alertname: PatroniNoPrimary
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    cluster: apps
+                  exp_annotations:
+                    summary: "Patroni has no primary: apps"
+                    description: "No PostgreSQL primary in the apps cluster. Auto-failover may be stuck."
+        - name: every cluster with a primary is quiet
+          interval: 1m
+          input_series:
+            - series: 'patroni_primary{cluster="authentik", instance="pg-1"}'
+              values: '1x5'
+            - series: 'patroni_primary{cluster="apps", instance="apps-pg-2"}'
+              values: '1x5'
+          alert_rule_test:
+            - eval_time: 3m
+              alertname: PatroniNoPrimary
+              exp_alerts: []
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Point the role at two Patroni clusters
+      ansible.builtin.set_fact:
+        monitoring_patroni_targets:
+          - { target: "198.51.100.41:8008", instance: pg-1, labels: { cluster: authentik } }
+          - { target: "198.51.100.42:8008", instance: pg-2, labels: { cluster: authentik } }
+          - { target: "198.51.100.51:8008", instance: apps-pg-1, labels: { cluster: apps } }
+        monitoring_node_targets:
+          - { target: "198.51.100.11:9100", instance: host-1 }
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's scrape config and rules
+      ansible.builtin.template:
+        src: "../templates/{{ item }}.j2"
+        dest: "{{ _dir }}/{{ item }}"
+        mode: "0644"
+      loop: [scrape.yml, alert-rules.yml]
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Read the rendered scrape config
+      ansible.builtin.set_fact:
+        _config: "{{ lookup('ansible.builtin.file', _dir ~ '/scrape.yml') | from_yaml }}"
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert each target is labelled and each cluster alerts alone
+      vars:
+        _jobs: "{{ _config.scrape_configs | items2dict(key_name='job_name', value_name='static_configs') }}"
+      ansible.builtin.assert:
+        that:
+          - >-
+            _jobs['patroni'] | map(attribute='labels') | list == [
+            {'instance': 'pg-1', 'cluster': 'authentik'},
+            {'instance': 'pg-2', 'cluster': 'authentik'},
+            {'instance': 'apps-pg-1', 'cluster': 'apps'}]
+          - "_jobs['node'] | map(attribute='labels') | list == [{'instance': 'host-1'}]"
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _config | to_json }} {{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"

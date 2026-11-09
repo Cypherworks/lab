@@ -16,9 +16,12 @@ services:
       driver: {{ authentik_logging_driver }}
     ports:
       - "9000:9000"
+    extra_hosts: &pg_name
+      - "{{ authentik_pg_tls_name }}:{{ authentik_pg_host }}"
     volumes:
       - {{ authentik_blueprints_dir }}:/blueprints/custom:ro
       - {{ authentik_media_dir }}:/media
+      - {{ authentik_compose_dir }}/postgres-ca.crt:/postgres/ca.crt:ro
 
   worker:
     image: {{ authentik_image }}
@@ -34,9 +37,11 @@ services:
       LDAPS_KEY: |
         {{ ldaps_key | indent(8) }}
 {% endif %}
+    extra_hosts: *pg_name
     volumes:
       - {{ authentik_blueprints_dir }}:/blueprints/custom:ro
       - {{ authentik_media_dir }}:/media
+      - {{ authentik_compose_dir }}/postgres-ca.crt:/postgres/ca.crt:ro
     # No docker.sock mount: embedded-docker outpost management is deliberately
     # off (outposts are deployed as their own Incus services, not via this socket).
 

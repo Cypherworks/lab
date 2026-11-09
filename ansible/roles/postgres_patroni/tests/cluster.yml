@@ -1,0 +1,67 @@
+---
+# Tasks, not a play: the test estate on one network. etcd as the DCS, a dev
+# OpenBao and moto SSM to issue certs, two systemd Debian 13 nodes for
+# Patroni as the pg instances run, an app client the database admits and a
+# stranger it must refuse. The caller sets the names, ports and _ips.
+- name: Clear what a failed run left behind for debugging
+  ansible.builtin.shell: >-
+    docker rm -f {{ (_nodes + _clients + [_etcd, _bao, _ssm]) | join(' ') }}
+    2>/dev/null; docker network rm {{ _net }} 2>/dev/null; true
+  changed_when: false
+
+- name: Make the test network
+  ansible.builtin.command: >-
+    docker network create --subnet {{ _subnet }} {{ _net }}
+  changed_when: true
+
+- name: Start etcd
+  ansible.builtin.command: >-
+    docker run -d --name {{ _etcd }} --network {{ _net }} --ip {{ _ips[_etcd] }}
+    gcr.io/etcd-development/etcd:v3.5.35 etcd --name {{ _etcd }}
+    --data-dir /tmp/etcd --listen-client-urls http://0.0.0.0:2379
+    --advertise-client-urls http://{{ _ips[_etcd] }}:2379
+  changed_when: true
+
+- name: Start OpenBao and SSM
+  ansible.builtin.include_tasks: >-
+    {{ playbook_dir }}/../../openbao_cert/tests/pki_services.yml
+
+- name: Boot systemd on Debian 13, as the pg instances run
+  ansible.builtin.command: >-
+    docker run -d --name {{ item }} --hostname {{ item }} --privileged
+    --cgroupns=host --tmpfs /run --tmpfs /run/lock --network {{ _net }}
+    --ip {{ _ips[item] }} debian:13 sh -c
+    'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+    python3 python3-debian sudo ca-certificates iproute2 &&
+    mkdir -p /var/lib/prometheus/node-exporter && exec /lib/systemd/systemd'
+  loop: "{{ _nodes }}"
+  changed_when: true
+
+- name: Start the clients, with psql and openssl
+  ansible.builtin.command: >-
+    docker run -d --name {{ item }} --network {{ _net }} --ip {{ _ips[item] }}
+    debian:13 sh -c 'apt-get update -qq &&
+    apt-get install -y -qq postgresql-client openssl procps &&
+    touch /ready && exec sleep infinity'
+  loop: "{{ _clients }}"
+  changed_when: true
+
+- name: Wait for systemd to finish booting
+  ansible.builtin.command: docker exec {{ item }} systemctl is-system-running
+  register: _booted
+  until: _booted.stdout in ['running', 'degraded']
+  retries: 60
+  delay: 3
+  changed_when: false
+  failed_when: false
+  loop: "{{ _nodes }}"
+
+- name: Wait for the clients' packages
+  ansible.builtin.command: docker exec {{ item }} test -f /ready
+  register: _ready
+  until: _ready.rc == 0
+  retries: 60
+  delay: 3
+  changed_when: false
+  failed_when: false
+  loop: "{{ _clients }}"

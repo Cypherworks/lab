@@ -1,0 +1,239 @@
+---
+# Issues a cert to a throwaway Debian 13 container from a dev OpenBao, with the
+# AppRole read from moto standing in for SSM, as the lab issues from its own
+# OpenBao. Proves the first run issues the names asked for with a matching key,
+# the CA and an expiry metric; a re-run changes nothing; a changed SAN, the
+# renewal window and a new CA each reissue; and a failed SSM read or a missing
+# setting stops the run with a clear message and leaves the cert alone. Needs
+# Docker, the aws CLI and the community.docker and community.crypto
+# collections, plus internet for the images and pip. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/openbao_cert/tests/issue.yml
+- name: Verify the cert is issued, kept and reissued when it should be
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  # The nested converge resolves a relative roles path against its own dir.
+  environment:
+    ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: openbao-cert-test
+    _target: openbao-cert-target
+    _bao: openbao-cert-bao
+    _ssm: openbao-cert-ssm
+    _bao_port: 18210
+    _ssm_port: 18211
+    _ssm_param: /openbao-cert-test/approle
+    _domain: example.test
+    _aws_env:
+      AWS_ENDPOINT_URL: "http://127.0.0.1:{{ _ssm_port }}"
+      AWS_ACCESS_KEY_ID: test-only
+      AWS_SECRET_ACCESS_KEY: test-only
+      AWS_DEFAULT_REGION: eu-west-2
+    _converge: >-
+      ansible-playbook -i {{ _target }}, -c community.docker.docker
+      {{ playbook_dir }}/converge.yml
+    _bao_exec: >-
+      docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=test-root {{ _bao }}
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} {{ _bao }} {{ _ssm }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start OpenBao and SSM
+      ansible.builtin.include_tasks: pki_services.yml
+
+    - name: Start the target, with node_exporter's textfile directory
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --network {{ _net }} debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 sudo &&
+        mkdir -p /var/lib/prometheus/node-exporter && touch /ready && exec sleep infinity'
+      changed_when: true
+
+    - name: Wait for the target's Python
+      ansible.builtin.command: docker exec {{ _target }} test -f /ready
+      register: _ready
+      until: _ready.rc == 0
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: First run issues the cert
+      ansible.builtin.command: "{{ _converge }}"
+      changed_when: true
+
+    - name: Read the first cert
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: Read the CA OpenBao serves
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ _bao_port }}/v1/pki/ca/pem"
+        return_content: true
+      register: _served_ca
+
+    - name: The cert names what was asked, matches its key and chains to the CA
+      ansible.builtin.assert:
+        that:
+          - _cert.subject.commonName == 'svc.example.test'
+          - (_cert.subject_alt_name | sort) == ['DNS:alt.example.test', 'DNS:svc.example.test', 'IP:192.0.2.10']
+          - _cert.public_key == _key.public_key
+          - _cert.authority_key_identifier == _ca.subject_key_identifier
+          - _files.results[1].stdout | trim == _served_ca.content | trim
+          - "'/etc/svc/tls nobody nogroup 750' in _modes.stdout_lines"
+          - "'/etc/svc/tls/svc.crt nobody nogroup 644' in _modes.stdout_lines"
+          - "'/etc/svc/tls/svc-ca.crt nobody nogroup 644' in _modes.stdout_lines"
+          - "'/etc/svc/tls/svc.key nobody nogroup 600' in _modes.stdout_lines"
+        quiet: true
+
+    - name: Work out the cert's expiry in Unix seconds
+      ansible.builtin.set_fact:
+        _not_after: >-
+          {{ ((_cert.not_after | to_datetime('%Y%m%d%H%M%SZ'))
+              - ('19700101000000Z' | to_datetime('%Y%m%d%H%M%SZ'))).total_seconds() | int }}
+        _first_serial: "{{ _serial }}"
+
+    - name: The metric carries the cert's expiry
+      ansible.builtin.assert:
+        that:
+          - "('tls_cert_not_after_seconds{cert=\"svc\"} ' ~ _not_after) in _metric.splitlines()"
+        quiet: true
+
+    - name: Second run
+      ansible.builtin.command: "{{ _converge }}"
+      register: _again
+      changed_when: false
+
+    - name: Read the cert after the second run
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: The second run changed nothing and kept the cert
+      ansible.builtin.assert:
+        that:
+          - "'changed=0' in _again.stdout"
+          - _serial == _first_serial
+        quiet: true
+
+    - name: Ask for a different address
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"openbao_cert_ip_sans": ["192.0.2.11"]}'
+      changed_when: true
+
+    - name: Read the cert after the SAN change
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: A changed SAN reissues the cert with the new address
+      ansible.builtin.assert:
+        that:
+          - _serial != _first_serial
+          - (_cert.subject_alt_name | sort) == ['DNS:alt.example.test', 'DNS:svc.example.test', 'IP:192.0.2.11']
+        quiet: true
+
+    - name: Put the address back
+      ansible.builtin.command: "{{ _converge }}"
+      changed_when: true
+
+    - name: Read the cert before the renewal check
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: Keep the serial before renewal
+      ansible.builtin.set_fact:
+        _before_renew: "{{ _serial }}"
+
+    - name: Run with a renewal window longer than the cert's life
+      ansible.builtin.command: "{{ _converge }} -e openbao_cert_renew_days=400"
+      changed_when: true
+
+    - name: Read the cert after the renewal run
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: A cert inside the renewal window is reissued
+      ansible.builtin.assert:
+        that:
+          - _serial != _before_renew
+        quiet: true
+
+    - name: Replace OpenBao's CA, as a rebuild does
+      ansible.builtin.shell: >-
+        {{ _bao_exec }} sh -ec 'bao secrets disable pki &&
+        bao secrets enable pki &&
+        bao secrets tune -max-lease-ttl=87600h pki &&
+        bao write -field=certificate pki/root/generate/internal common_name="Test Root 2" ttl=87600h >/dev/null &&
+        bao write pki/roles/infra allowed_domains={{ _domain }} allow_subdomains=true max_ttl=8760h'
+      changed_when: true
+
+    - name: Keep the serial before the CA change
+      ansible.builtin.set_fact:
+        _before_ca: "{{ _serial }}"
+
+    - name: Run after the CA change
+      ansible.builtin.command: "{{ _converge }}"
+      changed_when: true
+
+    - name: Read the cert after the CA change
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: Read the new CA
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ _bao_port }}/v1/pki/ca/pem"
+        return_content: true
+      register: _new_ca
+
+    - name: A cert from an old CA is reissued from the new one, and the CA file follows
+      ansible.builtin.assert:
+        that:
+          - _serial != _before_ca
+          - _cert.authority_key_identifier == _ca.subject_key_identifier
+          - _files.results[1].stdout | trim == _new_ca.content | trim
+          - _new_ca.content | trim != _served_ca.content | trim
+        quiet: true
+
+    - name: Keep the serial from the new CA
+      ansible.builtin.set_fact:
+        _after_ca: "{{ _serial }}"
+
+    - name: Run with an SSM param that doesn't exist, inside the renewal window
+      ansible.builtin.command: >-
+        {{ _converge }} -e openbao_cert_renew_days=400
+        -e openbao_cert_ssm_param=/openbao-cert-test/missing
+      register: _no_param
+      changed_when: false
+      failed_when: false
+
+    - name: Read the cert after the failed run
+      ansible.builtin.include_tasks: read_state.yml
+
+    - name: A failed SSM read stops the run, says why, and leaves the cert alone
+      ansible.builtin.assert:
+        that:
+          - _no_param.rc != 0
+          - "'ParameterNotFound' in _no_param.stdout"
+          - _serial == _after_ca
+        quiet: true
+
+    - name: Run without a common name
+      ansible.builtin.command: "{{ _converge }} -e openbao_cert_common_name="
+      register: _no_cn
+      changed_when: false
+      failed_when: false
+
+    - name: A missing setting stops the run before anything is issued
+      ansible.builtin.assert:
+        that:
+          - _no_cn.rc != 0
+          - "'openbao_cert needs' in _no_cn.stdout"
+        quiet: true
+
+    - name: Remove the test containers and network
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} {{ _bao }} {{ _ssm }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false

@@ -1,0 +1,202 @@
+---
+# Reads the host's cert and OpenBao's CA, decides per host whether to issue,
+# then logs in once and issues only for the hosts that need it. Secrets stay
+# in no_log tasks; their failures are reported by the task after each one.
+- name: Check the cert settings
+  ansible.builtin.assert:
+    that:
+      - openbao_cert_name | length > 0
+      - openbao_cert_dir | length > 0
+      - openbao_cert_common_name | length > 0
+      - openbao_cert_bao_addr | length > 0
+      - openbao_cert_pki_role | length > 0
+      - openbao_cert_ssm_param | length > 0
+    fail_msg: >-
+      openbao_cert needs openbao_cert_name, _dir, _common_name, _bao_addr,
+      _pki_role and _ssm_param set
+    quiet: true
+
+- name: Create the cert directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ openbao_cert_dir }}"
+    state: directory
+    owner: "{{ openbao_cert_owner }}"
+    group: "{{ openbao_cert_group }}"
+    mode: "0750"
+
+- name: Read the cert the host holds now
+  become: true
+  ansible.builtin.slurp:
+    src: "{{ openbao_cert_dir }}/{{ openbao_cert_name }}.crt"
+  register: openbao_cert_current
+  failed_when: false
+
+- name: Fetch OpenBao's CA cert
+  # checkov:skip=CKV_ANSIBLE_1: the CA is what later trust is built on
+  delegate_to: localhost
+  run_once: true
+  become: false
+  ansible.builtin.uri:
+    url: "{{ openbao_cert_bao_addr }}/v1/{{ openbao_cert_pki_mount }}/ca/pem"
+    return_content: true
+    validate_certs: false
+  register: openbao_cert_ca
+
+- name: Read the CA's key identifier
+  delegate_to: localhost
+  run_once: true
+  become: false
+  community.crypto.x509_certificate_info:
+    content: "{{ openbao_cert_ca.content }}"
+  register: openbao_cert_ca_info
+
+- name: Read the current cert's names, issuer and expiry
+  delegate_to: localhost
+  become: false
+  community.crypto.x509_certificate_info:
+    content: "{{ openbao_cert_current.content | b64decode }}"
+    valid_at:
+      renew: "+{{ openbao_cert_renew_days }}d"
+  register: openbao_cert_current_info
+  when: openbao_cert_current.content is defined
+
+- name: Decide whether this host needs a new cert
+  ansible.builtin.set_fact:
+    openbao_cert_needs_issue: >-
+      {{ openbao_cert_current.content is not defined
+         or not openbao_cert_current_info.valid_at.renew
+         or openbao_cert_current_info.subject.commonName
+            != openbao_cert_common_name
+         or (openbao_cert_current_info.subject_alt_name | sort)
+            != (openbao_cert_wanted_sans | sort)
+         or openbao_cert_current_info.authority_key_identifier
+            != openbao_cert_ca_info.subject_key_identifier }}
+
+- name: Log in to OpenBao for the hosts that need a cert
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: >-
+    ansible_play_hosts | map('extract', hostvars, 'openbao_cert_needs_issue')
+    | map('bool') | select | list | length > 0
+  block:
+    - name: Read the AppRole from SSM
+      environment: "{{ openbao_cert_aws_env }}"
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ssm
+          - get-parameter
+          - --name
+          - "{{ openbao_cert_ssm_param }}"
+          - --with-decryption
+          - --query
+          - Parameter.Value
+          - --output
+          - text
+      register: openbao_cert_ssm
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Stop if SSM didn't return the AppRole
+      ansible.builtin.fail:
+        msg: >-
+          Reading {{ openbao_cert_ssm_param }} from SSM failed:
+          {{ openbao_cert_ssm.stderr }}
+      when: openbao_cert_ssm.rc != 0
+
+    - name: Log in with the AppRole
+      # checkov:skip=CKV_ANSIBLE_1: the CA is what later trust is built on
+      ansible.builtin.uri:
+        url: "{{ openbao_cert_bao_addr }}/v1/auth/approle/login"
+        method: POST
+        body_format: json
+        body:
+          role_id: "{{ (openbao_cert_ssm.stdout | from_json).role_id }}"
+          secret_id: "{{ (openbao_cert_ssm.stdout | from_json).secret_id }}"
+        validate_certs: false
+      register: openbao_cert_login
+      failed_when: false
+      no_log: true
+
+    - name: Stop if the AppRole login failed
+      ansible.builtin.fail:
+        msg: >-
+          AppRole login failed: {{ openbao_cert_login.msg | default('') }}
+          {{ openbao_cert_login.json.errors | default([]) | join('; ') }}
+      when: openbao_cert_login.status | default(-1) != 200
+
+- name: Issue this host's cert
+  when: openbao_cert_needs_issue | bool
+  block:
+    - name: Issue the cert from OpenBao PKI
+      # checkov:skip=CKV_ANSIBLE_1: the CA is what later trust is built on
+      delegate_to: localhost
+      become: false
+      ansible.builtin.uri:
+        url: >-
+          {{ openbao_cert_bao_addr }}/v1/{{ openbao_cert_pki_mount
+          }}/issue/{{ openbao_cert_pki_role }}
+        method: POST
+        headers:
+          X-Vault-Token: "{{ openbao_cert_login.json.auth.client_token }}"
+        body_format: json
+        body:
+          common_name: "{{ openbao_cert_common_name }}"
+          alt_names: "{{ openbao_cert_dns_sans | join(',') }}"
+          ip_sans: "{{ openbao_cert_ip_sans | join(',') }}"
+          ttl: "{{ openbao_cert_ttl }}"
+        validate_certs: false
+      register: openbao_cert_issue
+      changed_when: openbao_cert_issue.status | default(-1) == 200
+      failed_when: false
+      no_log: true
+
+    - name: Stop if OpenBao didn't issue the cert
+      ansible.builtin.fail:
+        msg: >-
+          Issuing {{ openbao_cert_common_name }} failed:
+          {{ openbao_cert_issue.msg | default('') }}
+          {{ openbao_cert_issue.json.errors | default([]) | join('; ') }}
+      when: openbao_cert_issue.status | default(-1) != 200
+
+    - name: Write the private key
+      become: true
+      ansible.builtin.copy:
+        content: "{{ openbao_cert_issue.json.data.private_key }}\n"
+        dest: "{{ openbao_cert_dir }}/{{ openbao_cert_name }}.key"
+        owner: "{{ openbao_cert_owner }}"
+        group: "{{ openbao_cert_group }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Write the cert
+      become: true
+      ansible.builtin.copy:
+        content: "{{ openbao_cert_issue.json.data.certificate }}\n"
+        dest: "{{ openbao_cert_dir }}/{{ openbao_cert_name }}.crt"
+        owner: "{{ openbao_cert_owner }}"
+        group: "{{ openbao_cert_group }}"
+        mode: "0644"
+
+- name: Write the CA cert clients verify against
+  become: true
+  ansible.builtin.copy:
+    content: "{{ openbao_cert_ca.content | trim }}\n"
+    dest: "{{ openbao_cert_dir }}/{{ openbao_cert_name }}-ca.crt"
+    owner: "{{ openbao_cert_owner }}"
+    group: "{{ openbao_cert_group }}"
+    mode: "0644"
+
+- name: Write the cert's expiry for node_exporter
+  become: true
+  ansible.builtin.template:
+    src: cert-metric.prom.j2
+    dest: >-
+      {{ openbao_cert_metrics_dir }}/openbao-cert-{{ openbao_cert_name }}.prom
+    owner: root
+    group: root
+    mode: "0644"
+  when: openbao_cert_metrics_dir | length > 0

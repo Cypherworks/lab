@@ -1,0 +1,19 @@
+---
+# Shared by issue.yml and the converge it runs: the dev OpenBao and moto SSM
+# that pki_services.yml starts, and the cert the target asks for.
+openbao_cert_bao_addr: http://127.0.0.1:18210
+openbao_cert_pki_role: infra
+openbao_cert_ssm_param: /openbao-cert-test/approle
+openbao_cert_aws_env:
+  AWS_ENDPOINT_URL: http://127.0.0.1:18211
+  AWS_ACCESS_KEY_ID: test-only
+  AWS_SECRET_ACCESS_KEY: test-only
+  AWS_DEFAULT_REGION: eu-west-2
+openbao_cert_name: svc
+openbao_cert_dir: /etc/svc/tls
+openbao_cert_owner: nobody
+openbao_cert_group: nogroup
+openbao_cert_common_name: svc.example.test
+openbao_cert_dns_sans: [alt.example.test]
+openbao_cert_ip_sans: [192.0.2.10]
+openbao_cert_metrics_dir: /var/lib/prometheus/node-exporter

@@ -2338,7 +2338,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(clamp_max(sum(patroni_primary), 1) or vector(0)) * (1 + (min(up{job=\"patroni\"}) or vector(0)))",
+          "expr": "min((clamp_max(sum by (cluster) (patroni_primary), 1) or on (cluster) (0 * max by (cluster) (up{job=\"patroni\"}))) * on (cluster) (1 + min by (cluster) (up{job=\"patroni\"}))) or vector(0)",
           "instant": true
         }
       ]

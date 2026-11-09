@@ -23,6 +23,10 @@ authentik_pg_host: "{{ ansible_default_ipv4.address }}"
 authentik_pg_port: 5000
 authentik_pg_name: authentik
 authentik_pg_user: authentik
+# The name in the database's cert; Authentik dials it, mapped to pg_host.
+authentik_pg_tls_name: ""
+# PEM of the CA that issued the database's cert. Site data.
+authentik_pg_ca_cert: ""
 
 # Redis via the local HAProxy role:master frontend (Authentik has no Sentinel
 # support, so it must see a single endpoint; Sentinel drives the failover).

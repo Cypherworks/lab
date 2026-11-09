@@ -76,6 +76,41 @@
         name: nothing reporting
         want: 0
         series: []
+      - tile: Patroni
+        name: two clusters, each with a primary and every member up
+        want: 2
+        series:
+          - { series: 'patroni_primary{cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'patroni_primary{cluster="apps",instance="apps-pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-1"}', values: "1x3" }
+      - tile: Patroni
+        name: one cluster without a primary while the other has one
+        want: 0
+        series:
+          - { series: 'patroni_primary{cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'patroni_primary{cluster="apps",instance="apps-pg-1"}', values: "0x3" }
+          - { series: 'patroni_primary{cluster="apps",instance="apps-pg-2"}', values: "0x3" }
+          - { series: 'up{job="patroni",cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-2"}', values: "1x3" }
+      - tile: Patroni
+        name: one cluster wholly unreachable while the other is fine
+        want: 0
+        series:
+          - { series: 'patroni_primary{cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-1"}', values: "0x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-2"}', values: "0x3" }
+      - tile: Patroni
+        name: one cluster's replica down while the other is fine
+        want: 1
+        series:
+          - { series: 'patroni_primary{cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'patroni_primary{cluster="apps",instance="apps-pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="authentik",instance="pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-1"}', values: "1x3" }
+          - { series: 'up{job="patroni",cluster="apps",instance="apps-pg-2"}', values: "0x3" }
       - tile: etcd
         name: a leader and every member up
         want: 2

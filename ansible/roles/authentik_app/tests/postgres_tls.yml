@@ -1,0 +1,132 @@
+---
+# Renders the env and compose and checks Authentik dials the database by the
+# name in its cert, mapped to the node's HAProxy address, verifies it against
+# the mounted CA (kept out of /certs, which Authentik imports from), and that
+# the role writes that CA and refuses to run without the name or the CA. The
+# CA tasks run in a throwaway Debian 13 container, as root owns the file.
+# Needs Docker and community.docker. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/authentik_app/tests/postgres_tls.yml
+- name: Verify Authentik verifies the database server
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    ldaps_cert: ""
+    ldaps_key: ""
+    _vars:
+      ansible_default_ipv4: { address: 192.0.2.30 }
+      authentik_pg_tls_name: db.example.test
+      authentik_pg_ca_cert: "-----BEGIN CERTIFICATE-----"
+      authentik_compose_dir: /opt/authentik
+      authentik_user_email: ""
+      authentik_user_password: ""
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Render the env and the compose
+      ansible.builtin.set_fact:
+        _env: "{{ lookup('ansible.builtin.template', '../templates/env.j2', template_vars=_vars) }}"
+        _compose: "{{ lookup('ansible.builtin.template', '../templates/compose.yaml.j2', template_vars=_vars) | from_yaml }}"
+
+    - name: Authentik dials the cert's name on the node's address and verifies it
+      ansible.builtin.assert:
+        that:
+          - "'AUTHENTIK_POSTGRESQL__HOST=db.example.test' in _env.splitlines()"
+          - "'AUTHENTIK_POSTGRESQL__SSLMODE=verify-full' in _env.splitlines()"
+          - "'AUTHENTIK_POSTGRESQL__SSLROOTCERT=/postgres/ca.crt' in _env.splitlines()"
+          - _compose.services[item].extra_hosts == ['db.example.test:192.0.2.30']
+          - "'/opt/authentik/postgres-ca.crt:/postgres/ca.crt:ro' in _compose.services[item].volumes"
+        quiet: true
+      loop: [server, worker]
+
+    - name: Start a target for the CA tasks
+      ansible.builtin.shell: >-
+        docker rm -f authentik-ca-test 2>/dev/null;
+        docker run -d --name authentik-ca-test debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 sudo &&
+        mkdir -p /opt/authentik && touch /ready && exec sleep infinity'
+      changed_when: true
+
+    - name: Wait for the target's Python
+      ansible.builtin.command: docker exec authentik-ca-test test -f /ready
+      register: _ready
+      until: _ready.rc == 0
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Add the target
+      ansible.builtin.add_host:
+        name: authentik-ca-test
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Verify the role writes the CA and needs both settings
+  hosts: authentik-ca-test
+  gather_facts: false
+  vars:
+    _ca: "-----BEGIN CERTIFICATE-----\ntest-only\n-----END CERTIFICATE-----"
+    authentik_compose_dir: /opt/authentik
+  tasks:
+    - name: Run the role's CA tasks
+      ansible.builtin.include_tasks: ../tasks/postgres_ca.yml
+      vars:
+        authentik_pg_tls_name: db.example.test
+        authentik_pg_ca_cert: "{{ _ca }}"
+
+    - name: Read the CA file
+      ansible.builtin.slurp:
+        src: /opt/authentik/postgres-ca.crt
+      register: _ca_file
+
+    - name: Read its owner and mode
+      ansible.builtin.stat:
+        path: /opt/authentik/postgres-ca.crt
+      register: _ca_stat
+
+    - name: The CA is written where the compose mounts it, root-owned
+      ansible.builtin.assert:
+        that:
+          - _ca_file.content | b64decode == _ca ~ '\n'
+          - _ca_stat.stat.pw_name == 'root'
+          - _ca_stat.stat.mode == '0644'
+        quiet: true
+
+    - name: Run the CA tasks without a CA
+      block:
+        - name: Include them with the CA unset
+          ansible.builtin.include_tasks: ../tasks/postgres_ca.yml
+          vars:
+            authentik_pg_tls_name: db.example.test
+            authentik_pg_ca_cert: ""
+
+        - name: Fail, as the role should have stopped
+          ansible.builtin.fail:
+            msg: The role ran without a database CA
+      rescue:
+        - name: The role stopped and said what's missing
+          ansible.builtin.assert:
+            that:
+              - "'authentik_pg_tls_name and authentik_pg_ca_cert' in ansible_failed_result.msg"
+            quiet: true
+
+  handlers:
+    - name: Restart authentik
+      ansible.builtin.debug:
+        msg: The role would restart Authentik here
+
+- name: Clean up
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Remove the target
+      ansible.builtin.command: docker rm -f authentik-ca-test
+      changed_when: true

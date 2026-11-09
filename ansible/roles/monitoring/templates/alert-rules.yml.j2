@@ -76,13 +76,13 @@ groups:
           description: "The filesystem was remounted read-only — usually a storage or corruption error. Check dmesg and btrfs device stats now."
 
       - alert: PatroniNoPrimary
-        expr: sum(patroni_primary) < 1
+        expr: sum by (cluster) (patroni_primary) < 1
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Patroni has no primary"
-          description: "No PostgreSQL primary in the cluster — auto-failover may be stuck."
+          summary: "Patroni has no primary: {{ '{{ $labels.cluster }}' }}"
+          description: "No PostgreSQL primary in the {{ '{{ $labels.cluster }}' }} cluster. Auto-failover may be stuck."
 {% if monitoring_blackbox_targets %}
 
       - alert: CertExpiringSoon
@@ -104,6 +104,16 @@ groups:
           summary: "TLS cert probe not reporting"
           description: "Fewer targets reporting a cert than configured, so an expiry could go unseen."
 {% endif %}
+
+      # Certs on disk from openbao_cert renew only when their play runs.
+      - alert: CertRenewalDue
+        expr: tls_cert_not_after_seconds - time() < 86400 * {{ monitoring_cert_file_renew_days }}
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS cert renewal due: {{ '{{ $labels.cert }}' }} on {{ '{{ $labels.instance }}' }}"
+          description: "Under {{ monitoring_cert_file_renew_days }} days left; the play that deploys it reissues it."
 
       - alert: RedisDown
         expr: redis_up == 0

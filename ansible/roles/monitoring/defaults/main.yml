@@ -72,6 +72,8 @@ monitoring_blackbox_node_tls_targets: []
 monitoring_blackbox_node_tls_server_name: ""
 # ACME renews at about 30 days left, so this means renewal has been failing.
 monitoring_cert_expiry_warn_days: 14
+# Matches openbao_cert_renew_days: any deploy of that host renews it from here.
+monitoring_cert_file_renew_days: 30
 
 # blackbox_exporter DNS probes: {target: "ip:53", instance}.
 monitoring_blackbox_dns_targets: []

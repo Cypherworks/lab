@@ -19,7 +19,9 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 | `authentik_ldap_outpost_image` | `ghcr.io/goauthentik/ldap:2025.6.4` | LDAP outpost image; must track the server version. |
 | `authentik_compose_dir` | `/opt/authentik` | Host directory for the compose file, `.env`, and bind-mounts. |
 | `authentik_server_port` | `9000` | Server HTTP port. |
-| `authentik_pg_host` | `{{ ansible_default_ipv4.address }}` | Postgres host — the node's lab IP (HAProxy frontend), not loopback. |
+| `authentik_pg_host` | `{{ ansible_default_ipv4.address }}` | The address `authentik_pg_tls_name` maps to in the containers: the node's lab IP (HAProxy frontend), not loopback. |
+| `authentik_pg_tls_name` | `""` | Required. The DNS name in the database's cert. Authentik dials it with `sslmode=verify-full`; compose `extra_hosts` maps it to `authentik_pg_host`. |
+| `authentik_pg_ca_cert` | `""` | Required. PEM of the CA that issued the database's cert, mounted at `/postgres/ca.crt` (not `/certs`, which Authentik imports from). |
 | `authentik_pg_port` | `5000` | Postgres HAProxy frontend port. |
 | `authentik_pg_name` | `authentik` | Postgres database name. |
 | `authentik_pg_user` | `authentik` | Postgres user. |
@@ -81,7 +83,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 ## What it does
 
-1. Creates the compose, blueprints, and media directories.
+1. Creates the compose, blueprints, and media directories, and writes the database CA beside the compose (`postgres_ca.yml`), stopping first if `authentik_pg_tls_name` or `authentik_pg_ca_cert` is unset.
 2. Copies branding assets into `<media>/public`.
 3. When `authentik_ldaps_pki_role` is set, issues the LDAPS outpost cert from OpenBao PKI (`ldaps_cert.yml`) before the blueprint and compose consume it.
 4. Renders the twelve integration blueprints into `authentik_blueprints_dir`: `headscale`, `core`, `recovery`, `invitation`, `nas`, `grafana`, `openbao`, `vcenter`, `technitium`, `ldap`, `user`, `forward_auth`.
@@ -99,6 +101,8 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
       vars:
         authentik_secret_key: "{{ vault_authentik_secret_key }}"
         authentik_pg_password: "{{ vault_authentik_pg_password }}"
+        authentik_pg_tls_name: db.example.com
+        authentik_pg_ca_cert: "{{ lookup('ansible.builtin.file', 'internal-ca.pem') }}"
         authentik_redis_password: "{{ vault_authentik_redis_password }}"
         authentik_bootstrap_password: "{{ vault_authentik_bootstrap_password }}"
         authentik_admin_email: admin@example.com

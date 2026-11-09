@@ -4,7 +4,8 @@
    Each target is a {target, instance} mapping so the scraped series carry the real
    hostname as their `instance` label (dashboards read hostnames, not IPs). One
    static_configs block per target sets that block's `instance` label. No
-   per-node node_exporter change is needed. #}
+   per-node node_exporter change is needed. A target's optional `labels`
+   mapping adds more, such as Patroni's `cluster`. #}
 global:
   scrape_interval: {{ monitoring_scrape_interval }}
 
@@ -18,6 +19,9 @@ scrape_configs:
       - targets: ["{{ t.target }}"]
         labels:
           instance: "{{ t.instance }}"
+{% for name, value in (t.labels | default({})).items() %}
+          {{ name }}: "{{ value }}"
+{% endfor %}
 {% endfor %}
 {% endif %}
 {% endmacro -%}

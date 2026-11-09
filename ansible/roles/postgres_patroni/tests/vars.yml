@@ -1,0 +1,28 @@
+---
+# Shared by the tests and the converges they run: two members, one app
+# client address, and the dev OpenBao and moto SSM cluster.yml starts.
+patroni_scope: tls-test
+patroni_members:
+  - { name: pg-test-1, ip: 172.30.97.11 }
+  - { name: pg-test-2, ip: 172.30.97.12 }
+patroni_etcd_hosts: "172.30.97.5:2379"
+patroni_superuser_password: test-only-superuser
+patroni_replication_password: test-only-replication
+patroni_rest_password: test-only-rest
+patroni_databases:
+  - { name: authentik, owner: authentik, password: test-only-app, client_ips: [172.30.97.21] }
+  - { name: incidents, owner: incidents, password: test-only-incidents, client_ips: [172.30.97.22], conn_limit: 5 }
+patroni_tls_service_name: db.example.test
+# Only the pre-hardening role reads these.
+patroni_lab_cidr: 172.30.97.0/24
+patroni_app_password: test-only-app
+
+openbao_cert_bao_addr: http://127.0.0.1:18220
+openbao_cert_pki_role: infra
+openbao_cert_ssm_param: /patroni-tls-test/approle
+openbao_cert_aws_env:
+  AWS_ENDPOINT_URL: http://127.0.0.1:18221
+  AWS_ACCESS_KEY_ID: test-only
+  AWS_SECRET_ACCESS_KEY: test-only
+  AWS_DEFAULT_REGION: eu-west-2
+openbao_cert_metrics_dir: /var/lib/prometheus/node-exporter

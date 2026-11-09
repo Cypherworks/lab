@@ -73,7 +73,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_node_targets` | `[]` | node_exporter on bare-metal hosts (`:9100`). |
 | `monitoring_node_instance_targets` | `[]` | node_exporter on the Incus instances (`:9100`), scraped as job `node-instance` so a host and an instance stay apart. |
 | `monitoring_blocky_targets` | `[]` | blocky `/metrics` (`:4000`). |
-| `monitoring_patroni_targets` | `[]` | Patroni REST `/metrics` (`:8008`). |
+| `monitoring_patroni_targets` | `[]` | Patroni REST `/metrics` (`:8008`), as `{target, instance, labels: {cluster}}`. `PatroniNoPrimary` and the Patroni tile work per `cluster`, so one cluster's primary can't hide another's loss. |
 | `monitoring_etcd_targets` | `[]` | etcd `/metrics` (`:2379`). |
 | `monitoring_redis_targets` | `[]` | redis endpoints (`:6379`) via redis_exporter. |
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
