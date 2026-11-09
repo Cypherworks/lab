@@ -1,0 +1,168 @@
+---
+# Builds a cluster from nothing with this role, as a rebuild does, so the
+# first initdb already runs with TLS and the hardened pg_hba. Proves a leader
+# is elected, the replica's base backup and stream both pass pg_hba over TLS,
+# the app logs in verifying the server by name, each database admits only
+# its own role from its own clients, a role's connection limit holds, and a
+# re-run changes nothing.
+# Needs what tls.yml needs, and can't run alongside it. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/postgres_patroni/tests/bootstrap.yml
+- name: Verify a cluster bootstraps hardened
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  environment:
+    ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+  vars_files:
+    - estate.yml
+  tasks:
+    - name: Start the test estate
+      ansible.builtin.include_tasks: cluster.yml
+
+    - name: Build the cluster with this role
+      ansible.builtin.command: "{{ _converge }}"
+      changed_when: true
+
+    - name: Find the leader
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _nodes[0] }}", python3, -c, "{{ _leader_py }}"]
+      register: _leader
+      until: _leader.rc == 0
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: Wait for the replica to stream over TLS
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _ips | dict2items | selectattr('value', 'equalto', _leader.stdout) | map(attribute='key') | first }}"
+          - su
+          - postgres
+          - -c
+          - >-
+            psql -qAtc "select r.state, s.ssl from pg_stat_replication r
+            join pg_stat_ssl s using (pid)"
+      register: _repl
+      until: _repl.stdout == 'streaming|t'
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: Read the replica's pg_hba
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _ips | dict2items | rejectattr('value', 'equalto', _leader.stdout) | selectattr('key', 'in', _nodes) | map(attribute='key') | first }}"
+          - cat
+          - /var/lib/postgresql/16/main/pg_hba.conf
+      register: _hba
+      changed_when: false
+
+    - name: Give the clients the CA
+      ansible.builtin.shell: >-
+        docker exec {{ _nodes[0] }} cat /etc/patroni/tls/postgres-ca.crt |
+        docker exec -i {{ item }} sh -c 'cat > /tmp/ca.crt'
+      loop: "{{ _clients }}"
+      changed_when: true
+
+    - name: Each client tries both databases, verifying the leader by name
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ item.client }}"
+          - psql
+          - >-
+            host=db.example.test hostaddr={{ _leader.stdout }} dbname={{ item.db }}
+            user={{ item.db }} password={{ item.password }} sslmode=verify-full
+            sslrootcert=/tmp/ca.crt connect_timeout=5
+          - -qAtc
+          - select 1
+      loop:
+        - { client: "{{ _stranger }}", db: incidents, password: test-only-incidents }
+        - { client: "{{ _app }}", db: incidents, password: test-only-incidents }
+        - { client: "{{ _stranger }}", db: authentik, password: test-only-app }
+      loop_control:
+        label: "{{ item.client }} -> {{ item.db }}"
+      register: _crossed
+      changed_when: false
+      failed_when: false
+
+    - name: Read each role's connection limit
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _ips | dict2items | selectattr('value', 'equalto', _leader.stdout) | map(attribute='key') | first }}"
+          - su
+          - postgres
+          - -c
+          - >-
+            psql -qAtc "select string_agg(rolname || '=' || rolconnlimit, ' ' order by rolname)
+            from pg_roles where rolname in ('authentik', 'incidents')"
+      register: _limits
+      changed_when: false
+
+    - name: The app logs in to the leader, verifying it by name
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _app }}"
+          - psql
+          - >-
+            host=db.example.test hostaddr={{ _leader.stdout }} dbname=authentik
+            user=authentik password=test-only-app sslmode=verify-full
+            sslrootcert=/tmp/ca.crt connect_timeout=5
+          - -qAtc
+          - select 1
+      register: _login
+      changed_when: false
+
+    - name: Read Patroni's connections on each member
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ item }}"
+          - su
+          - postgres
+          - -c
+          - >-
+            psql -qAtc "select count(*) || ' ' || coalesce(bool_and(s.ssl), false)
+            from pg_stat_activity a join pg_stat_ssl s using (pid)
+            where a.application_name like 'Patroni%'"
+      loop: "{{ _nodes }}"
+      register: _patroni_conn
+      changed_when: false
+
+    - name: Run the role again
+      ansible.builtin.command: "{{ _converge }}"
+      register: _again
+      changed_when: false
+
+    - name: The replica took the hardened pg_hba, the app got in, and the re-run changed nothing
+      ansible.builtin.assert:
+        that:
+          - _hba.stdout is not search('trust|md5')
+          - _hba.stdout is not search('(?m)^host\s')
+          - _login.stdout == '1'
+          - _crossed.results | map(attribute='rc') | list == [0, 2, 2]
+          - _crossed.results[0].stdout == '1'
+          - _limits.stdout == 'authentik=-1 incidents=5'
+          - _patroni_conn.results | map(attribute='stdout') | map('regex_replace', '^\d+ ', '') | unique | list == ['true']
+          - _patroni_conn.results | map(attribute='stdout') | map('regex_search', '^\d+') | map('int') | min > 0
+          - _again.stdout is search('pg-test-1\s+: ok=\d+\s+changed=0')
+          - _again.stdout is search('pg-test-2\s+: ok=\d+\s+changed=0')
+        quiet: true
+
+    - name: Remove the test estate
+      ansible.builtin.shell: >-
+        docker rm -f {{ (_nodes + _clients + [_etcd, _bao, _ssm]) | join(' ') }}
+        2>/dev/null; docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false

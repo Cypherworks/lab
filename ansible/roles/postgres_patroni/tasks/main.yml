@@ -1,4 +1,12 @@
 ---
+- name: Check the cluster settings
+  ansible.builtin.assert:
+    that:
+      - patroni_members | length > 0
+      - patroni_tls_service_name | length > 0
+    fail_msg: postgres_patroni needs patroni_members and patroni_tls_service_name
+    quiet: true
+
 - name: Add the PGDG repository
   become: true
   ansible.builtin.deb822_repository:
@@ -60,6 +68,33 @@
     enabled: false
     masked: true
 
+- name: Read the services' states
+  ansible.builtin.service_facts:
+
+- name: Note whether Patroni was running before this run
+  ansible.builtin.set_fact:
+    patroni_was_running: >-
+      {{ ansible_facts.services['patroni.service'].state | default('') == 'running' }}
+
+- name: Issue the server cert
+  ansible.builtin.include_role:
+    name: openbao_cert
+  vars:
+    openbao_cert_name: postgres
+    openbao_cert_dir: "{{ patroni_tls_dir }}"
+    openbao_cert_owner: postgres
+    openbao_cert_group: postgres
+    openbao_cert_common_name: "{{ patroni_tls_service_name }}"
+    openbao_cert_dns_sans: []
+    openbao_cert_ip_sans: ["{{ patroni_this_ip }}"]
+
+- name: Have Postgres load a new cert
+  ansible.builtin.debug:
+    msg: A new server cert was issued
+  changed_when: openbao_cert_needs_issue | bool
+  when: openbao_cert_needs_issue | bool
+  notify: Reload patroni
+
 - name: Render the Patroni config
   become: true
   ansible.builtin.template:
@@ -68,7 +103,7 @@
     owner: postgres
     group: postgres
     mode: "0600"
-  notify: Restart patroni
+  notify: Reload patroni
 
 - name: Install the Patroni systemd unit
   become: true
@@ -82,6 +117,9 @@
     - Reload systemd
     - Restart patroni
 
+- name: Apply config, cert and unit changes before going on
+  ansible.builtin.meta: flush_handlers
+
 - name: Enable and start Patroni
   become: true
   ansible.builtin.systemd_service:
@@ -89,6 +127,20 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# Patroni applies a reload on its own loop, so wait for TLS to come up.
+- name: Wait for Postgres to answer over TLS, verified by address
+  community.postgresql.postgresql_ping:
+    login_host: "{{ patroni_this_ip }}"
+    login_user: postgres
+    login_password: "{{ patroni_superuser_password }}"
+    port: 5432
+    ssl_mode: verify-full
+    ca_cert: "{{ patroni_tls_dir }}/postgres-ca.crt"
+  register: patroni_tls_ping
+  until: patroni_tls_ping.is_available
+  retries: 30
+  delay: 5
 
 - name: Wait for the cluster to elect a leader
   run_once: true
@@ -112,24 +164,37 @@
     - patroni_cluster.json is defined
     - (patroni_cluster.json.members | default([]) | selectattr('role', 'equalto', 'leader') | list | length) > 0
 
-- name: Create the Authentik database role (leader only, idempotent)
+- name: Create each database's owner (leader only, idempotent)
   run_once: true
   community.postgresql.postgresql_user:
-    name: "{{ patroni_app_user }}"
-    password: "{{ patroni_app_password }}"
+    name: "{{ item.owner }}"
+    password: "{{ item.password }}"
+    conn_limit: "{{ item.conn_limit | default(-1) }}"
     login_host: "{{ patroni_leader_ip }}"
     login_user: postgres
     login_password: "{{ patroni_superuser_password }}"
     port: 5432
+    ssl_mode: verify-full
+    ca_cert: "{{ patroni_tls_dir }}/postgres-ca.crt"
+  loop: "{{ patroni_databases }}"
+  loop_control:
+    label: "{{ item.owner }}"
+  no_log: true
   when: patroni_leader_ip is defined
 
-- name: Create the Authentik database (leader only, idempotent)
+- name: Create each database (leader only, idempotent)
   run_once: true
   community.postgresql.postgresql_db:
-    name: "{{ patroni_app_db }}"
-    owner: "{{ patroni_app_user }}"
+    name: "{{ item.name }}"
+    owner: "{{ item.owner }}"
     login_host: "{{ patroni_leader_ip }}"
     login_user: postgres
     login_password: "{{ patroni_superuser_password }}"
     port: 5432
+    ssl_mode: verify-full
+    ca_cert: "{{ patroni_tls_dir }}/postgres-ca.crt"
+  loop: "{{ patroni_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
   when: patroni_leader_ip is defined

@@ -77,6 +77,24 @@
                   exp_annotations:
                     summary: "TLS cert probe not reporting"
                     description: "Fewer targets reporting a cert than configured, so an expiry could go unseen."
+        - name: a cert file inside its renewal window fires, and one outside doesn't
+          interval: 1m
+          input_series:
+            - series: 'tls_cert_not_after_seconds{cert="postgres", instance="pg-1"}'
+              values: '{{ 20 * _day }}+0x180'
+            - series: 'tls_cert_not_after_seconds{cert="postgres", instance="pg-2"}'
+              values: '{{ 45 * _day }}+0x180'
+          alert_rule_test:
+            - eval_time: 2h
+              alertname: CertRenewalDue
+              exp_alerts:
+                - exp_labels:
+                    severity: warning
+                    cert: postgres
+                    instance: pg-1
+                  exp_annotations:
+                    summary: "TLS cert renewal due: postgres on pg-1"
+                    description: "Under {{ monitoring_cert_file_renew_days }} days left; the play that deploys it reissues it."
   tasks:
     - name: Read the role's defaults
       ansible.builtin.include_vars:

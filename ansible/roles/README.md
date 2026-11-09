@@ -31,6 +31,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | `vcenter_cluster` | vCenter Datacenter and Cluster (HA/DRS/vSAN off) with the ESXi host added. |
 | `vcenter_oidc` | vCenter identity provider federation against an external OIDC provider. |
 | `openbao` | OpenBao secrets manager — PKI, KMS auto-unseal, OIDC, SSH CA, snapshots. |
+| `openbao_cert` | A host's TLS cert from OpenBao PKI, reissued only when due. |
 | `authentik_app` | Authentik app tier against an external HA database, with an LDAP outpost. |
 | `monitoring` | VictoriaMetrics, vmalert, Alertmanager, Grafana, VictoriaLogs, and exporters. |
 | `node_exporter` | Prometheus node_exporter on bare-metal hosts. |

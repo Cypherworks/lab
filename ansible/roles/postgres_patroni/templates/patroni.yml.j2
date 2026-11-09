@@ -28,10 +28,6 @@ bootstrap:
   initdb:
     - encoding: UTF8
     - data-checksums
-  pg_hba:
-    - host replication replicator {{ patroni_lab_cidr }} md5
-    - host all all {{ patroni_lab_cidr }} md5
-    - local all all trust
 
 postgresql:
   listen: {{ patroni_this_ip }}:5432
@@ -42,8 +38,30 @@ postgresql:
     superuser:
       username: postgres
       password: "{{ patroni_superuser_password }}"
+      sslmode: verify-full
+      sslrootcert: {{ patroni_tls_dir }}/postgres-ca.crt
     replication:
       username: replicator
       password: "{{ patroni_replication_password }}"
+      sslmode: verify-full
+      sslrootcert: {{ patroni_tls_dir }}/postgres-ca.crt
   parameters:
     max_connections: {{ patroni_max_connections }}
+    ssl: "on"
+    ssl_cert_file: {{ patroni_tls_dir }}/postgres.crt
+    ssl_key_file: {{ patroni_tls_dir }}/postgres.key
+    ssl_min_protocol_version: TLSv1.3
+  # Patroni writes this whole file on every start and reload.
+  pg_hba:
+    - local all postgres peer
+{% for member in patroni_members %}
+    - hostssl all postgres {{ member.ip }}/32 scram-sha-256
+{% endfor %}
+{% for member in patroni_members %}
+    - hostssl replication replicator {{ member.ip }}/32 scram-sha-256
+{% endfor %}
+{% for db in patroni_databases %}
+{% for ip in db.client_ips %}
+    - hostssl {{ db.name }} {{ db.owner }} {{ ip }}/32 scram-sha-256
+{% endfor %}
+{% endfor %}

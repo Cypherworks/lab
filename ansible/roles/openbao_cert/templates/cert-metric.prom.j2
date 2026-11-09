@@ -1,0 +1,3 @@
+# HELP tls_cert_not_after_seconds When the cert on disk expires.
+# TYPE tls_cert_not_after_seconds gauge
+tls_cert_not_after_seconds{cert="{{ openbao_cert_name }}"} {{ openbao_cert_not_after }}

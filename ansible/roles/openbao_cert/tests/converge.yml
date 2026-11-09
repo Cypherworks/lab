@@ -1,0 +1,11 @@
+---
+# Runs the role on the target. issue.yml calls this as a separate run, so an
+# expected failure can't end the test.
+- name: Converge the cert target
+  hosts: all
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Run the openbao_cert role
+      ansible.builtin.include_role:
+        name: openbao_cert

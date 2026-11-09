@@ -1,0 +1,16 @@
+---
+# Derived from the settings, not set by callers. SANs are written the way
+# x509_certificate_info reports them, so the role can compare the two.
+openbao_cert_wanted_sans: >-
+  {{ ([openbao_cert_common_name] + openbao_cert_dns_sans) | unique
+     | map('regex_replace', '^', 'DNS:') | list
+     + openbao_cert_ip_sans | map('regex_replace', '^', 'IP:') | list }}
+
+# Unix seconds: from the fresh issue if there was one, else the cert held.
+openbao_cert_not_after: >-
+  {{ openbao_cert_issue.json.data.expiration
+     if openbao_cert_issue.json is defined
+     else ((openbao_cert_current_info.not_after
+            | to_datetime('%Y%m%d%H%M%SZ'))
+           - ('19700101000000Z' | to_datetime('%Y%m%d%H%M%SZ'))
+          ).total_seconds() | int }}

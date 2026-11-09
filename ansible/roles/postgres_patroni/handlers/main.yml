@@ -9,3 +9,11 @@
   ansible.builtin.systemd_service:
     name: patroni
     state: restarted
+
+# Config, pg_hba and cert changes apply on reload, so they cost no failover.
+- name: Reload patroni
+  become: true
+  ansible.builtin.systemd_service:
+    name: patroni
+    state: reloaded
+  when: patroni_was_running | bool

@@ -1,0 +1,379 @@
+---
+# Builds a two-member cluster with the role as it was before hardening (the
+# live state: trust on the socket, md5 from the whole CIDR, no TLS), then
+# applies this role over it while an app writes on the default sslmode, as
+# Authentik does until its own deploy moves it to verify-full. Proves no
+# write fails; TLS 1.3 is on; pg_hba admits only the members and the app's
+# address, only over TLS with SCRAM; clients verify the server by name and by
+# address; replication streams over TLS before and after a switchover; a new
+# cert is served without a restart; and a re-run changes nothing. Needs
+# Docker, git, the aws CLI and the community.docker, community.crypto and
+# community.postgresql collections, plus internet for images, debs and pip.
+# From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/postgres_patroni/tests/tls.yml
+- name: Verify the hardening reaches a running cluster without an outage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - estate.yml
+  vars:
+    # The role as main had it before hardening, which the live cluster runs.
+    _old_ref: dd43264dccd0e076f58424f00d2f697b9a19771c
+    _old_roles: "{{ playbook_dir }}/.pre-hardening"
+    _new_roles: "{{ playbook_dir | dirname | dirname }}"
+    _hba: /var/lib/postgresql/16/main/pg_hba.conf
+    _cert: /etc/patroni/tls/postgres.crt
+    _app_conn: >-
+      dbname=authentik user=authentik password=test-only-app connect_timeout=5
+    _verify: sslmode=verify-full sslrootcert=/tmp/ca.crt
+    _writer: >-
+      while true; do
+      if psql "host=$0 {{ _app_conn }}" -qAtc
+      "insert into writes default values" >/dev/null 2>&1;
+      then echo ok >> /tmp/writes; else echo fail >> /tmp/writes; fi;
+      sleep 0.2; done
+    _expected_hba:
+      - local all postgres peer
+      - hostssl all postgres 172.30.97.11/32 scram-sha-256
+      - hostssl all postgres 172.30.97.12/32 scram-sha-256
+      - hostssl replication replicator 172.30.97.11/32 scram-sha-256
+      - hostssl replication replicator 172.30.97.12/32 scram-sha-256
+      - hostssl authentik authentik 172.30.97.21/32 scram-sha-256
+      - hostssl incidents incidents 172.30.97.22/32 scram-sha-256
+  tasks:
+    - name: Start the test estate
+      ansible.builtin.include_tasks: cluster.yml
+
+    - name: Unpack the role as it was before hardening
+      ansible.builtin.shell: >-
+        rm -rf {{ _old_roles }} && mkdir -p {{ _old_roles }} &&
+        git -C "$(git -C {{ playbook_dir }} rev-parse --show-toplevel)"
+        archive {{ _old_ref }} ansible/roles/postgres_patroni |
+        tar -x -C {{ _old_roles }} --strip-components=2
+      changed_when: true
+
+    - name: Build the cluster with the pre-hardening role
+      ansible.builtin.command: "{{ _converge }}"
+      environment:
+        ANSIBLE_ROLES_PATH: "{{ _old_roles }}"
+      changed_when: true
+
+    - name: Find the leader, once the old role's restart handler settles
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _nodes[0] }}", python3, -c, "{{ _leader_py }}"]
+      register: _leader
+      until: _leader.rc == 0
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: The pre-hardening cluster is in the live state
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _nodes[0] }}", cat, "{{ _hba }}"]
+      register: _old_hba
+      changed_when: false
+
+    - name: Check the starting point matches what live runs
+      ansible.builtin.assert:
+        that:
+          - _old_hba.stdout is search('local\s+all\s+all\s+trust')
+          - _old_hba.stdout is search('host\s+all\s+all\s+172\.30\.97\.0/24\s+md5')
+        quiet: true
+
+    - name: Make the table the app writes to
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _app }}"
+          - psql
+          - "host={{ _leader.stdout }} {{ _app_conn }}"
+          - -qAtc
+          - create table writes (id serial primary key, at timestamptz default now())
+      changed_when: true
+
+    - name: Start the app writing on the default sslmode
+      ansible.builtin.command:
+        argv: [docker, exec, -d, "{{ _app }}", sh, -c, "{{ _writer }}", "{{ _leader.stdout }}"]
+      changed_when: true
+
+    - name: Harden the running cluster
+      ansible.builtin.command: "{{ _converge }}"
+      environment:
+        ANSIBLE_ROLES_PATH: "{{ _new_roles }}"
+      changed_when: true
+
+    - name: Stop the writer and count its results
+      ansible.builtin.shell: >-
+        docker exec {{ _app }} pkill -f 'insert into writes';
+        docker exec {{ _app }} sh -c
+        'echo "$(grep -c ok /tmp/writes) $(grep -c fail /tmp/writes)"'
+      register: _writes
+      changed_when: false
+      failed_when: false
+
+    - name: No write failed while the cluster was hardened
+      ansible.builtin.assert:
+        that:
+          - (_writes.stdout.split()[0] | int) > 0
+          - (_writes.stdout.split()[1] | int) == 0
+        fail_msg: "ok/failed writes: {{ _writes.stdout }}"
+
+    - name: Read each member's TLS settings over the postgres socket
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ item }}"
+          - su
+          - postgres
+          - -c
+          - psql -qAtc "select current_setting('ssl') || ' ' || current_setting('ssl_min_protocol_version')"
+      loop: "{{ _nodes }}"
+      register: _ssl
+      changed_when: false
+
+    - name: Read each member's pg_hba
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ item }}", cat, "{{ _hba }}"]
+      loop: "{{ _nodes }}"
+      register: _hba_now
+      changed_when: false
+
+    - name: TLS 1.3 is on and pg_hba admits only the members and the app
+      ansible.builtin.assert:
+        that:
+          - _ssl.results | map(attribute='stdout') | unique | list == ['on TLSv1.3']
+          - (item.stdout_lines | map('regex_replace', '\s+', ' ') | map('trim')
+             | reject('match', '^(#|$)') | list) == _expected_hba
+        quiet: true
+      loop: "{{ _hba_now.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Give the clients the CA
+      ansible.builtin.shell: >-
+        docker exec {{ _nodes[0] }} cat /etc/patroni/tls/postgres-ca.crt |
+        docker exec -i {{ item }} sh -c 'cat > /tmp/ca.crt'
+      loop: "{{ _clients }}"
+      changed_when: true
+
+    - name: The app verifies the server by name, on both members
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _app }}"
+          - psql
+          - "host=db.example.test hostaddr={{ _ips[item] }} {{ _app_conn }} {{ _verify }}"
+          - -qAtc
+          - select ssl from pg_stat_ssl where pid = pg_backend_pid()
+      loop: "{{ _nodes }}"
+      register: _by_name
+      changed_when: false
+
+    - name: Try what pg_hba must refuse
+      ansible.builtin.command:
+        argv: "{{ item.argv }}"
+      loop:
+        - name: app without TLS
+          argv: [docker, exec, "{{ _app }}", psql, "host={{ _leader.stdout }} {{ _app_conn }} sslmode=disable", -c, select 1]
+        - name: superuser from the app's address
+          argv: [docker, exec, "{{ _app }}", psql, "host={{ _leader.stdout }} dbname=postgres user=postgres password=test-only-superuser {{ _verify }}", -c, select 1]
+        - name: app's login from another address
+          argv: [docker, exec, "{{ _stranger }}", psql, "host={{ _leader.stdout }} {{ _app_conn }} {{ _verify }}", -c, select 1]
+        - name: app's login on the socket, which trust used to allow
+          argv: [docker, exec, "{{ _leader_node }}", su, postgres, -c, psql -U authentik -d authentik -c 'select 1']
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        _leader_node: "{{ _ips | dict2items | selectattr('value', 'equalto', _leader.stdout) | map(attribute='key') | first }}"
+      register: _refused
+      changed_when: false
+      failed_when: false
+
+    - name: Verify-full works and every other way in is refused
+      ansible.builtin.assert:
+        that:
+          - _by_name.results | map(attribute='stdout') | unique | list == ['t']
+          - _refused.results | map(attribute='rc') | reject('equalto', 2) | list == []
+          - _refused.results | map(attribute='stderr') | select('search', 'no pg_hba.conf entry') | list | length == 4
+        quiet: true
+
+    - name: Wait for the replica to stream over TLS
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _ips | dict2items | selectattr('value', 'equalto', _leader.stdout) | map(attribute='key') | first }}"
+          - su
+          - postgres
+          - -c
+          - >-
+            psql -qAtc "select r.state, s.ssl, s.version from pg_stat_replication r
+            join pg_stat_ssl s using (pid)"
+      register: _repl
+      until: _repl.stdout == 'streaming|t|TLSv1.3'
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: Read each member's cert metric
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ item }}", cat, /var/lib/prometheus/node-exporter/openbao-cert-postgres.prom]
+      loop: "{{ _nodes }}"
+      register: _metric
+      changed_when: false
+
+    - name: Each member exports its cert's expiry
+      ansible.builtin.assert:
+        that:
+          - _metric.results | map(attribute='stdout') | select('search', 'tls_cert_not_after_seconds\{cert="postgres"\} \d+') | list | length == 2
+        quiet: true
+
+    - name: Run the role again
+      ansible.builtin.command: "{{ _converge }}"
+      environment:
+        ANSIBLE_ROLES_PATH: "{{ _new_roles }}"
+      register: _again
+      changed_when: false
+
+    - name: The re-run changed nothing on either member
+      ansible.builtin.assert:
+        that:
+          - _again.stdout is search('pg-test-1\s+: ok=\d+\s+changed=0')
+          - _again.stdout is search('pg-test-2\s+: ok=\d+\s+changed=0')
+        quiet: true
+
+    - name: Read each member's Postgres start time before a new cert
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ item }}", su, postgres, -c, psql -qAtc 'select pg_postmaster_start_time()']
+      loop: "{{ _nodes }}"
+      register: _started
+      changed_when: false
+
+    - name: Reissue the certs inside a long renewal window
+      ansible.builtin.command: "{{ _converge }} -e openbao_cert_renew_days=400"
+      environment:
+        ANSIBLE_ROLES_PATH: "{{ _new_roles }}"
+      changed_when: true
+
+    - name: Wait for each member to serve the cert on its disk
+      ansible.builtin.shell: >-
+        disk="$(docker exec {{ item }} openssl x509 -in {{ _cert }} -noout -serial)";
+        served="$(docker exec {{ _app }} sh -c 'openssl s_client -starttls postgres
+        -connect {{ _ips[item] }}:5432 </dev/null 2>/dev/null |
+        openssl x509 -noout -serial')";
+        echo "${disk} ${served}"
+      loop: "{{ _nodes }}"
+      register: _serials
+      until: _serials.stdout.split() | length == 2 and _serials.stdout.split()[0] == _serials.stdout.split()[1]
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: Read each member's Postgres start time after the new cert
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ item }}", su, postgres, -c, psql -qAtc 'select pg_postmaster_start_time()']
+      loop: "{{ _nodes }}"
+      register: _started_after
+      changed_when: false
+
+    - name: The new cert is served without restarting Postgres
+      ansible.builtin.assert:
+        that:
+          - (_started.results | map(attribute='stdout') | list)
+            == (_started_after.results | map(attribute='stdout') | list)
+        quiet: true
+
+    - name: Switch over to the replica
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _nodes[0] }}"
+          - /opt/patroni/bin/patronictl
+          - -c
+          - /etc/patroni/patroni.yml
+          - switchover
+          - --leader
+          - "{{ _ips | dict2items | selectattr('value', 'equalto', _leader.stdout) | map(attribute='key') | first }}"
+          - --candidate
+          - "{{ _ips | dict2items | rejectattr('value', 'equalto', _leader.stdout) | selectattr('key', 'in', _nodes) | map(attribute='key') | first }}"
+          - --force
+      changed_when: true
+
+    - name: Wait for the new leader
+      ansible.builtin.command:
+        argv: [docker, exec, "{{ _nodes[0] }}", python3, -c, "{{ _leader_py }}"]
+      register: _new_leader
+      until: _new_leader.rc == 0 and _new_leader.stdout != _leader.stdout
+      retries: 20
+      delay: 3
+      changed_when: false
+
+    - name: Wait for the old leader to stream from the new one over TLS
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _ips | dict2items | selectattr('value', 'equalto', _new_leader.stdout) | map(attribute='key') | first }}"
+          - su
+          - postgres
+          - -c
+          - >-
+            psql -qAtc "select r.state, s.ssl from pg_stat_replication r
+            join pg_stat_ssl s using (pid)"
+      register: _repl_after
+      until: _repl_after.stdout == 'streaming|t'
+      retries: 30
+      delay: 3
+      changed_when: false
+
+    # Demotion restarted the old leader's Postgres, so Patroni reconnected.
+    - name: Read Patroni's connections on the old leader
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _ips | dict2items | selectattr('value', 'equalto', _leader.stdout) | map(attribute='key') | first }}"
+          - su
+          - postgres
+          - -c
+          - >-
+            psql -qAtc "select count(*) || ' ' || coalesce(bool_and(s.ssl), false)
+            from pg_stat_activity a join pg_stat_ssl s using (pid)
+            where a.application_name like 'Patroni%'"
+      register: _patroni_conn
+      until: _patroni_conn.stdout.split()[0] | int > 0
+      retries: 10
+      delay: 3
+      changed_when: false
+
+    - name: Patroni reconnects to Postgres over TLS
+      ansible.builtin.assert:
+        that:
+          - _patroni_conn.stdout.split()[1] == 'true'
+        quiet: true
+
+    - name: The app writes to the new leader by name
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - "{{ _app }}"
+          - psql
+          - "host=db.example.test hostaddr={{ _new_leader.stdout }} {{ _app_conn }} {{ _verify }}"
+          - -qAtc
+          - insert into writes default values
+      changed_when: true
+
+    - name: Remove the test estate
+      ansible.builtin.shell: >-
+        docker rm -f {{ (_nodes + _clients + [_etcd, _bao, _ssm]) | join(' ') }}
+        2>/dev/null; docker network rm {{ _net }} 2>/dev/null;
+        rm -rf {{ _old_roles }}; true
+      changed_when: false

@@ -1,0 +1,22 @@
+---
+# Authentik verifies the database server, so it needs the name the server's
+# cert carries and the CA that issued it. The CA lands beside the compose.
+- name: Check the database TLS settings
+  ansible.builtin.assert:
+    that:
+      - authentik_pg_tls_name | length > 0
+      - authentik_pg_ca_cert | length > 0
+    fail_msg: >-
+      authentik_app needs authentik_pg_tls_name and authentik_pg_ca_cert
+      set to verify the database
+    quiet: true
+
+- name: Write the CA the database's cert is checked against
+  become: true
+  ansible.builtin.copy:
+    content: "{{ authentik_pg_ca_cert | trim }}\n"
+    dest: "{{ authentik_compose_dir }}/postgres-ca.crt"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart authentik

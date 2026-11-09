@@ -1,0 +1,35 @@
+---
+# The test estate tls.yml and bootstrap.yml share: names, addresses and the
+# ports the dev OpenBao and moto SSM publish. Addresses match vars.yml.
+ansible_python_interpreter: "{{ ansible_playbook_python }}"
+_net: patroni-tls-test
+_subnet: 172.30.97.0/24
+_etcd: patroni-tls-etcd
+_bao: patroni-tls-bao
+_ssm: patroni-tls-ssm
+_bao_port: 18220
+_ssm_port: 18221
+_ssm_param: /patroni-tls-test/approle
+_domain: example.test
+_aws_env:
+  AWS_ENDPOINT_URL: "http://127.0.0.1:{{ _ssm_port }}"
+  AWS_ACCESS_KEY_ID: test-only
+  AWS_SECRET_ACCESS_KEY: test-only
+  AWS_DEFAULT_REGION: eu-west-2
+_nodes: [pg-test-1, pg-test-2]
+_app: patroni-tls-app
+_stranger: patroni-tls-stranger
+_clients: ["{{ _app }}", "{{ _stranger }}"]
+_ips:
+  patroni-tls-etcd: 172.30.97.5
+  pg-test-1: 172.30.97.11
+  pg-test-2: 172.30.97.12
+  patroni-tls-app: 172.30.97.21
+  patroni-tls-stranger: 172.30.97.22
+_converge: >-
+  ansible-playbook -i {{ _nodes | join(',') }}, -c community.docker.docker
+  {{ playbook_dir }}/converge.yml
+_leader_py: >-
+  import json, urllib.request;
+  c = json.load(urllib.request.urlopen('http://{{ _ips[_nodes[0]] }}:8008/cluster'));
+  print(next(m['host'] for m in c['members'] if m['role'] == 'leader'))

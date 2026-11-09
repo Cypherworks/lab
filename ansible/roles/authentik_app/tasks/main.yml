@@ -9,6 +9,9 @@
     group: root
     mode: "0750"
 
+- name: Give Authentik the database's CA
+  ansible.builtin.include_tasks: postgres_ca.yml
+
 - name: Create the blueprints directory
   become: true
   ansible.builtin.file:

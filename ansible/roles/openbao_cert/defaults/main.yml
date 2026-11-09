@@ -1,0 +1,35 @@
+---
+# Issues a host's TLS cert from OpenBao PKI and keeps it current. Each run
+# reads the cert the host holds and reissues only when it's missing, inside
+# the renewal window, names the wrong host, or isn't from OpenBao's current
+# CA, so a re-run changes nothing. Issuance runs on the controller: the
+# AppRole secret and AWS access never reach the host, only the finished cert.
+#
+# The files land at <dir>/<name>.crt, <name>.key and <name>-ca.crt. With a
+# metrics dir set, each run writes openbao-cert-<name>.prom there, holding
+# tls_cert_not_after_seconds{cert="<name>"}.
+
+# OpenBao's API, e.g. https://<openbao>:8200. Site data.
+openbao_cert_bao_addr: ""
+openbao_cert_pki_mount: pki
+openbao_cert_pki_role: ""
+
+# SSM param holding the AppRole as {"role_id", "secret_id"} JSON. Site data.
+openbao_cert_ssm_param: ""
+openbao_cert_aws_env: {}
+
+# The common name is always a DNS SAN as well.
+openbao_cert_common_name: ""
+openbao_cert_dns_sans: []
+openbao_cert_ip_sans: []
+openbao_cert_ttl: 8760h
+# Reissue once fewer days than this are left.
+openbao_cert_renew_days: 30
+
+openbao_cert_name: ""
+openbao_cert_dir: ""
+openbao_cert_owner: root
+openbao_cert_group: root
+
+# node_exporter's textfile directory; empty writes no metric.
+openbao_cert_metrics_dir: ""

@@ -1,0 +1,74 @@
+---
+# Tasks, not a play: starts a dev OpenBao with a PKI mount and an AppRole that
+# may only issue from one role, and moto standing in for SSM holding that
+# AppRole, as the provisioner param does in the lab. Both publish on loopback
+# so the controller-side tasks reach them. Shared with the role tests that
+# need a cert issued. The caller sets _net, _bao, _ssm, _bao_port, _ssm_port,
+# _ssm_param, _domain and _aws_env (moto's endpoint and throwaway keys).
+- name: Start a dev OpenBao
+  ansible.builtin.command: >-
+    docker run -d --name {{ _bao }} --network {{ _net }}
+    -p 127.0.0.1:{{ _bao_port }}:8200 -e BAO_DEV_ROOT_TOKEN_ID=test-root
+    openbao/openbao:2.7.2 server -dev -dev-listen-address=0.0.0.0:8200
+  changed_when: true
+
+- name: Start moto as SSM
+  ansible.builtin.command: >-
+    docker run -d --name {{ _ssm }} --network {{ _net }}
+    -p 127.0.0.1:{{ _ssm_port }}:5000 python:3.13-alpine
+    sh -c "pip install -q 'moto[server]' && exec moto_server -H 0.0.0.0 -p 5000"
+  changed_when: true
+
+- name: Wait for OpenBao to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ _bao_port }}/v1/sys/health"
+  register: _bao_health
+  until: _bao_health.status == 200
+  retries: 30
+  delay: 2
+
+- name: Set up the PKI mount, a root CA, the issuing role and the AppRole
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -e
+      - BAO_ADDR=http://127.0.0.1:8200
+      - -e
+      - BAO_TOKEN=test-root
+      - "{{ _bao }}"
+      - sh
+      - -ec
+      - |
+        bao secrets enable pki
+        bao secrets tune -max-lease-ttl=87600h pki
+        bao write -field=certificate pki/root/generate/internal common_name="Test Root" ttl=87600h >/dev/null
+        bao write pki/roles/infra allowed_domains={{ _domain }} allow_subdomains=true max_ttl=8760h
+        bao auth enable approle
+        printf 'path "pki/issue/infra" { capabilities = ["update"] }\n' | bao policy write certs -
+        bao write auth/approle/role/certs token_policies=certs
+  changed_when: true
+
+- name: Wait for moto to answer
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ _ssm_port }}/moto-api/"
+  register: _moto
+  until: _moto.status == 200
+  retries: 60
+  delay: 2
+
+# Piped, so no template turns the JSON into a Python dict on the way.
+- name: Store the AppRole in SSM, as the provisioner param holds it
+  ansible.builtin.shell: >-
+    docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN=test-root
+    {{ _bao }} sh -ec '
+    role_id="$(bao read -field=role_id auth/approle/role/certs/role-id)";
+    secret_id="$(bao write -f -field=secret_id
+    auth/approle/role/certs/secret-id)";
+    printf "{\"role_id\":\"%s\",\"secret_id\":\"%s\"}"
+    "${role_id}" "${secret_id}"' |
+    aws ssm put-parameter --name {{ _ssm_param }} --type SecureString
+    --value file:///dev/stdin
+  environment: "{{ _aws_env }}"
+  changed_when: true
+  no_log: true

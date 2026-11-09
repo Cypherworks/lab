@@ -1,0 +1,42 @@
+---
+# Tasks, not a play: reads what the target holds now into _cert (the cert's
+# parsed fields), _ca (the CA file's), _key (the key's public half), _modes
+# (owner, group and mode of each file) and _metric (the textfile line).
+- name: Read the target's cert, CA, key and metric
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ _target }}", cat, "{{ item }}"]
+  loop:
+    - /etc/svc/tls/svc.crt
+    - /etc/svc/tls/svc-ca.crt
+    - /etc/svc/tls/svc.key
+    - /var/lib/prometheus/node-exporter/openbao-cert-svc.prom
+  register: _files
+  changed_when: false
+  no_log: true
+
+- name: Parse the cert
+  community.crypto.x509_certificate_info:
+    content: "{{ _files.results[0].stdout }}"
+  register: _cert
+
+- name: Parse the CA file
+  community.crypto.x509_certificate_info:
+    content: "{{ _files.results[1].stdout }}"
+  register: _ca
+
+- name: Parse the key
+  community.crypto.openssl_privatekey_info:
+    content: "{{ _files.results[2].stdout }}"
+  register: _key
+  no_log: true
+
+- name: Read the files' owners and modes
+  ansible.builtin.command:
+    argv: [docker, exec, "{{ _target }}", stat, -c, "%n %U %G %a", /etc/svc/tls, /etc/svc/tls/svc.crt, /etc/svc/tls/svc-ca.crt, /etc/svc/tls/svc.key]
+  register: _modes
+  changed_when: false
+
+- name: Keep the metric and the serial, as a string so they compare
+  ansible.builtin.set_fact:
+    _metric: "{{ _files.results[3].stdout }}"
+    _serial: "{{ _cert.serial_number | string }}"

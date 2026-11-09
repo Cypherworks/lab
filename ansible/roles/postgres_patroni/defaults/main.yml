@@ -1,6 +1,14 @@
 ---
 # PostgreSQL 16 (PGDG) managed by Patroni, with automatic failover via the etcd
 # quorum. Patroni owns Postgres — the distro postgresql service is masked.
+# Clients reach it only over TLS 1.3 with SCRAM, from the members and each
+# database's client addresses; the server cert comes from OpenBao via
+# openbao_cert.
+#
+# Required from inventory: patroni_etcd_hosts, and openbao_cert's site
+# settings (openbao_cert_bao_addr, _pki_role, _ssm_param, _aws_env). SOPS
+# secrets: patroni_superuser_password, patroni_replication_password,
+# patroni_rest_password, and each database owner's password.
 
 patroni_scope: authentik
 patroni_postgres_version: "16"
@@ -13,8 +21,13 @@ patroni_bootstrap_marker: "{{ patroni_conf_dir }}/.default-cluster-removed"
 patroni_venv: /opt/patroni
 patroni_version: "3.3.2"
 
-# CIDR allowed in pg_hba (replication + client). Site data — set by the deploy.
-patroni_lab_cidr: ""
+# The cluster's members as [{name, ip}]. Site data, set by the deploy.
+patroni_members: []
+# [{name, owner, password, client_ips, conn_limit}]. Site data; see README.
+patroni_databases: []
+# DNS name in every member's cert, for clients that dial the database by name.
+patroni_tls_service_name: ""
+patroni_tls_dir: "{{ patroni_conf_dir }}/tls"
 
 patroni_rest_user: patroni
 patroni_rest_port: 8008
@@ -25,12 +38,5 @@ patroni_loop_wait: 10
 patroni_retry_timeout: 10
 patroni_max_connections: 200
 
-patroni_app_db: authentik
-patroni_app_user: authentik
-
 # This node's VLAN-30 address (single-homed containers self-report correctly).
 patroni_this_ip: "{{ ansible_default_ipv4.address }}"
-
-# Required from inventory: patroni_etcd_hosts. SOPS secrets:
-# patroni_superuser_password, patroni_replication_password, patroni_rest_password,
-# patroni_app_password.

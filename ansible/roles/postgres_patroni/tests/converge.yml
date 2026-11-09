@@ -1,0 +1,12 @@
+---
+# Runs the role on both members. The tests call this as a separate run, so
+# an expected failure can't end them. ANSIBLE_ROLES_PATH picks the role: the
+# working tree's, or the pre-hardening one tls.yml unpacks.
+- name: Converge the Patroni members
+  hosts: all
+  vars_files:
+    - vars.yml
+  tasks:
+    - name: Run the postgres_patroni role
+      ansible.builtin.include_role:
+        name: postgres_patroni
