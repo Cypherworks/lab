@@ -77,6 +77,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | `monitoring_etcd_targets` | `[]` | etcd `/metrics` (`:2379`). |
 | `monitoring_redis_targets` | `[]` | redis endpoints (`:6379`) via redis_exporter. |
 | `monitoring_speedtest_targets` | `[]` | speedtest-tracker native `/prometheus` (`:8080`). |
+| `monitoring_incidents_targets` | `[]` | The incident trackers' `/metrics` (`:8080`): `incidents_opened_total`. |
 | `monitoring_blackbox_targets` | `[]` | Plain list of https URLs for cert-expiry probes; the URL becomes the `instance` label. |
 | `monitoring_blackbox_icmp_targets` | `[]` | Addresses pinged once per scrape. Scraped as job `icmp`; a failed probe is one lost packet. |
 | `monitoring_blackbox_service_targets` | `[]` | Health URLs for the kiosk's up/down tiles: `{url, instance}`. Scraped as job `service-health`; its cert series are dropped. An `https://` URL must answer over TLS; an `http://` one (inside the lab) is probed with the `http_2xx` module instead. `ServiceDown` fires when one fails for a minute. |

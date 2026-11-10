@@ -1,0 +1,60 @@
+---
+# The incident trackers serve their incident count on /metrics, scraped as
+# their own job so the wall can count incidents opened. Renders the role's
+# scrape config with and without tracker targets. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/incidents_job.yml
+- name: Verify the incidents scrape job
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Make a scratch dir
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .monitoring
+      register: _scratch
+
+    - name: Render, check, and clean up
+      block:
+        - name: Render the scrape config with no tracker targets
+          ansible.builtin.template:
+            src: ../templates/scrape.yml.j2
+            dest: "{{ _scratch.path }}/off-scrape.yml"
+            mode: "0644"
+
+        - name: Point the role at two trackers
+          ansible.builtin.set_fact:
+            monitoring_incidents_targets:
+              - { target: "198.51.100.31:8080", instance: incidents-1 }
+              - { target: "198.51.100.32:8080", instance: incidents-2 }
+
+        - name: Render the scrape config with them
+          ansible.builtin.template:
+            src: ../templates/scrape.yml.j2
+            dest: "{{ _scratch.path }}/scrape.yml"
+            mode: "0644"
+
+        - name: Assert each tracker scrapes under incidents at /metrics
+          vars:
+            _config: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/scrape.yml') | from_yaml }}"
+            _off: "{{ lookup('ansible.builtin.file', _scratch.path ~ '/off-scrape.yml') | from_yaml }}"
+            _job: "{{ _config.scrape_configs | selectattr('job_name', 'eq', 'incidents') | first }}"
+          ansible.builtin.assert:
+            that:
+              - _job.metrics_path == '/metrics'
+              - _job.static_configs | map(attribute='targets') | list == [['198.51.100.31:8080'], ['198.51.100.32:8080']]
+              - _job.static_configs | map(attribute='labels.instance') | list == ['incidents-1', 'incidents-2']
+              - _off.scrape_configs | default([], true) | selectattr('job_name', 'eq', 'incidents') | list == []
+            fail_msg: "{{ _config | to_json }}"
+      always:
+        - name: Remove the scratch dir
+          ansible.builtin.file:
+            path: "{{ _scratch.path }}"
+            state: absent
