@@ -34,3 +34,24 @@
     name: systemd-resolved
     state: restarted
   when: _resolved_stub.changed
+
+- name: Read the host's name
+  ansible.builtin.command: hostname
+  register: _hostname
+  changed_when: false
+  check_mode: false
+
+# The stub answered the host's own name; a cloud image's /etc/hosts doesn't.
+- name: Look up the host's own name without the stub
+  ansible.builtin.command: getent hosts {{ _hostname.stdout }}
+  register: _hostname_lookup
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Resolve the host's own name from /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    line: "127.0.1.1 {{ _hostname.stdout }}"
+    insertafter: '^127\.0\.0\.1\s'
+  when: _hostname_lookup.rc != 0

@@ -2,7 +2,9 @@
 # Exercises the fight for port 53 on a host booted like a real Ubuntu one:
 # systemd runs in a privileged throwaway container, so systemd-resolved's stub
 # listener is the real thing, beside a real Technitium. With the stub up,
-# Technitium loses IPv4 TCP/53 without a word. Needs Docker, community.docker,
+# Technitium loses IPv4 TCP/53 without a word. A server already running beside
+# the stub (a host built before the fix) must heal through start.yml, which
+# configure runs on every rerun. Needs Docker, community.docker,
 # and internet for the image and its apt packages. From ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
@@ -44,6 +46,13 @@
       ansible.builtin.command: >-
         docker exec {{ _target }} sh -c
         'umount /etc/resolv.conf && ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf'
+      changed_when: true
+
+    # A cloud image's /etc/hosts lacks the host's name; the stub answers it.
+    - name: Leave the host's own name out of /etc/hosts (Docker mounts its own)
+      ansible.builtin.command: >-
+        docker exec {{ _target }} sh -c
+        'cp /etc/hosts /tmp/hosts && umount /etc/hosts && grep -v "$(hostname)" /tmp/hosts > /etc/hosts'
       changed_when: true
 
     - name: Address the target through Docker
@@ -125,6 +134,22 @@
             that: _resolv.stat.lnk_target == '/run/systemd/resolve/resolv.conf'
             fail_msg: "{{ _resolv.stat | to_json }}"
 
+        - name: Read the host's name
+          ansible.builtin.command: hostname
+          register: _name
+          changed_when: false
+
+        - name: Look up the host's own name without the stub
+          ansible.builtin.command: getent hosts {{ _name.stdout }}
+          register: _own_name
+          changed_when: false
+          failed_when: false
+
+        - name: Assert the host's own name still resolves
+          ansible.builtin.assert:
+            that: _own_name.rc == 0
+            fail_msg: "sudo and friends can't resolve {{ _name.stdout }} once the stub is off."
+
         - name: Free the port again
           ansible.builtin.include_role:
             name: technitium_dns
@@ -134,6 +159,94 @@
           ansible.builtin.assert:
             that: not _resolved_stub.changed
             fail_msg: "{{ _resolved_stub | to_json }}"
+
+        - name: Stop the server again
+          ansible.builtin.systemd_service:
+            name: technitium
+            state: stopped
+
+        - name: Put the stub listener back, as on a host built before the fix
+          ansible.builtin.file:
+            path: /etc/systemd/resolved.conf.d/10-no-stub.conf
+            state: absent
+
+        - name: Restart systemd-resolved with the stub up
+          ansible.builtin.systemd_service:
+            name: systemd-resolved
+            state: restarted
+
+        # A stand-in for the role's unit, under the name start.yml starts.
+        - name: Install a technitium-dns unit for the server in this image
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/technitium-dns.service
+            mode: "0644"
+            content: |
+              [Service]
+              WorkingDirectory=/opt/technitium/dns
+              ExecStart=/usr/bin/dotnet DnsServerApp.dll /etc/dns
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Load the unit
+          ansible.builtin.systemd_service:
+            daemon_reload: true
+
+        - name: Start the server beside the stub
+          ansible.builtin.systemd_service:
+            name: technitium-dns
+            state: started
+
+        - name: Refuse the running server that lost port 53
+          block:
+            - name: Check the port
+              ansible.builtin.include_role:
+                name: technitium_dns
+                tasks_from: check_port_53
+
+            - name: Record that the check went through
+              ansible.builtin.set_fact:
+                _refused_running: ""
+          rescue:
+            - name: Record which task failed
+              ansible.builtin.set_fact:
+                _refused_running: "{{ ansible_failed_task.name }}"
+
+        - name: Assert the running server had lost the port
+          ansible.builtin.assert:
+            that: _refused_running == 'Check the server holds port 53 on TCP'
+            fail_msg: "{{ _refused_running }}"
+
+        - name: Start through the role, as configure does
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: start
+
+        - name: Check the running server took the port back
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: check_port_53
+
+        - name: Read the server's start time
+          ansible.builtin.systemd_service:
+            name: technitium-dns
+          register: _started_first
+
+        - name: Start through the role again
+          ansible.builtin.include_role:
+            name: technitium_dns
+            tasks_from: start
+
+        - name: Read the server's start time again
+          ansible.builtin.systemd_service:
+            name: technitium-dns
+          register: _started_again
+
+        - name: Assert a rerun leaves a healthy server running
+          ansible.builtin.assert:
+            that: >-
+              _started_first.status.ActiveEnterTimestampMonotonic
+              == _started_again.status.ActiveEnterTimestampMonotonic
+            fail_msg: "start.yml restarted a server that already held port 53."
       always:
         - name: Remove the target
           ansible.builtin.command: docker rm -f {{ inventory_hostname }}

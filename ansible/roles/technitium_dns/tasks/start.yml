@@ -1,0 +1,11 @@
+---
+# A server already running beside the stub keeps no IPv4 TCP/53 until it
+# restarts, as on a host built before the stub was freed at install.
+- name: Free port 53
+  ansible.builtin.include_tasks: resolved_stub.yml
+
+- name: Start Technitium DNS
+  ansible.builtin.systemd_service:
+    name: technitium-dns
+    enabled: true
+    state: "{{ 'restarted' if _resolved_stub.changed else 'started' }}"
