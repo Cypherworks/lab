@@ -53,6 +53,7 @@ monitoring_patroni_targets: []       # Patroni REST /metrics (:8008)
 monitoring_etcd_targets: []          # etcd /metrics (:2379)
 monitoring_redis_targets: []         # redis endpoints (:6379) via redis_exporter
 monitoring_speedtest_targets: []     # speedtest-tracker native /prometheus (:8080)
+monitoring_incidents_targets: []     # incident tracker /metrics, incidents opened (:8080)
 
 # blackbox_exporter https probes (cert expiry). Plain list of https URLs; the URL
 # becomes the `instance` label (blackbox standard pattern).
