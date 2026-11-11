@@ -314,10 +314,11 @@
         - name: Lose channel 4's lock and move it to 64-QAM
           vars:
             ansible_python_interpreter: "{{ ansible_playbook_python }}"
-            _channels: "{{ _upstream.upstream.channels }}"
-            _changed: "{{ _channels[3] | combine({'lockStatus': false, 'modulation': 'qam_64'}) }}"
           ansible.builtin.copy:
-            content: "{{ {'upstream': {'channels': _channels[:3] + [_changed] + _channels[4:]}} | to_json }}"
+            content: >-
+              {{ {'upstream': {'channels': _upstream.upstream.channels[:3]
+                 + [_upstream.upstream.channels[3] | combine({'lockStatus': false, 'modulation': 'qam_64'})]
+                 + _upstream.upstream.channels[4:]}} | to_json }}
             dest: "{{ _replies }}/upstream"
             mode: "0644"
           delegate_to: localhost
@@ -408,22 +409,25 @@
             label: "{{ bad.name }}"
           vars:
             _nl: "\n"
-            _channels: "{{ _upstream.upstream.channels }}"
-            _first: "{{ _channels[0] }}"
           loop:
             - name: a number field carrying a series of its own
               path: upstream
               content: >-
-                {{ {'upstream': {'channels': [_first | combine({'t3Timeout': '1' ~ _nl ~ 'cable_modem_injected 1'})]
-                   + _channels[1:]}} | to_json }}
+                {{ {'upstream': {'channels':
+                   [_upstream.upstream.channels[0] | combine({'t3Timeout': '1' ~ _nl ~ 'cable_modem_injected 1'})]
+                   + _upstream.upstream.channels[1:]}} | to_json }}
               why: "upstream: unexpected t3Timeout: "
             - name: a lock status in a string
               path: upstream
-              content: "{{ {'upstream': {'channels': [_first | combine({'lockStatus': 'false'})] + _channels[1:]}} | to_json }}"
+              content: >-
+                {{ {'upstream': {'channels': [_upstream.upstream.channels[0] | combine({'lockStatus': 'false'})]
+                   + _upstream.upstream.channels[1:]}} | to_json }}
               why: "upstream: unexpected lockStatus: "
             - name: a channel type with a trailing newline
               path: upstream
-              content: "{{ {'upstream': {'channels': [_first | combine({'channelType': 'atdma' ~ _nl})] + _channels[1:]}} | to_json }}"
+              content: >-
+                {{ {'upstream': {'channels': [_upstream.upstream.channels[0] | combine({'channelType': 'atdma' ~ _nl})]
+                   + _upstream.upstream.channels[1:]}} | to_json }}
               why: "upstream: unexpected channel type: "
             - name: a reply over a megabyte
               path: eventlog
