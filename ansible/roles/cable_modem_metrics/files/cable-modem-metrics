@@ -1,0 +1,166 @@
+#!/usr/bin/python3 -I
+"""Write a cable modem's line state for node_exporter's textfile collector.
+
+Reads the hub's unauthenticated status replies (/rest/v1/cablemodem/upstream,
+downstream and eventlog, as a Virgin Media hub serves them) and writes, per
+channel, the upstream power, modulation, lock and T3/T4 timeout counts, and
+the downstream lock, error counts, and for SC-QAM channels the power and SNR.
+OFDM power and RxMER are left out, as the hub doesn't say their units. From
+the event log it keeps when each kind of line fault last happened; the log's
+other entries, and its CM and CMTS MACs, go nowhere. A reply over a
+megabyte, or a value of a type it doesn't expect (a number in a string, a
+lock status that isn't true or false), fails the run rather than reach the
+file. Replaces OUT in one rename. On any failure it removes OUT, so a stale
+reading never passes for a live one, and exits 1.
+
+  cable-modem-metrics --address 192.168.100.1 --out DIR/cable_modem.prom
+"""
+import argparse
+import datetime
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+import urllib.request
+
+PREFIX = "cable_modem_"
+QAM = re.compile(r"qam_(\d+)")
+CHANNEL_TYPE = re.compile(r"[a-z0-9_]+")
+MAX_REPLY = 1000000
+EVENTS = {
+    "ranging_timeout": "T3 time-out",
+    "ranging_gave_up": "Retries exhausted",
+    "power_out_of_range": "Dynamic Range Window violation",
+    "reboot": "Cable Modem Reboot",
+}
+UPSTREAM = [
+    ("upstream_power_dbmv", "gauge", "Upstream transmit power in dBmV.", "power", None),
+    ("upstream_modulation_bits", "gauge", "Upstream bits per symbol (16-QAM is 4).", "modulation", None),
+    ("upstream_locked", "gauge", "1 while the upstream channel is locked.", "lockStatus", None),
+    ("upstream_t3_timeouts_total", "counter", "Ranging requests the CMTS never answered.", "t3Timeout", None),
+    ("upstream_t4_timeouts_total", "counter", "Times no station maintenance came from the CMTS.", "t4Timeout", None),
+]
+DOWNSTREAM = [
+    ("downstream_power_dbmv", "gauge", "SC-QAM receive power in dBmV.", "power", "sc_qam"),
+    ("downstream_snr_db", "gauge", "SC-QAM signal to noise in dB.", "snr", "sc_qam"),
+    ("downstream_locked", "gauge", "1 while the downstream channel is locked.", "lockStatus", None),
+    ("downstream_corrected_total", "counter", "Codewords the modem repaired.", "correctedErrors", None),
+    ("downstream_uncorrected_total", "counter", "Codewords the modem lost.", "uncorrectedErrors", None),
+]
+
+
+def reply(address, path):
+    url = f"http://{address}/rest/v1/cablemodem/{path}"
+    with urllib.request.urlopen(url, timeout=10) as answer:
+        body = answer.read(MAX_REPLY + 1)
+    if len(body) > MAX_REPLY:
+        raise RuntimeError(f"reply over {MAX_REPLY} bytes")
+    return json.loads(body.decode())[path]
+
+
+def number(field, raw):
+    """The hub's number as is; anything else would break or forge a line."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise RuntimeError(f"unexpected {field}: {raw!r}")
+    return raw
+
+
+def value(field, raw):
+    if field == "lockStatus":
+        if not isinstance(raw, bool):
+            raise RuntimeError(f"unexpected {field}: {raw!r}")
+        return 1 if raw else 0
+    if field == "modulation":
+        match = QAM.fullmatch(str(raw))
+        return int(match.group(1)).bit_length() - 1 if match else None
+    return number(field, raw)
+
+
+def channels(names, chans):
+    lines = []
+    for name, kind, help_text, field, only in names:
+        lines += [f"# HELP {PREFIX}{name} {help_text}", f"# TYPE {PREFIX}{name} {kind}"]
+        for chan in chans:
+            chan_type = chan["channelType"]
+            if not isinstance(chan_type, str) or not CHANNEL_TYPE.fullmatch(chan_type):
+                raise RuntimeError(f"unexpected channel type: {chan_type!r}")
+            if only and chan_type != only:
+                continue
+            raw = chan.get(field)
+            if raw is None:
+                continue
+            sample = value(field, raw)
+            if sample is None:
+                continue
+            channel = chan["channelId"]
+            if isinstance(channel, bool) or not isinstance(channel, int):
+                raise RuntimeError(f"unexpected channelId: {channel!r}")
+            lines.append(f'{PREFIX}{name}{{channel="{channel}",type="{chan_type}"}} {sample}')
+    return lines
+
+
+def last_events(log):
+    latest = {}
+    for entry in log:
+        when = int(datetime.datetime.fromisoformat(entry["time"]).timestamp())
+        message = entry["message"]
+        if not isinstance(message, str):
+            raise RuntimeError(f"unexpected message: {message!r}")
+        for kind, text in EVENTS.items():
+            if text in message and when > latest.get(kind, 0):
+                latest[kind] = when
+    name = PREFIX + "event_last_timestamp_seconds"
+    return [
+        f"# HELP {name} When the hub last logged each kind of line fault.",
+        f"# TYPE {name} gauge",
+    ] + [f'{name}{{kind="{kind}"}} {latest[kind]}' for kind in EVENTS if kind in latest]
+
+
+def textfile(address, now):
+    lines = []
+    for path, render in (("upstream", lambda r: channels(UPSTREAM, r["channels"])),
+                         ("downstream", lambda r: channels(DOWNSTREAM, r["channels"])),
+                         ("eventlog", last_events)):
+        try:
+            lines += render(reply(address, path))
+        except Exception as err:
+            raise RuntimeError(f"{path}: {err}") from err
+    name = PREFIX + "collected_timestamp_seconds"
+    lines += [f"# HELP {name} When this file was written.", f"# TYPE {name} gauge", f"{name} {int(now)}"]
+    return "\n".join(lines) + "\n"
+
+
+def write(path, content):
+    folder = os.path.dirname(path) or "."
+    fd, scratch = tempfile.mkstemp(dir=folder, prefix=".cable_modem.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.chmod(scratch, 0o644)
+        os.replace(scratch, path)
+    except BaseException:
+        os.unlink(scratch)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--address", required=True, help="the hub's status page address")
+    parser.add_argument("--out", required=True, help="the .prom file node_exporter reads")
+    args = parser.parse_args()
+    try:
+        write(args.out, textfile(args.address, time.time()))
+    except Exception as err:
+        try:
+            os.unlink(args.out)
+        except FileNotFoundError:
+            pass
+        print(f"cable-modem-metrics: {err}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

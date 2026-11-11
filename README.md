@@ -78,6 +78,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 |------|---------|
 | [`monitoring`](ansible/roles/monitoring) | VictoriaMetrics, vmalert, Alertmanager, Grafana, VictoriaLogs, and exporters on one host. |
 | [`node_exporter`](ansible/roles/node_exporter) | Prometheus node_exporter on bare-metal hosts. |
+| [`cable_modem_metrics`](ansible/roles/cable_modem_metrics) | A DOCSIS cable modem's line state (upstream T3 timeouts, power, modulation, downstream errors, fault events) for node_exporter's textfile collector. |
 | [`vector`](ansible/roles/vector) | Per-host log-shipping agent: ships the systemd journal to VictoriaLogs over the Elasticsearch bulk endpoint. |
 
 ### Applications and endpoints

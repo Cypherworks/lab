@@ -1,0 +1,50 @@
+---
+# One bad hub reply for metrics.yml: serve it, collect, and check the
+# collector left no textfile and said why, then put the good reply back.
+- name: "Serve a bad reply: {{ bad.name }}"
+  ansible.builtin.copy:
+    content: "{{ bad.content }}"
+    dest: "{{ _replies }}/{{ bad.path }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: "Clear the last failure, so systemd's start limit doesn't refuse this run: {{ bad.name }}"
+  ansible.builtin.command: "{{ _reset }}"
+  changed_when: true
+
+- name: "Collect from it: {{ bad.name }}"
+  ansible.builtin.command: "{{ _collect }}"
+  register: _bad_run
+  changed_when: true
+  failed_when: false
+
+- name: "Read what it left: {{ bad.name }}"
+  ansible.builtin.stat:
+    path: "{{ _prom }}"
+  register: _bad_stat
+
+- name: "Read why it failed: {{ bad.name }}"
+  ansible.builtin.command: "{{ _why }}"
+  register: _bad_why
+  changed_when: false
+
+- name: "Put the good reply back: {{ bad.name }}"
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/hub/rest/v1/cablemodem/{{ bad.path }}"
+    dest: "{{ _replies }}/{{ bad.path }}"
+    mode: "0644"
+  delegate_to: localhost
+  connection: local
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: "Assert it left no textfile and said why: {{ bad.name }}"
+  ansible.builtin.assert:
+    that:
+      - _bad_run.rc != 0
+      - not _bad_stat.stat.exists
+      - "_bad_why.stdout is search('(?m)^cable-modem-metrics: ' ~ bad.why)"
+    fail_msg: "{{ _bad_run.rc }} {{ _bad_stat.stat.exists }} {{ _bad_why.stdout }}"

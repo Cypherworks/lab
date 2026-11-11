@@ -1,0 +1,501 @@
+---
+# Exercises the collector end to end on a host booted like the monitoring
+# instance: systemd and Debian's node_exporter run in a privileged Debian 13
+# container, and a second container serves a real hub's status replies
+# (captured from a Virgin Media hub, MACs replaced with documentation ones).
+# Checks that the timer writes a textfile node_exporter reads without error,
+# with the hub's numbers, that only the hub's address is reachable from the
+# unit, that a second converge changes nothing, that a host name or a
+# malformed address is refused, that a lost lock or a changed modulation
+# shows, that a garbage, missing, oversized or ill-typed reply leaves no
+# textfile and says why, that it heals once the hub answers again, and that
+# turning it off removes it. Needs Docker, community.docker, and internet for
+# the images and the apt packages. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, \
+#     roles/cable_modem_metrics/tests/metrics.yml
+- name: Boot a host and a hub
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: cable-modem-metrics-target
+    _hub: cable-modem-metrics-hub
+    _net: cable-modem-metrics-test
+    _dir: "{{ playbook_dir }}/.metrics"
+  tasks:
+    - name: Clear what a failed run left behind
+      ansible.builtin.shell: >-
+        docker rm -f {{ _target }} {{ _hub }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the settings directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Copy the hub's replies, which the run changes
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/hub/"
+        dest: "{{ _dir }}/hub/"
+        mode: "0644"
+        directory_mode: "0755"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create --subnet 172.30.104.0/24 {{ _net }}
+      changed_when: true
+
+    - name: Serve the hub's replies
+      ansible.builtin.command: >-
+        docker run -d --name {{ _hub }} --network {{ _net }} --ip 172.30.104.20
+        -v {{ _dir }}/hub:/srv:ro busybox:1.37 httpd -f -p 80 -h /srv
+      changed_when: true
+
+    - name: Boot systemd with node_exporter
+      ansible.builtin.command: >-
+        docker run -d --name {{ _target }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} --ip 172.30.104.10
+        debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq python3 systemd systemd-sysv
+        prometheus-node-exporter && exec /usr/lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 100
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Write the converge settings, with the collector on and off
+      ansible.builtin.copy:
+        content: "{{ item.settings | to_json }}"
+        dest: "{{ _dir }}/{{ item.name }}.json"
+        mode: "0600"
+      loop:
+        - name: "on"
+          settings:
+            cable_modem_metrics_address: 172.30.104.20
+        - name: "off"
+          settings:
+            cable_modem_metrics_address: ""
+        - name: "name"
+          settings:
+            cable_modem_metrics_address: hub.example.test
+        - name: "newline"
+          settings:
+            cable_modem_metrics_address: "172.30.104.20\n"
+        - name: "octet"
+          settings:
+            cable_modem_metrics_address: 172.30.104.256
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: metrics_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Collect the hub's line state
+  hosts: metrics_target
+  gather_facts: false
+  vars:
+    _dir: "{{ playbook_dir }}/.metrics"
+    _hub: cable-modem-metrics-hub
+    _net: cable-modem-metrics-test
+    _replies: "{{ _dir }}/hub/rest/v1/cablemodem"
+    _prom: /var/lib/prometheus/node-exporter/cable_modem.prom
+    _converge: >-
+      ansible-playbook -i {{ inventory_hostname }}, -c community.docker.docker
+      {{ playbook_dir }}/metrics_converge.yml -e settings={{ _dir }}
+    _collect: systemctl start cable-modem-metrics.service
+    _reset: systemctl reset-failed cable-modem-metrics.service
+    _why: journalctl -u cable-modem-metrics.service -o cat -n 10
+  tasks:
+    - name: Collect, degrade, break, heal, remove, and clean up
+      block:
+        - name: Converge with the collector on
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: &control_host
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+          environment: &roles
+            ANSIBLE_ROLES_PATH: "{{ playbook_dir }}/../.."
+            ANSIBLE_DISPLAY_OK_HOSTS: "false"
+            ANSIBLE_DISPLAY_SKIPPED_HOSTS: "false"
+          changed_when: true
+
+        - name: Converge again with nothing changed
+          ansible.builtin.command: "{{ _converge }}/on.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _again
+          changed_when: false
+
+        - name: Wait for the timer's first collection
+          ansible.builtin.wait_for:
+            path: "{{ _prom }}"
+            timeout: 60
+
+        - name: Read whether the timer runs
+          ansible.builtin.systemd_service:
+            name: cable-modem-metrics.timer
+          register: _timer
+
+        - name: Read the collector unit
+          ansible.builtin.slurp:
+            src: /etc/systemd/system/cable-modem-metrics.service
+          register: _unit
+
+        - name: Collect once
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read the textfile
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _textfile
+
+        - name: Read how the textfile is kept
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _textfile_stat
+
+        - name: Read what node_exporter serves
+          ansible.builtin.uri:
+            url: http://127.0.0.1:9100/metrics
+            return_content: true
+          register: _exporter
+
+        - name: Assert the textfile holds the hub's numbers and node_exporter reads it
+          vars:
+            _lines: "{{ (_textfile.content | b64decode).splitlines() }}"
+            _samples: "{{ _lines | reject('match', '#') | list }}"
+            _names: "{{ _samples | map('regex_replace', '[{ ].*$', '') | unique | sort }}"
+            _types: "{{ _lines | select('match', '# TYPE ') | map('split', ' ') | map('last') | unique | sort }}"
+            _unit_text: "{{ _unit.content | b64decode }}"
+          ansible.builtin.assert:
+            that:
+              - "'changed=0' in _again.stdout"
+              - _timer.status.UnitFileState == 'enabled'
+              - _timer.status.ActiveState == 'active'
+              - "'IPAddressDeny=any' in _unit_text"
+              - "'IPAddressAllow=172.30.104.20' in _unit_text"
+              - "'TimeoutStartSec=45' in _unit_text"
+              - "'--address 172.30.104.20' in _unit_text"
+              - _textfile_stat.stat.mode == '0644'
+              - _types == ['counter', 'gauge']
+              - _names | reject('match', 'cable_modem_') | list | length == 0
+              - "'cable_modem_upstream_power_dbmv{channel=\"1\",type=\"atdma\"} 30.8' in _samples"
+              - "'cable_modem_upstream_modulation_bits{channel=\"1\",type=\"atdma\"} 4' in _samples"
+              - "'cable_modem_upstream_locked{channel=\"4\",type=\"atdma\"} 1' in _samples"
+              - "'cable_modem_upstream_t3_timeouts_total{channel=\"3\",type=\"atdma\"} 31' in _samples"
+              - "'cable_modem_upstream_t4_timeouts_total{channel=\"3\",type=\"atdma\"} 0' in _samples"
+              - _samples | select('match', 'cable_modem_upstream_t3_timeouts_total') | list | length == 6
+              - "'cable_modem_downstream_power_dbmv{channel=\"17\",type=\"sc_qam\"} 3.7' in _samples"
+              - "'cable_modem_downstream_snr_db{channel=\"1\",type=\"sc_qam\"} 39' in _samples"
+              - "'cable_modem_downstream_uncorrected_total{channel=\"1\",type=\"sc_qam\"} 40' in _samples"
+              - "'cable_modem_downstream_corrected_total{channel=\"41\",type=\"ofdm\"} 2110846286' in _samples"
+              - "'cable_modem_downstream_locked{channel=\"42\",type=\"ofdm\"} 1' in _samples"
+              - _samples | select('match', 'cable_modem_downstream_locked') | list | length == 32
+              - _samples | select('match', 'cable_modem_downstream_(power_dbmv|snr_db){[^}]*ofdm') | list | length == 0
+              - "'cable_modem_event_last_timestamp_seconds{kind=\"ranging_timeout\"} 1794349891' in _samples"
+              - "'cable_modem_event_last_timestamp_seconds{kind=\"ranging_gave_up\"} 1794349867' in _samples"
+              - "'cable_modem_event_last_timestamp_seconds{kind=\"power_out_of_range\"} 1793598460' in _samples"
+              - "'cable_modem_event_last_timestamp_seconds{kind=\"reboot\"} 1793194796' in _samples"
+              - _samples | select('match', 'cable_modem_event_last_timestamp_seconds') | list | length == 4
+              - _samples | select('match', 'cable_modem_collected_timestamp_seconds [0-9]+$') | list | length == 1
+              - _textfile.content | b64decode is not search('00:00:5e')
+              - "'node_textfile_scrape_error 0' in _exporter.content"
+              - "'cable_modem_upstream_t3_timeouts_total{channel=\"3\",type=\"atdma\"} 31' in _exporter.content"
+            fail_msg: >-
+              {{ _timer.status.UnitFileState }} {{ _timer.status.ActiveState }} {{ _lines }}
+              {{ _exporter.content | regex_findall('node_textfile_scrape_error.*') }}
+              {{ _again.stdout | regex_findall('TASK \[[^\]]*\]|changed: .*') | join(' ') }}
+
+        - name: Make a drop-in directory for the unit
+          ansible.builtin.file:
+            path: /etc/systemd/system/cable-modem-metrics.service.d
+            state: directory
+            mode: "0755"
+
+        - name: Point the unit at an address it doesn't allow
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/cable-modem-metrics.service.d/elsewhere.conf
+            mode: "0644"
+            content: |
+              [Service]
+              ExecStart=
+              ExecStart=/usr/bin/python3 -I /usr/local/sbin/cable-modem-metrics --address 172.30.104.10 --out {{ _prom }}
+
+        - name: Load the drop-in
+          ansible.builtin.systemd_service:
+            daemon_reload: true
+
+        - name: Collect from the address it doesn't allow
+          ansible.builtin.command: "{{ _collect }}"
+          register: _elsewhere
+          changed_when: true
+          failed_when: false
+
+        - name: Read why the collection elsewhere failed
+          ansible.builtin.command: "{{ _why }}"
+          register: _elsewhere_why
+          changed_when: false
+
+        - name: Take the drop-in away
+          ansible.builtin.file:
+            path: /etc/systemd/system/cable-modem-metrics.service.d
+            state: absent
+
+        - name: Unload the drop-in
+          ansible.builtin.systemd_service:
+            daemon_reload: true
+
+        - name: Collect from the same address outside the unit
+          ansible.builtin.command: >-
+            python3 -I /usr/local/sbin/cable-modem-metrics --address 172.30.104.10
+            --out /root/outside.prom
+          register: _outside
+          changed_when: false
+          failed_when: false
+
+        - name: Assert the unit reaches nothing but the hub, where outside it the port refuses
+          ansible.builtin.assert:
+            that:
+              - _elsewhere.rc != 0
+              - "_elsewhere_why.stdout is search('(?m)^cable-modem-metrics: upstream: <urlopen error timed out>')"
+              - _outside.rc != 0
+              - "'Connection refused' in _outside.stderr"
+            fail_msg: "{{ _elsewhere.rc }} {{ _elsewhere_why.stdout }} {{ _outside.stderr }}"
+
+        - name: Converge with a host name, a trailing newline, and an octet over 255
+          ansible.builtin.command: "{{ _converge }}/{{ item }}.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          register: _refused
+          changed_when: false
+          failed_when: false
+          loop: [name, newline, octet]
+
+        - name: Read the collector unit after the refused converges
+          ansible.builtin.slurp:
+            src: /etc/systemd/system/cable-modem-metrics.service
+          register: _unit_after
+
+        - name: Assert each address is refused and the unit is kept
+          ansible.builtin.assert:
+            that:
+              - _refused.results | map(attribute='rc') | reject('eq', 0) | list | length == 3
+              - _refused.results | map(attribute='stdout') | select('search', 'must be an IPv4 address') | list | length == 3
+              - "'hub.example.test' in _refused.results[0].stdout"
+              - "'172.30.104.256' in _refused.results[2].stdout"
+              - _unit_after.content == _unit.content
+            fail_msg: >-
+              {{ _refused.results | map(attribute='rc') | join(' ') }}
+              {{ _refused.results | map(attribute='stdout') | map('regex_findall', 'fatal: .*') | flatten | join(' ') }}
+
+        - name: Read the hub's upstream reply
+          ansible.builtin.set_fact:
+            _upstream: "{{ lookup('ansible.builtin.file', _replies ~ '/upstream') | from_json }}"
+
+        - name: Lose channel 4's lock and move it to 64-QAM
+          vars:
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
+            _channels: "{{ _upstream.upstream.channels }}"
+            _changed: "{{ _channels[3] | combine({'lockStatus': false, 'modulation': 'qam_64'}) }}"
+          ansible.builtin.copy:
+            content: "{{ {'upstream': {'channels': _channels[:3] + [_changed] + _channels[4:]}} | to_json }}"
+            dest: "{{ _replies }}/upstream"
+            mode: "0644"
+          delegate_to: localhost
+          connection: local
+
+        - name: Collect the degraded line
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read the degraded textfile
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _degraded
+
+        - name: Assert the lost lock and the new modulation show
+          vars:
+            _samples: "{{ (_degraded.content | b64decode).splitlines() }}"
+          ansible.builtin.assert:
+            that:
+              - "'cable_modem_upstream_locked{channel=\"4\",type=\"atdma\"} 0' in _samples"
+              - "'cable_modem_upstream_modulation_bits{channel=\"4\",type=\"atdma\"} 6' in _samples"
+              - "'cable_modem_upstream_modulation_bits{channel=\"3\",type=\"atdma\"} 4' in _samples"
+            fail_msg: "{{ _samples | select('match', 'cable_modem_upstream_(locked|modulation)') | list }}"
+
+        - name: Make the event log unreadable
+          ansible.builtin.copy:
+            content: "<html>busy</html>\n"
+            dest: "{{ _replies }}/eventlog"
+            mode: "0644"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+
+        - name: Collect from a hub that answers garbage
+          ansible.builtin.command: "{{ _collect }}"
+          register: _garbage
+          changed_when: true
+          failed_when: false
+
+        - name: Read what a garbage reply left
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _garbage_stat
+
+        - name: Read why the garbage collection failed
+          ansible.builtin.command: "{{ _why }}"
+          register: _garbage_why
+          changed_when: false
+
+        - name: Take the upstream reply away and put the event log back
+          ansible.builtin.shell: >-
+            rm {{ _replies }}/upstream &&
+            cp {{ playbook_dir }}/hub/rest/v1/cablemodem/eventlog {{ _replies }}/eventlog
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+
+        - name: Collect from a hub missing a reply
+          ansible.builtin.command: "{{ _collect }}"
+          register: _missing
+          changed_when: true
+          failed_when: false
+
+        - name: Read what a missing reply left
+          ansible.builtin.stat:
+            path: "{{ _prom }}"
+          register: _missing_stat
+
+        - name: Read why the missing collection failed
+          ansible.builtin.command: "{{ _why }}"
+          register: _missing_why
+          changed_when: false
+
+        - name: Put the upstream reply back
+          ansible.builtin.copy:
+            src: "{{ playbook_dir }}/hub/rest/v1/cablemodem/upstream"
+            dest: "{{ _replies }}/upstream"
+            mode: "0644"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+
+        - name: Serve each bad reply in turn
+          ansible.builtin.include_tasks: metrics_bad_reply.yml
+          loop_control:
+            loop_var: bad
+            label: "{{ bad.name }}"
+          vars:
+            _nl: "\n"
+            _channels: "{{ _upstream.upstream.channels }}"
+            _first: "{{ _channels[0] }}"
+          loop:
+            - name: a number field carrying a series of its own
+              path: upstream
+              content: >-
+                {{ {'upstream': {'channels': [_first | combine({'t3Timeout': '1' ~ _nl ~ 'cable_modem_injected 1'})]
+                   + _channels[1:]}} | to_json }}
+              why: "upstream: unexpected t3Timeout: "
+            - name: a lock status in a string
+              path: upstream
+              content: "{{ {'upstream': {'channels': [_first | combine({'lockStatus': 'false'})] + _channels[1:]}} | to_json }}"
+              why: "upstream: unexpected lockStatus: "
+            - name: a channel type with a trailing newline
+              path: upstream
+              content: "{{ {'upstream': {'channels': [_first | combine({'channelType': 'atdma' ~ _nl})] + _channels[1:]}} | to_json }}"
+              why: "upstream: unexpected channel type: "
+            - name: a reply over a megabyte
+              path: eventlog
+              content: "{{ 'x' * 1100000 }}"
+              why: "eventlog: reply over 1000000 bytes"
+
+        - name: Clear the failures, so systemd's start limit doesn't refuse the next run
+          ansible.builtin.command: "{{ _reset }}"
+          changed_when: true
+
+        - name: Collect once the hub answers again
+          ansible.builtin.command: "{{ _collect }}"
+          changed_when: true
+
+        - name: Read the healed textfile
+          ansible.builtin.slurp:
+            src: "{{ _prom }}"
+          register: _healed
+
+        - name: Converge with the collector off
+          ansible.builtin.command: "{{ _converge }}/off.json"
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          environment: *roles
+          changed_when: true
+
+        - name: Read what the collector left
+          ansible.builtin.stat:
+            path: "{{ item }}"
+          register: _left
+          loop:
+            - /etc/systemd/system/cable-modem-metrics.timer
+            - /etc/systemd/system/cable-modem-metrics.service
+            - /usr/local/sbin/cable-modem-metrics
+            - "{{ _prom }}"
+
+        - name: Assert a bad reply leaves no textfile and says why, heals, and goes when turned off
+          ansible.builtin.assert:
+            that:
+              - _garbage.rc != 0
+              - not _garbage_stat.stat.exists
+              - "_garbage_why.stdout is search('(?m)^cable-modem-metrics: eventlog: Expecting value')"
+              - _missing.rc != 0
+              - not _missing_stat.stat.exists
+              - "_missing_why.stdout is search('(?m)^cable-modem-metrics: upstream: HTTP Error 404')"
+              - "(_healed.content | b64decode) is search('(?m)^cable_modem_upstream_t3_timeouts_total\\{channel=\"3\",type=\"atdma\"\\} 31$')"
+              - _left.results | selectattr('stat.exists') | list | length == 0
+            fail_msg: >-
+              {{ _garbage.rc }} {{ _garbage_why.stdout }} {{ _missing.rc }} {{ _missing_why.stdout }}
+              {{ _left.results | selectattr('stat.exists') | map(attribute='item') | list }}
+      always:
+        - name: Remove the target and the hub
+          ansible.builtin.command: docker rm -f {{ inventory_hostname }} {{ _hub }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the test network
+          ansible.builtin.command: docker network rm {{ _net }}
+          delegate_to: localhost
+          connection: local
+          vars: *control_host
+          changed_when: true
+          failed_when: false
+
+        - name: Remove the settings
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
+          delegate_to: localhost
+          connection: local
+          vars: *control_host

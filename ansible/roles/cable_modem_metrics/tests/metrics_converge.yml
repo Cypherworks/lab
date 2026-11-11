@@ -1,0 +1,16 @@
+---
+# Runs the role on metrics.yml's target, where systemd and node_exporter
+# already run.
+- name: Converge the cable modem collector
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Read the run's settings
+      ansible.builtin.include_vars:
+        file: "{{ settings }}"
+
+    - name: Hold the cable modem collector
+      ansible.builtin.include_role:
+        name: cable_modem_metrics
