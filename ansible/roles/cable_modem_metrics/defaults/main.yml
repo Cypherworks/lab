@@ -1,0 +1,6 @@
+---
+# The hub's status page address (IPv4); empty removes the collector and
+# everything it keeps.
+cable_modem_metrics_address: ""
+cable_modem_metrics_dir: /var/lib/prometheus/node-exporter  # node_exporter's textfile directory
+cable_modem_metrics_interval: 1min

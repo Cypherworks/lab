@@ -1,0 +1,11 @@
+{# Managed by Ansible (cable_modem_metrics). #}
+[Unit]
+Description=Write the cable modem's line state for node_exporter on a timer
+
+[Timer]
+OnBootSec={{ cable_modem_metrics_interval }}
+OnUnitActiveSec={{ cable_modem_metrics_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,84 @@
+{
+ "upstream": {
+  "channels": [
+   {
+    "channelId": 1,
+    "frequency": 60300000,
+    "lockStatus": true,
+    "power": 30.8,
+    "symbolRate": 5120,
+    "modulation": "qam_16",
+    "t1Timeout": 0,
+    "t2Timeout": 0,
+    "t3Timeout": 1,
+    "t4Timeout": 0,
+    "channelType": "atdma"
+   },
+   {
+    "channelId": 2,
+    "frequency": 53700000,
+    "lockStatus": true,
+    "power": 30.8,
+    "symbolRate": 5120,
+    "modulation": "qam_16",
+    "t1Timeout": 0,
+    "t2Timeout": 0,
+    "t3Timeout": 1,
+    "t4Timeout": 0,
+    "channelType": "atdma"
+   },
+   {
+    "channelId": 3,
+    "frequency": 46200000,
+    "lockStatus": true,
+    "power": 31,
+    "symbolRate": 5120,
+    "modulation": "qam_16",
+    "t1Timeout": 0,
+    "t2Timeout": 0,
+    "t3Timeout": 31,
+    "t4Timeout": 0,
+    "channelType": "atdma"
+   },
+   {
+    "channelId": 4,
+    "frequency": 39400000,
+    "lockStatus": true,
+    "power": 31.3,
+    "symbolRate": 5120,
+    "modulation": "qam_16",
+    "t1Timeout": 0,
+    "t2Timeout": 0,
+    "t3Timeout": 5,
+    "t4Timeout": 0,
+    "channelType": "atdma"
+   },
+   {
+    "channelId": 5,
+    "frequency": 32600000,
+    "lockStatus": true,
+    "power": 31.5,
+    "symbolRate": 5120,
+    "modulation": "qam_16",
+    "t1Timeout": 0,
+    "t2Timeout": 0,
+    "t3Timeout": 24,
+    "t4Timeout": 0,
+    "channelType": "atdma"
+   },
+   {
+    "channelId": 6,
+    "frequency": 23600000,
+    "lockStatus": true,
+    "power": 31.8,
+    "symbolRate": 5120,
+    "modulation": "qam_16",
+    "t1Timeout": 0,
+    "t2Timeout": 0,
+    "t3Timeout": 13,
+    "t4Timeout": 0,
+    "channelType": "atdma"
+   }
+  ]
+ }
+}

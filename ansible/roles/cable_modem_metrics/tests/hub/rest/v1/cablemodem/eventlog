@@ -1,0 +1,164 @@
+{
+ "eventlog": [
+  {
+   "priority": "critical",
+   "time": "2026-11-10T22:31:31.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-11-10T22:31:07.000Z",
+   "message": "Unicast Maintenance Ranging attempted - No response - Retries exhausted;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-11-10T22:31:07.000Z",
+   "message": "16 consecutive T3 timeouts while trying to range on upstream channel 4;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-11-09T20:14:45.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "error",
+   "time": "2026-11-09T17:50:15.000Z",
+   "message": "DHCP RENEW WARNING - Field invalid in response v4 option;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-11-06T05:51:14.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "error",
+   "time": "2026-11-06T05:50:13.000Z",
+   "message": "DHCP RENEW WARNING - Field invalid in response v4 option;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-11-04T08:50:38.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "error",
+   "time": "2026-11-02T17:50:11.000Z",
+   "message": "DHCP RENEW WARNING - Field invalid in response v4 option;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-11-02T05:47:40.000Z",
+   "message": "Dynamic Range Window violation"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-11-02T05:47:40.000Z",
+   "message": "RNG-RSP CCAP Commanded Power Exceeds Value Corresponding to the Top of the DRW;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-11-02T01:55:37.000Z",
+   "message": "Dynamic Range Window violation"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-11-02T01:55:37.000Z",
+   "message": "RNG-RSP CCAP Commanded Power Exceeds Value Corresponding to the Top of the DRW;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "error",
+   "time": "2026-10-30T05:50:09.000Z",
+   "message": "DHCP RENEW WARNING - Field invalid in response v4 option;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-10-30T01:04:33.000Z",
+   "message": "RNG-RSP CCAP Commanded Power Exceeds Value Corresponding to the Top of the DRW;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-10-30T01:04:33.000Z",
+   "message": "Dynamic Range Window violation"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-29T09:53:06.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-10-29T03:19:19.000Z",
+   "message": "RNG-RSP CCAP Commanded Power Exceeds Value Corresponding to the Top of the DRW;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-10-29T03:19:19.000Z",
+   "message": "Dynamic Range Window violation"
+  },
+  {
+   "priority": "notice",
+   "time": "2026-10-28T13:40:29.000Z",
+   "message": "REGISTRATION COMPLETE - Waiting for Operational status"
+  },
+  {
+   "priority": "notice",
+   "time": "2026-10-28T13:40:22.000Z",
+   "message": "DS profile assignment change. DS Chan ID: 33; Previous Profile: ; New Profile: 1 2 3.;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "notice",
+   "time": "2026-10-28T13:40:20.000Z",
+   "message": "DS profile assignment change. DS Chan ID: 32; Previous Profile: ; New Profile: 1 2 3.;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "notice",
+   "time": "2026-10-28T13:40:16.000Z",
+   "message": "TLV-11 - unrecognized OID;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "warning",
+   "time": "2026-10-28T13:40:14.000Z",
+   "message": "DHCP WARNING - Non-critical field invalid in response ;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "notice",
+   "time": "2026-10-28T13:40:11.000Z",
+   "message": "Honoring MDD; IP provisioning mode = IPv4"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-28T13:40:06.000Z",
+   "message": "No Ranging Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-28T13:39:59.000Z",
+   "message": "SYNC Timing Synchronization failure - Failed to acquire QAM/QPSK symbol timing;;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:03;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-28T13:39:56.000Z",
+   "message": "Cable Modem Reboot because of - HW or Power-On Reset"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-19T17:49:37.000Z",
+   "message": "Unicast Maintenance Ranging attempted - No response - Retries exhausted;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-19T17:49:37.000Z",
+   "message": "16 consecutive T3 timeouts while trying to range on upstream channel 2;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-19T17:49:33.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+   "priority": "critical",
+   "time": "2026-10-19T17:49:31.000Z",
+   "message": "Started Unicast Maintenance Ranging - No Response received - T3 time-out;CM-MAC=00:00:5e:00:53:01;CMTS-MAC=00:00:5e:00:53:02;CM-QOS=1.1;CM-VER=3.1;"
+  }
+ ]
+}

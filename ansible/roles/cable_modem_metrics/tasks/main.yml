@@ -1,0 +1,74 @@
+---
+# A timer writes the hub's line state into node_exporter's textfile
+# directory. Without an address, the collector and its file are removed.
+- name: Install the cable modem collector
+  when: cable_modem_metrics_address | length > 0
+  block:
+    - name: Check the hub's address is an IPv4 address
+      vars:
+        _octet: (25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])
+        _ipv4: "^{{ _octet }}([.]{{ _octet }}){3}"
+      ansible.builtin.assert:
+        that:
+          - cable_modem_metrics_address is string
+          - (cable_modem_metrics_address | regex_search(_ipv4)) == cable_modem_metrics_address
+        fail_msg: >-
+          cable_modem_metrics_address must be an IPv4 address, as the unit
+          allows only that address: got {{ cable_modem_metrics_address }}
+        quiet: true
+
+    - name: Install the collector script
+      ansible.builtin.copy:
+        src: cable-modem-metrics
+        dest: /usr/local/sbin/cable-modem-metrics
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the collector's units
+      ansible.builtin.template:
+        src: "cable-modem-metrics.{{ item }}.j2"
+        dest: "/etc/systemd/system/cable-modem-metrics.{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: [service, timer]
+      register: _cable_modem_metrics_units
+
+    - name: Run the collector on its timer
+      ansible.builtin.systemd_service:
+        name: cable-modem-metrics.timer
+        enabled: true
+        state: started
+        daemon_reload: "{{ _cable_modem_metrics_units is changed }}"
+
+- name: Remove the cable modem collector
+  when: cable_modem_metrics_address | length == 0
+  block:
+    - name: Read whether the timer is installed
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cable-modem-metrics.timer
+      register: _cable_modem_metrics_timer
+
+    - name: Stop the timer
+      ansible.builtin.systemd_service:
+        name: cable-modem-metrics.timer
+        enabled: false
+        state: stopped
+      when: _cable_modem_metrics_timer.stat.exists
+
+    - name: Remove the collector and its file
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/cable-modem-metrics.timer
+        - /etc/systemd/system/cable-modem-metrics.service
+        - /usr/local/sbin/cable-modem-metrics
+        - "{{ cable_modem_metrics_dir }}/cable_modem.prom"
+      register: _cable_modem_metrics_removed
+
+    - name: Forget the removed units
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: _cable_modem_metrics_removed is changed
