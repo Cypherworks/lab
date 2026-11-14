@@ -148,6 +148,15 @@ groups:
           summary: "No logs from {{ '{{ $labels.instance }}' }}"
           description: "Up and scraped, but no log line from it in {{ monitoring_not_logging_window }}."
 {% endif %}
+
+      # From the apt_maintenance role: a weekly slot missed, deferred or failed.
+      - alert: MaintenanceOverdue
+        expr: time() - apt_maintenance_last_success_timestamp_seconds > {{ monitoring_maintenance_overdue_days }} * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "Not patched for {{ monitoring_maintenance_overdue_days }} days: {{ '{{ $labels.instance }}' }}"
+          description: "No successful apt maintenance run in {{ monitoring_maintenance_overdue_days }} days."
 {% for rule in monitoring_alert_rules %}
 
 {{ [rule] | to_nice_yaml(indent=2, width=1000) | trim | indent(6, first=True) }}

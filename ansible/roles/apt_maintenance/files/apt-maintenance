@@ -1,0 +1,149 @@
+#!/bin/bash
+# Weekly apt maintenance, installed by the apt_maintenance role (see its README).
+#
+#   apt-maintenance run      the timer's job: gate, upgrade, reboot if needed
+#   apt-maintenance confirm  the boot unit's job after that reboot: wait for
+#                            the gate to pass again, then record success
+#
+# Results land in apt_maintenance.prom in the node_exporter textfile directory.
+# Settings come from /etc/apt-maintenance/config; the gate is one shell command
+# per line in /etc/apt-maintenance/gate-checks, and every one must exit 0.
+set -uo pipefail
+
+STATE_DIR=/var/lib/apt-maintenance
+PENDING="$STATE_DIR/confirm-pending"
+GATE_CHECKS=/etc/apt-maintenance/gate-checks
+CHECK_TIMEOUT=60
+UPDATE_ATTEMPTS=3
+
+# shellcheck source=/dev/null
+. /etc/apt-maintenance/config
+export DEBIAN_FRONTEND=noninteractive
+
+log() { echo "apt-maintenance: $*"; }
+
+write_metrics() {
+  local result=$1 r value tmp
+  tmp=$(mktemp "$TEXTFILE_DIR/.apt_maintenance.XXXXXX") || return 1
+  {
+    echo "# HELP apt_maintenance_last_run_timestamp_seconds When the last maintenance run started."
+    echo "# TYPE apt_maintenance_last_run_timestamp_seconds gauge"
+    echo "apt_maintenance_last_run_timestamp_seconds $(cat "$STATE_DIR/last_run" 2>/dev/null || echo 0)"
+    if [ -s "$STATE_DIR/last_success" ]; then
+      echo "# HELP apt_maintenance_last_success_timestamp_seconds When a run last left the host patched and its gate passing."
+      echo "# TYPE apt_maintenance_last_success_timestamp_seconds gauge"
+      echo "apt_maintenance_last_success_timestamp_seconds $(cat "$STATE_DIR/last_success")"
+    fi
+    echo "# HELP apt_maintenance_result Outcome of the last run: 1 on the current result."
+    echo "# TYPE apt_maintenance_result gauge"
+    for r in ok deferred failed rebooting; do
+      value=0
+      [ "$r" = "$result" ] && value=1
+      echo "apt_maintenance_result{result=\"$r\"} $value"
+    done
+  } > "$tmp"
+  chmod 0644 "$tmp"
+  mv "$tmp" "$TEXTFILE_DIR/apt_maintenance.prom"
+}
+
+gate_passes() {
+  local check out
+  while IFS= read -r check; do
+    [ -n "$check" ] || continue
+    if ! out=$(timeout "$CHECK_TIMEOUT" sh -c "$check" < /dev/null 2>&1); then
+      log "gate check failed: $check: $(printf '%s' "$out" | tail -n 1)"
+      return 1
+    fi
+  done < "$GATE_CHECKS"
+}
+
+succeed() {
+  date +%s > "$STATE_DIR/last_success"
+  write_metrics ok
+}
+
+installed_packages() {
+  dpkg-query -W -f='${Package} ${Version} ${db:Status-Abbrev}\n'
+}
+
+upgrade() {
+  local attempt
+  local opts=(-q -o "DPkg::Lock::Timeout=$LOCK_TIMEOUT"
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+  for attempt in $(seq "$UPDATE_ATTEMPTS"); do
+    apt-get "${opts[@]}" --error-on=any update && break
+    [ "$attempt" -lt "$UPDATE_ATTEMPTS" ] || return 1
+    log "apt-get update failed, retrying in ${UPDATE_RETRY_DELAY}s"
+    sleep "$UPDATE_RETRY_DELAY"
+  done
+  apt-get "${opts[@]}" -y upgrade --with-new-pkgs
+}
+
+run() {
+  local before after start elapsed
+  start=$(date +%s)
+  echo "$start" > "$STATE_DIR/last_run"
+  if ! gate_passes; then
+    log "gate closed, deferring to the next slot"
+    write_metrics deferred
+    return 0
+  fi
+  before=$(installed_packages)
+  if ! upgrade; then
+    log "upgrade failed, not rebooting"
+    write_metrics failed
+    return 1
+  fi
+  after=$(installed_packages)
+  if [ "$before" = "$after" ] && [ ! -e /run/reboot-required ]; then
+    log "nothing upgraded and no reboot required"
+    succeed
+    return 0
+  fi
+  elapsed=$(( $(date +%s) - start ))
+  if [ "$elapsed" -ge "$REBOOT_DEADLINE" ]; then
+    log "upgrade done ${elapsed}s in, past the reboot deadline of ${REBOOT_DEADLINE}s; not rebooting"
+    write_metrics failed
+    return 1
+  fi
+  if ! gate_passes; then
+    log "gate closed before the reboot, deferring it to the next slot"
+    write_metrics deferred
+    return 0
+  fi
+  if ! touch "$PENDING"; then
+    log "can't record the pending reboot, not rebooting"
+    write_metrics failed
+    return 1
+  fi
+  log "rebooting"
+  write_metrics rebooting
+  if ! sh -c "$REBOOT_COMMAND"; then
+    log "reboot command failed"
+    rm -f "$PENDING"
+    write_metrics failed
+    return 1
+  fi
+}
+
+confirm() {
+  local deadline=$(( $(date +%s) + CONFIRM_TIMEOUT ))
+  until gate_passes; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      log "gate still closed ${CONFIRM_TIMEOUT}s after the reboot"
+      rm -f "$PENDING"
+      write_metrics failed
+      return 1
+    fi
+    sleep "$CONFIRM_INTERVAL"
+  done
+  rm -f "$PENDING"
+  log "gate passes after the reboot"
+  succeed
+}
+
+case "${1:-}" in
+  run) run ;;
+  confirm) confirm ;;
+  *) echo "usage: apt-maintenance run|confirm" >&2; exit 2 ;;
+esac

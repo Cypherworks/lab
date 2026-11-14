@@ -113,6 +113,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 |----------|---------|-------------|
 | `monitoring_temp_warn_celsius` | `75` | CPU temperature warning threshold. |
 | `monitoring_disk_used_percent` | `85` | Disk-used warning threshold. |
+| `monitoring_maintenance_overdue_days` | `8` | Days since a system's last successful `apt_maintenance` run before `MaintenanceOverdue` fires. A system that has never reported doesn't fire; the dashboard counts it. |
 
 ### Grafana and OIDC
 

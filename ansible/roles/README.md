@@ -10,6 +10,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | `firewall` | Host firewall (ufw): default-deny inbound, SSH left open, each host's rules from its variables. |
 | `docker` | Docker Engine and Compose v2. Shared dependency. |
 | `unattended_upgrades` | Automatic security updates with a quiet-window reboot. |
+| `apt_maintenance` | Weekly upgrade from every origin and a reboot, in a per-host slot behind a health gate. |
 | `ssh_ca_trust` | Trust an SSH CA for user certificates via an additive sshd drop-in. |
 | `sssd` | SSSD LDAP client against an Authentik LDAP outpost. |
 | `tailscale` | Join a host to a Headscale/Tailscale overlay. |

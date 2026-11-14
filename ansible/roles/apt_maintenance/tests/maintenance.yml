@@ -1,0 +1,502 @@
+---
+# Runs the maintenance unit in a systemd container against a local apt repo
+# that offers newer test packages. A closed gate must defer without touching
+# apt; an open one upgrades everything but a held package and reboots; a
+# reboot-required flag alone reboots; nothing new and no flag means no reboot;
+# the boot confirmation records success only once the gate passes, and does
+# nothing without a pending reboot; a run past its deadline, a gate that
+# closes during the upgrade, a repo that can't be fetched and a failing
+# package install all leave the host up and the run failed or deferred,
+# never rebooted. The reboot command is
+# swapped for a marker file, so the container keeps running. Needs Docker,
+# community.docker, and internet for the image. From ansible/, once per OS:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/apt_maintenance/tests/maintenance.yml
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/apt_maintenance/tests/maintenance.yml -e _image=debian:13
+- name: Boot a host with a local apt repo
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _image: ubuntu:24.04
+    _target: apt-maintenance-test
+    _boot: >-
+      apt-get update -qq
+      && apt-get install -y -qq systemd systemd-sysv python3 apt-utils
+      && exec /lib/systemd/systemd
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on {{ _image }}
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - "{{ _image }}"
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _target }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Address the target through Docker
+      ansible.builtin.add_host:
+        name: "{{ _target }}"
+        groups: maintenance_target
+        ansible_connection: community.docker.docker
+        ansible_python_interpreter: /usr/bin/python3
+
+- name: Upgrade, defer and reboot
+  hosts: maintenance_target
+  gather_facts: false
+  vars:
+    ansible_user: root
+    apt_maintenance_on_calendar: Sun *-*-* 02:00:00
+    apt_maintenance_gate_checks:
+      - test -e /etc/amtest/gate-open
+      - "true"
+      - /usr/local/bin/amtest-gate
+    apt_maintenance_reboot_command: touch /run/amtest-rebooted
+    apt_maintenance_boot_confirm_timeout: 6
+    apt_maintenance_boot_confirm_interval: 2
+    apt_maintenance_update_retry_delay: 1
+    _prom: /var/lib/prometheus/node-exporter/apt_maintenance.prom
+    _versions: dpkg-query -W -f='${Package}=${Version}\n' amtest amheld amlate amflip
+    _last_journal: >-
+      journalctl -o cat --no-pager _SYSTEMD_INVOCATION_ID=$(systemctl show
+      -p InvocationID --value apt-maintenance.service)
+    _markers: >-
+      for f in /run/amtest-rebooted /var/lib/apt-maintenance/confirm-pending;
+      do if [ -e $f ]; then echo "present $f"; else echo "absent $f"; fi; done
+  tasks:
+    - name: Build version 1 and 2 of each test package
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /srv/amtest/repo /srv/amtest/build /etc/amtest
+        for pkg in amtest amheld ambroken amlate amflip; do
+          for ver in 1.0 2.0; do
+            d=/srv/amtest/build/$pkg-$ver
+            mkdir -p $d/DEBIAN
+            printf 'Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: t <t@t>\nDescription: t\n' \
+              $pkg $ver > $d/DEBIAN/control
+            if [ $pkg = ambroken ] && [ $ver = 2.0 ]; then
+              printf '#!/bin/sh\nexit 1\n' > $d/DEBIAN/postinst
+              chmod 0755 $d/DEBIAN/postinst
+            fi
+            dpkg-deb --build $d /srv/amtest/build/${pkg}_${ver}_all.deb
+          done
+        done
+        dpkg -i /srv/amtest/build/amtest_1.0_all.deb \
+          /srv/amtest/build/amheld_1.0_all.deb \
+          /srv/amtest/build/amlate_1.0_all.deb \
+          /srv/amtest/build/amflip_1.0_all.deb
+        apt-mark hold amheld
+        printf '%s\n' '#!/bin/sh' \
+          'if [ -e /etc/amtest/flip-once ]; then rm /etc/amtest/flip-once; exit 0; fi' \
+          'test ! -e /etc/amtest/flip-armed' > /usr/local/bin/amtest-gate
+        chmod 0755 /usr/local/bin/amtest-gate
+        cp /srv/amtest/build/amtest_2.0_all.deb \
+          /srv/amtest/build/amheld_2.0_all.deb /srv/amtest/repo/
+        rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+        echo 'deb [trusted=yes] file:/srv/amtest/repo ./' \
+          > /etc/apt/sources.list.d/amtest.list
+        cd /srv/amtest/repo && apt-ftparchive packages . > Packages
+      changed_when: true
+
+    - name: Refuse to install without a schedule
+      block:
+        - name: Run the role with an empty schedule
+          ansible.builtin.include_role:
+            name: apt_maintenance
+          vars:
+            apt_maintenance_on_calendar: ""
+        - name: Note that it didn't fail
+          ansible.builtin.set_fact:
+            _empty_schedule_failed: false
+      rescue:
+        - name: Note that it failed
+          ansible.builtin.set_fact:
+            _empty_schedule_failed: true
+
+    - name: Install the maintenance units
+      ansible.builtin.include_role:
+        name: apt_maintenance
+
+    - name: Read the timer
+      ansible.builtin.command: systemctl cat apt-maintenance.timer  # noqa command-instead-of-module
+      register: _timer
+      changed_when: false
+
+    - name: Read the timer's unit state
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.timer
+      register: _timer_unit
+
+    - name: Run with the gate closed
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+        state: started
+      failed_when: false
+
+    - name: Read the unit's result after the deferred run
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+      register: _closed_run
+
+    - name: Read the state after the deferred run
+      ansible.builtin.shell: |
+        {{ _versions }}
+        echo ---
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+        echo ---
+        {{ _last_journal }}
+      register: _deferred
+      changed_when: false
+
+    - name: Open the gate and run with newer packages offered
+      ansible.builtin.shell: |
+        touch /etc/amtest/gate-open
+        systemctl start apt-maintenance.service
+      register: _open_run
+      changed_when: true
+      failed_when: false
+
+    - name: Read the state after the upgrade
+      ansible.builtin.shell: |
+        {{ _versions }}
+        echo ---
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+      register: _upgraded
+      changed_when: false
+
+    - name: Confirm after the reboot with the gate open
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+        state: started
+
+    - name: Wait for the confirmation to finish
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+      register: _confirm_open
+      until: _confirm_open.status.ActiveState != 'active'
+      retries: 30
+      delay: 1
+
+    - name: Read the state after the confirmation
+      ansible.builtin.shell: |
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+      register: _confirmed
+      changed_when: false
+
+    - name: Run with nothing new and no reboot flag
+      ansible.builtin.shell: |
+        rm -f /run/amtest-rebooted
+        systemctl start apt-maintenance.service
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+      register: _quiet
+      changed_when: true
+      failed_when: false
+
+    - name: Run with only the reboot flag set
+      ansible.builtin.shell: |
+        touch /run/reboot-required
+        systemctl start apt-maintenance.service
+        {{ _markers }}
+      register: _flagged
+      changed_when: true
+      failed_when: false
+
+    - name: Close the gate before the next boot
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: [/etc/amtest/gate-open, /run/reboot-required]
+
+    - name: Confirm after the reboot with the gate closed
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+        state: started
+
+    - name: Wait for the failed confirmation to finish
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+      register: _confirm_closed_unit
+      until: _confirm_closed_unit.status.ActiveState != 'active'
+      retries: 30
+      delay: 1
+
+    - name: Read the state after the failed confirmation
+      ansible.builtin.shell: |
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+      register: _confirm_closed
+      changed_when: false
+
+    - name: Start the confirmation with no reboot pending
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+        state: started
+
+    - name: Read the confirmation unit after it was skipped
+      ansible.builtin.systemd_service:
+        name: apt-maintenance-confirm.service
+      register: _no_confirm_unit
+
+    - name: Read the metrics after the skipped confirmation
+      ansible.builtin.command: cat {{ _prom }}
+      register: _no_confirm
+      changed_when: false
+
+    - name: Offer a newer package with a deadline already past
+      ansible.builtin.shell: |
+        set -e
+        cp /srv/amtest/build/amlate_2.0_all.deb /srv/amtest/repo/
+        cd /srv/amtest/repo && apt-ftparchive packages . > Packages
+        touch /etc/amtest/gate-open
+        rm -f /run/amtest-rebooted
+        sed -i 's/^REBOOT_DEADLINE=.*/REBOOT_DEADLINE=0/' /etc/apt-maintenance/config
+      changed_when: true
+
+    - name: Run past the deadline
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+        state: started
+      failed_when: false
+
+    - name: Read the state after the late run
+      ansible.builtin.shell: |
+        {{ _versions }}
+        echo ---
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+        echo ---
+        {{ _last_journal }}
+      register: _late
+      changed_when: false
+
+    - name: Offer a newer package and close the gate during the upgrade
+      ansible.builtin.shell: |
+        set -e
+        sed -i 's/^REBOOT_DEADLINE=.*/REBOOT_DEADLINE=1200/' /etc/apt-maintenance/config
+        cp /srv/amtest/build/amflip_2.0_all.deb /srv/amtest/repo/
+        cd /srv/amtest/repo && apt-ftparchive packages . > Packages
+        touch /etc/amtest/flip-armed /etc/amtest/flip-once
+      changed_when: true
+
+    - name: Run with the gate closing before the reboot
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+        state: started
+      failed_when: false
+
+    - name: Read the state after the gate closed mid-run
+      ansible.builtin.shell: |
+        {{ _versions }}
+        echo ---
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+        echo ---
+        {{ _last_journal }}
+        rm -f /etc/amtest/flip-armed
+      register: _flipped
+      changed_when: false
+
+    - name: Add a repo that can't be fetched
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/amtest-unreachable.list
+        content: "deb [trusted=yes] http://127.0.0.1:9/ ./\n"
+        mode: "0644"
+
+    - name: Run with the unreachable repo
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+        state: started
+      failed_when: false
+
+    - name: Read the unit's result after the fetch failure
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+      register: _unfetched_unit
+
+    - name: Read the state after the fetch failure
+      ansible.builtin.shell: |
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+        echo ---
+        {{ _last_journal }}
+        rm -f /etc/apt/sources.list.d/amtest-unreachable.list
+      register: _unfetched
+      changed_when: false
+
+    - name: Offer a package whose install fails
+      ansible.builtin.shell: |
+        set -e
+        dpkg -i /srv/amtest/build/ambroken_1.0_all.deb
+        cp /srv/amtest/build/ambroken_2.0_all.deb /srv/amtest/repo/
+        cd /srv/amtest/repo && apt-ftparchive packages . > Packages
+        touch /etc/amtest/gate-open
+        rm -f /run/amtest-rebooted
+      changed_when: true
+
+    - name: Run with the failing package offered
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+        state: started
+      failed_when: false
+
+    - name: Read the unit's result after the failed run
+      ansible.builtin.systemd_service:
+        name: apt-maintenance.service
+      register: _broken_run
+
+    - name: Read the state after the failed run
+      ansible.builtin.shell: |
+        cat {{ _prom }}
+        echo ---
+        {{ _markers }}
+        echo ---
+        journalctl -u apt-maintenance.service -o cat --no-pager
+      register: _broken
+      changed_when: false
+
+    - name: Clean up the container
+      delegate_to: localhost
+      ansible.builtin.command: docker rm -f {{ inventory_hostname }}
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      changed_when: true
+
+    - name: Assert an empty schedule fails and the timer never catches up
+      ansible.builtin.assert:
+        that:
+          - _empty_schedule_failed
+          - "'OnCalendar=Sun *-*-* 02:00:00' in _timer.stdout"
+          - "'Persistent=true' not in _timer.stdout"
+          - _timer_unit.status.UnitFileState == 'enabled'
+
+    - name: Assert a closed gate defers without touching apt
+      ansible.builtin.assert:
+        that:
+          - _closed_run.status.Result == 'success'
+          - "'amtest=1.0' in _deferred.stdout"
+          - "'apt_maintenance_result{result=\"deferred\"} 1' in _deferred.stdout"
+          - "'apt_maintenance_last_run_timestamp_seconds ' in _deferred.stdout"
+          - "'apt_maintenance_last_success_timestamp_seconds' not in _deferred.stdout"
+          - "'absent /run/amtest-rebooted' in _deferred.stdout"
+          - "'absent /var/lib/apt-maintenance/confirm-pending' in _deferred.stdout"
+          - "'gate check failed: test -e /etc/amtest/gate-open' in _deferred.stdout"
+
+    - name: Assert an open gate upgrades all but the hold, then reboots
+      ansible.builtin.assert:
+        that:
+          - _open_run.rc == 0
+          - "'amtest=2.0' in _upgraded.stdout"
+          - "'amheld=1.0' in _upgraded.stdout"
+          - "'apt_maintenance_result{result=\"rebooting\"} 1' in _upgraded.stdout"
+          - "'apt_maintenance_last_success_timestamp_seconds' not in _upgraded.stdout"
+          - "'absent ' not in _upgraded.stdout"
+
+    - name: Assert the confirmation records success once the gate passes
+      ansible.builtin.assert:
+        that:
+          - _confirm_open.status.Result == 'success'
+          - "'apt_maintenance_result{result=\"ok\"} 1' in _confirmed.stdout"
+          - "'apt_maintenance_last_success_timestamp_seconds ' in _confirmed.stdout"
+          - "'absent /var/lib/apt-maintenance/confirm-pending' in _confirmed.stdout"
+
+    - name: Assert nothing new means success without a reboot
+      ansible.builtin.assert:
+        that:
+          - _quiet.rc == 0
+          - "'apt_maintenance_result{result=\"ok\"} 1' in _quiet.stdout"
+          - "'apt_maintenance_last_success_timestamp_seconds ' in _quiet.stdout"
+          - "'absent /run/amtest-rebooted' in _quiet.stdout"
+          - "'absent /var/lib/apt-maintenance/confirm-pending' in _quiet.stdout"
+
+    - name: Assert the reboot flag alone reboots
+      ansible.builtin.assert:
+        that:
+          - _flagged.rc == 0
+          - "'absent ' not in _flagged.stdout"
+
+    - name: Assert a gate that never passes after boot fails the confirmation
+      ansible.builtin.assert:
+        that:
+          - _confirm_closed_unit.status.Result == 'exit-code'
+          - "'apt_maintenance_result{result=\"failed\"} 1' in _confirm_closed.stdout"
+          - "'absent /var/lib/apt-maintenance/confirm-pending' in _confirm_closed.stdout"
+
+    - name: Assert the confirmation does nothing without a pending reboot
+      ansible.builtin.assert:
+        that:
+          - _no_confirm_unit.status.ConditionResult == 'no'
+          - "'apt_maintenance_result{result=\"failed\"} 1' in _no_confirm.stdout"
+
+    - name: Assert a run past its deadline upgrades but doesn't reboot
+      ansible.builtin.assert:
+        that:
+          - "'amlate=2.0' in _late.stdout"
+          - "'apt_maintenance_result{result=\"failed\"} 1' in _late.stdout"
+          - "'absent /run/amtest-rebooted' in _late.stdout"
+          - "'absent /var/lib/apt-maintenance/confirm-pending' in _late.stdout"
+          - "'past the reboot deadline' in _late.stdout"
+
+    - name: Assert a gate that closes during the upgrade stops the reboot
+      ansible.builtin.assert:
+        that:
+          - "'amflip=2.0' in _flipped.stdout"
+          - "'apt_maintenance_result{result=\"deferred\"} 1' in _flipped.stdout"
+          - "'absent /run/amtest-rebooted' in _flipped.stdout"
+          - "'absent /var/lib/apt-maintenance/confirm-pending' in _flipped.stdout"
+          - "'gate closed before the reboot' in _flipped.stdout"
+
+    - name: Assert a repo that can't be fetched fails the run
+      ansible.builtin.assert:
+        that:
+          - _unfetched_unit.status.Result == 'exit-code'
+          - "'apt_maintenance_result{result=\"failed\"} 1' in _unfetched.stdout"
+          - "'absent /run/amtest-rebooted' in _unfetched.stdout"
+          - "'upgrade failed, not rebooting' in _unfetched.stdout"
+
+    - name: Assert a failing install fails the unit and doesn't reboot
+      ansible.builtin.assert:
+        that:
+          - _broken_run.status.Result == 'exit-code'
+          - "'apt_maintenance_result{result=\"failed\"} 1' in _broken.stdout"
+          - "'absent /run/amtest-rebooted' in _broken.stdout"
+          - "'ambroken' in _broken.stdout"
+          - "'upgrade failed, not rebooting' in _broken.stdout"

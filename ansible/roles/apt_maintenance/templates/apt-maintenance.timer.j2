@@ -1,0 +1,8 @@
+[Unit]
+Description=This host's weekly apt maintenance slot
+
+[Timer]
+OnCalendar={{ apt_maintenance_on_calendar }}
+
+[Install]
+WantedBy=timers.target
