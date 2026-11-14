@@ -1,0 +1,171 @@
+---
+# Runs real Alertmanager on the role's rendered config with
+# monitoring_alertmanager_warning_wait set to 30s, and a stub standing in for
+# Discord. A critical goes out at once; a warning still firing after the wait
+# goes out then; a warning that resolves inside the wait never goes out. Needs
+# Docker, and internet to pull the images once. From ansible/:
+#
+#   ansible-playbook -i localhost, roles/monitoring/tests/warning_wait.yml
+- name: Verify warnings wait and criticals don't
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: monitoring-warning-wait-test
+    _am: monitoring-warning-wait-alertmanager
+    _stub_name: monitoring-warning-wait-stub
+    _dir: "{{ playbook_dir }}/.warning_wait"
+    _stub: |
+      import http.server, json
+      class H(http.server.BaseHTTPRequestHandler):
+          def do_POST(self):
+              size = int(self.headers.get("Content-Length", 0))
+              body = self.rfile.read(size).decode()
+              with open("/tmp/hits", "a") as hits:
+                  hits.write(json.dumps({"path": self.path, "body": body}) + "\n")
+              self.send_response(204)
+              self.end_headers()
+          def log_message(self, *args):
+              pass
+      http.server.ThreadingHTTPServer(("0.0.0.0", 80), H).serve_forever()
+    _sender: |
+      import datetime, json, sys, time, urllib.request as u
+      now = datetime.datetime.now(datetime.timezone.utc)
+      soon = (now + datetime.timedelta(seconds=5)).isoformat()
+      alerts = [
+          {"labels": {"alertname": "TargetDown", "instance": "app-1", "severity": "critical"},
+           "annotations": {"summary": "Target down: node / app-1"}},
+          {"labels": {"alertname": "DiskFilling", "instance": "pg-1", "severity": "warning"},
+           "annotations": {"summary": "Disk filling on pg-1 (/var)"}},
+          {"labels": {"alertname": "NotLogging", "instance": "pg-2", "severity": "warning"},
+           "annotations": {"summary": "No logs from pg-2"}, "endsAt": soon},
+      ]
+      body = json.dumps(alerts).encode()
+      for _ in range(30):
+          try:
+              u.urlopen(u.Request("http://alertmanager:9093/api/v2/alerts", body,
+                                  {"Content-Type": "application/json"}), timeout=3)
+              break
+          except OSError:
+              time.sleep(1)
+      else:
+          sys.exit(1)
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _am }} {{ _stub_name }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Turn Discord on and make warnings wait 30 seconds
+      ansible.builtin.set_fact:
+        monitoring_discord_critical_webhook_url: http://stub/discord-critical
+        monitoring_discord_warning_webhook_url: http://stub/discord-warning
+        monitoring_alertmanager_warning_wait: 30s
+
+    - name: Create the working directories
+      ansible.builtin.file:
+        path: "{{ _dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [config, templates, secrets]
+
+    - name: Render the role's config
+      ansible.builtin.template:
+        src: "../templates/{{ item.src }}"
+        dest: "{{ _dir }}/{{ item.dest }}"
+        mode: "0644"
+      loop:
+        - { src: alertmanager.yml.j2, dest: config/alertmanager.yml }
+        - { src: alert-text.tmpl.j2, dest: templates/alert-text.tmpl }
+
+    - name: Write the secret files as the role does
+      ansible.builtin.copy:
+        content: "{{ item.url }}"
+        dest: "{{ _dir }}/secrets/{{ item.name }}"
+        mode: "0644"
+      loop: "{{ monitoring_alert_secret_files }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start the stub
+      ansible.builtin.command:
+        argv: [docker, run, -d, --name, "{{ _stub_name }}", --network, "{{ _net }}",
+               --network-alias, stub, python:3.13-alpine, python3, -c, "{{ _stub }}"]
+      changed_when: true
+
+    - name: Start Alertmanager
+      ansible.builtin.command: >-
+        docker run -d --name {{ _am }} --network {{ _net }} --network-alias alertmanager
+        -v {{ _dir }}/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+        -v {{ _dir }}/templates:/etc/alertmanager/templates:ro
+        -v {{ _dir }}/secrets:/etc/alertmanager/secrets:ro
+        {{ monitoring_alertmanager_image }}
+        --config.file=/etc/alertmanager/alertmanager.yml
+      changed_when: true
+
+    - name: Send a critical, a lasting warning and a warning that resolves in 5 seconds
+      ansible.builtin.command:
+        argv: [docker, run, --rm, --network, "{{ _net }}", python:3.13-alpine, python3, -c, "{{ _sender }}"]
+      changed_when: true
+
+    - name: Wait past the critical's 10 seconds, inside the warnings' 30
+      ansible.builtin.pause:
+        seconds: 18
+
+    - name: Read what left Alertmanager inside the wait
+      ansible.builtin.command: docker exec {{ _stub_name }} cat /tmp/hits
+      register: _early
+      changed_when: false
+      failed_when: false
+
+    - name: Wait past the warnings' 30 seconds
+      ansible.builtin.pause:
+        seconds: 30
+
+    - name: Read what left Alertmanager after the wait
+      ansible.builtin.command: docker exec {{ _stub_name }} cat /tmp/hits
+      register: _late
+      changed_when: false
+      failed_when: false
+
+    - name: Keep the logs for a failure
+      ansible.builtin.command: docker logs --tail 15 {{ _am }}
+      register: _am_logs
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the containers
+      ansible.builtin.shell: >-
+        docker rm -f {{ _am }} {{ _stub_name }};
+        docker network rm {{ _net }}
+      changed_when: true
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert only lasting warnings wait their turn
+      vars:
+        _sent_early: "{{ _early.stdout_lines | map('from_json') | list }}"
+        _sent_late: "{{ _late.stdout_lines | map('from_json') | list }}"
+        _critical_early: "sent: {{ _sent_early | selectattr('path', 'equalto', '/discord-critical') | map(attribute='body') | join(' ') }}"
+        _warning_early: "sent: {{ _sent_early | selectattr('path', 'equalto', '/discord-warning') | map(attribute='body') | join(' ') }}"
+        _warning_late: "sent: {{ _sent_late | selectattr('path', 'equalto', '/discord-warning') | map(attribute='body') | join(' ') }}"
+      ansible.builtin.assert:
+        that:
+          - "'Target down: node / app-1' in _critical_early"
+          - "'Disk filling' not in _warning_early"
+          - "'Disk filling on pg-1' in _warning_late"
+          - "'No logs from pg-2' not in _warning_late"
+        fail_msg: "early: {{ _early.stdout }} late: {{ _late.stdout }} {{ _am_logs.stderr }}"

@@ -139,6 +139,8 @@ monitoring_grafana_role_path: "contains(groups[*], 'grafana-admins') && 'Admin' 
 # How often Alertmanager re-notifies an alert that is still firing. 24h so an ongoing
 # outage (e.g. a host down) reminds once a day rather than every few hours.
 monitoring_alertmanager_repeat_interval: "24h"
+# A new warning waits this long before it's sent; criticals go after 10s.
+monitoring_alertmanager_warning_wait: "10s"
 # The user the Alertmanager image runs as, so it can read its secret files.
 monitoring_alertmanager_uid: 65534
 # Readers of the Alertmanager API from outside the instance, as [{name,
