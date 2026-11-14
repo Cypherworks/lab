@@ -135,6 +135,7 @@ Each `*_targets` list holds `{target: "ip:port", instance: "hostname"}` mappings
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `monitoring_alertmanager_repeat_interval` | `"24h"` | How often Alertmanager re-notifies a still-firing alert. |
+| `monitoring_alertmanager_warning_wait` | `"10s"` | How long a new `severity="warning"` alert waits before it is sent. One that resolves inside the wait is never sent; criticals still go after 10s. `tests/warning_wait.yml` checks it on real Alertmanager. |
 | `monitoring_discord_critical_webhook_url` / `monitoring_discord_warning_webhook_url` | `""` | Secrets. Discord webhooks by severity, written to files. Text sent there goes through `alert-text.tmpl`, which strips URLs, FQDNs and addresses. Empty leaves Discord out. |
 | `monitoring_healthchecks_ping_url` | `""` | Secret. Set, a `Watchdog` alert pings it every minute, so an outside service can notice the lab has gone. A period of 2 minutes with 1 of grace alerts about 3 minutes after the last ping. |
 | `monitoring_redis_password` | `""` | SOPS — redis_exporter connection password. |

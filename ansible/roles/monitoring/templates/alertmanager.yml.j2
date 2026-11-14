@@ -31,6 +31,9 @@ route:
 {% endif %}
     - matchers: ['severity="critical"']
       receiver: critical
+    - matchers: ['severity="warning"']
+      receiver: warning
+      group_wait: {{ monitoring_alertmanager_warning_wait }}
 
 receivers:
 {{ receiver('critical', monitoring_discord_critical_webhook_url) -}}
