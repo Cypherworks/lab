@@ -1,0 +1,185 @@
+---
+# Converges a fresh OpenBao that is not openbao_init_host, on systemd in a
+# privileged throwaway container with moto standing in for AWS KMS and SSM.
+# Proves the role leaves it uninitialised for a raft join and writes nothing
+# to SSM, and that asking it to restore a snapshot fails with a clear
+# message. Needs Docker, the community.docker collection, and internet for
+# images, debs and pip. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=$PWD/roles ansible-playbook -i localhost, \
+#     roles/openbao/tests/init_host.yml
+- name: Boot a fake AWS and a systemd host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _net: openbao-init-host-test
+    _aws: openbao-init-host-aws
+    _host: openbao-init-host-follower
+    _make_key: >-
+      import boto3;
+      print(boto3.client('kms', endpoint_url='http://127.0.0.1:5000',
+      region_name='eu-west-2', aws_access_key_id='fake',
+      aws_secret_access_key='fake').create_key()['KeyMetadata']['KeyId'])
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.shell: >-
+        docker rm -f {{ _host }} {{ _aws }} 2>/dev/null;
+        docker network rm {{ _net }} 2>/dev/null; true
+      changed_when: false
+
+    - name: Make the test network
+      ansible.builtin.command: docker network create {{ _net }}
+      changed_when: true
+
+    - name: Start moto as KMS and SSM
+      ansible.builtin.command: >-
+        docker run -d --name {{ _aws }} --network {{ _net }} python:3.13-alpine
+        sh -c "pip install -q 'moto[server]' && exec moto_server -H 0.0.0.0 -p 5000"
+      changed_when: true
+
+    - name: Create the unseal and recovery keys
+      ansible.builtin.command: docker exec {{ _aws }} python3 -c "{{ _make_key }}"
+      register: _keys
+      until: _keys.rc == 0
+      retries: 40
+      delay: 3
+      changed_when: true
+      loop: [unseal, recovery]
+
+    - name: Boot systemd on Debian 13, as the service containers run
+      ansible.builtin.command: >-
+        docker run -d --name {{ _host }} --privileged --cgroupns=host
+        --tmpfs /run --tmpfs /run/lock --network {{ _net }} debian:13 sh -c
+        'apt-get update -qq && apt-get install -y -qq systemd systemd-sysv
+        python3 python3-apt ca-certificates jq && exec /lib/systemd/systemd'
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: docker exec {{ _host }} systemctl is-system-running
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 60
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Read the architecture
+      ansible.builtin.command: docker exec {{ _host }} dpkg --print-architecture
+      register: _arch
+      changed_when: false
+
+    - name: Target the container
+      ansible.builtin.add_host:
+        name: "{{ _host }}"
+        ansible_connection: community.docker.docker
+        ansible_become: false
+        ansible_python_interpreter: /usr/bin/python3
+        openbao_arch: "{{ _arch.stdout }}"
+        openbao_kms_key_id: "{{ _keys.results[0].stdout }}"
+        openbao_recovery_kms_key_id: "{{ _keys.results[1].stdout }}"
+        openbao_kms_endpoint: "http://{{ _aws }}:5000"
+        openbao_aws_cli_env:
+          AWS_ACCESS_KEY_ID: fake-access
+          AWS_SECRET_ACCESS_KEY: fake-secret
+          AWS_DEFAULT_REGION: eu-west-2
+          AWS_ENDPOINT_URL: "http://{{ _aws }}:5000"
+
+- name: Converge a host that is not the init host
+  hosts: openbao-init-host-follower
+  gather_facts: false
+  vars:
+    openbao_init_host: openbao-init-host-leader
+    openbao_api_addr: https://127.0.0.1:8200
+    openbao_cluster_addr: https://127.0.0.1:8201
+    openbao_aws_region: eu-west-2
+    openbao_aws_access_key_id: fake-access
+    openbao_aws_secret_access_key: fake-secret
+    openbao_deb_sha256_by_arch:
+      amd64: 42bd0890a8e2060e5f29410ea828ee047aa2de21028045731a0516d5a532928c
+      arm64: f9f40f906aaf673f536e59e45be3f485408b36cdb75697e89bb5201b8545dc46
+    openbao_kms_plugin_binary_by_arch:
+      amd64: openbao-plugin-kms-aws_linux_amd64_v1
+      arm64: openbao-plugin-kms-aws_linux_arm64_v8
+    openbao_kms_plugin_sha256_by_arch:
+      amd64: f00ebed7fa1cbec080e0fed908e167125bc14b266df7e4af845f82aa4650ed4e
+      arm64: 8f173d8590d3df52c3501dd3af79b5f90fbc8ae4386b04abb706ca8b82a55b23
+    openbao_deb_sha256: "{{ openbao_deb_sha256_by_arch[openbao_arch] }}"
+    openbao_kms_plugin_binary: "{{ openbao_kms_plugin_binary_by_arch[openbao_arch] }}"
+    openbao_kms_plugin_sha256: "{{ openbao_kms_plugin_sha256_by_arch[openbao_arch] }}"
+    openbao_auto_init: true
+    openbao_ssm_recovery_param: /openbao/recovery-keys
+    openbao_ssm_provisioner_param: /openbao/provisioner-creds
+    openbao_pki_root_common_name: Init Host Test Root CA
+    _env:
+      BAO_ADDR: https://127.0.0.1:8200
+      BAO_SKIP_VERIFY: "true"
+  tasks:
+    - name: Converge the follower
+      ansible.builtin.include_role:
+        name: openbao
+
+    - name: Read the follower's status
+      environment: "{{ _env }}"
+      ansible.builtin.command: bao status -format=json
+      register: _status
+      changed_when: false
+      failed_when: _status.rc not in [0, 2]
+
+    - name: Look for the bootstrap parameters in SSM
+      environment: "{{ openbao_aws_cli_env }}"
+      ansible.builtin.command: aws ssm get-parameter --name {{ item }}
+      register: _params
+      changed_when: false
+      failed_when: false
+      loop:
+        - /openbao/recovery-keys
+        - /openbao/provisioner-creds
+
+    - name: Assert the follower waits uninitialised and wrote nothing to SSM
+      ansible.builtin.assert:
+        that:
+          - not (_status.stdout | from_json).initialized
+          - _params.results | map(attribute='rc') | select('==', 0) | list == []
+          - >-
+            _params.results | map(attribute='stderr')
+            | select('search', 'ParameterNotFound') | list | length == 2
+
+    - name: Ask the follower to restore a snapshot
+      block:
+        - name: Converge the follower in restore mode
+          ansible.builtin.include_role:
+            name: openbao
+          vars:
+            openbao_restore_snapshot: /root/none.snapshot
+
+        - name: The restore should not have been accepted
+          ansible.builtin.set_fact:
+            _restore_refusal: ""
+      rescue:
+        - name: Keep the refusal
+          ansible.builtin.set_fact:
+            _restore_refusal: "{{ ansible_failed_result.msg }}"
+
+    - name: Assert the restore was refused for the init host's reason
+      ansible.builtin.assert:
+        that: >-
+          _restore_refusal is search('only openbao_init_host
+          openbao-init-host-leader may restore')
+
+- name: Remove the containers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Remove the host and the fake AWS
+      ansible.builtin.command: >-
+        docker rm -f openbao-init-host-follower openbao-init-host-aws
+      changed_when: true
+
+    - name: Remove the network
+      ansible.builtin.command: docker network rm openbao-init-host-test
+      changed_when: true

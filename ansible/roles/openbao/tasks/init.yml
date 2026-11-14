@@ -25,10 +25,20 @@
   ansible.builtin.set_fact:
     openbao_initialized: "{{ (openbao_status.stdout | from_json).initialized }}"
 
+# Another fresh host would start its own cluster, so it waits to join instead.
+- name: Record whether this run initialises a fresh cluster
+  ansible.builtin.set_fact:
+    openbao_initialising: "{{ not openbao_initialized and inventory_hostname == openbao_init_host }}"
+
+- name: Refuse to restore on a host that may not initialise
+  ansible.builtin.assert:
+    that: openbao_initialized or openbao_initialising or openbao_restore_snapshot | length == 0
+    fail_msg: "{{ inventory_hostname }}: only openbao_init_host {{ openbao_init_host }} may restore a snapshot."
+
 # Restore mode only ever applies to a fresh node, never over live data.
 - name: Record whether this run restores a snapshot
   ansible.builtin.set_fact:
-    openbao_restoring: "{{ not openbao_initialized and (openbao_restore_snapshot | length > 0) }}"
+    openbao_restoring: "{{ openbao_initialising and (openbao_restore_snapshot | length > 0) }}"
 
 # Checked before init: a missing file must not leave a half-built node.
 - name: Check the snapshot to restore is on the host
@@ -54,7 +64,7 @@
     -recovery-threshold={{ openbao_recovery_threshold }}
     -format=json
   register: openbao_init
-  when: not openbao_initialized
+  when: openbao_initialising
   changed_when: true
   no_log: true
 
@@ -62,7 +72,7 @@
   ansible.builtin.set_fact:
     openbao_bootstrap_root_token: "{{ (openbao_init.stdout | from_json).root_token }}"
   when:
-    - not openbao_initialized
+    - openbao_initialising
     - not openbao_restoring
   no_log: true
 
@@ -84,7 +94,7 @@
       - --value
       - "{{ (openbao_init.stdout | from_json).recovery_keys_b64 | to_json }}"
   when:
-    - not openbao_initialized
+    - openbao_initialising
     - not openbao_restoring
   changed_when: true
   no_log: true

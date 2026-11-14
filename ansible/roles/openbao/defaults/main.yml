@@ -103,6 +103,8 @@ openbao_mgmt_token: ""
 openbao_auto_init: false
 openbao_recovery_shares: 5
 openbao_recovery_threshold: 3
+# The one host that may init (or restore into) a fresh raft cluster.
+openbao_init_host: "{{ inventory_hostname }}"
 openbao_ssm_recovery_param: ""    # recovery-keys SSM path (recovery CMK)
 openbao_ssm_provisioner_param: ""  # AppRole-creds SSM path (unseal CMK)
 # Snapshot on the host to restore into a fresh node (README: restore mode).
