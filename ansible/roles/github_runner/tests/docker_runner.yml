@@ -6,13 +6,13 @@
 # and that the work dir sits at the same path inside and outside the runner:
 # a job's `docker run -v "$PWD:..."` is resolved by the host's daemon, so any
 # other path hands the job's containers an empty directory. Then leaves what a
-# cancelled job would (a running and a stopped container, a network, a volume)
-# and runs the job-start hook: it must clear all of that but keep the runner
-# and its image. The docker role's prune timer is scheduled, and its service
-# removes a stopped container but not the running runner. A second run
-# changes nothing, the role's defaults leave pruning off, and the hook
-# without the socket fails the run. The runner image is the pause image with
-# a dummy token, so nothing registers with GitHub.
+# cancelled job would (a running and a stopped container, a network, a volume,
+# an image) and runs the job-start hook: it must clear all of that but keep
+# the runner and its image. The docker role's prune timer is scheduled, and
+# its service removes a stopped container but not the running runner. A
+# second run changes nothing, the role's defaults leave pruning off, and the
+# hook without the socket fails the run. The runner image is the pause image
+# with a dummy token, so nothing registers with GitHub.
 # Needs Docker, community.docker, and internet for the images and Docker's
 # apt repo. From ansible/, once per OS:
 #
@@ -132,6 +132,7 @@
         {{ _in_target }} docker run -d --name leftover-running {{ _pause }}
         {{ _in_target }} docker network create leftover-net
         {{ _in_target }} docker volume create leftover-vol
+        {{ _in_target }} docker commit --change 'LABEL leftover=1' leftover-stopped leftover-image:job
       changed_when: true
 
     - name: Run the job-start hook the runner would run
@@ -166,6 +167,7 @@
           - "_left.stdout is search('(?m)^running: ' ~ _target ~ '-ci$')"
           - _left.stdout is not search('leftover-net')
           - "_left.stdout is search('(?m)^volumes: $')"
+          - _left.stdout is not search('leftover-image')
           - _left.stdout is search(_pause)
         fail_msg: >-
           env={{ _env | select('match', 'ACTIONS_') | list }}
