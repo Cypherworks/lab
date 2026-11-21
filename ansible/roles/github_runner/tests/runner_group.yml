@@ -1,0 +1,177 @@
+---
+# Runs the role's runner group tasks against a local stub of GitHub's org
+# runner-group API (github_api_stub.py), which follows GitHub's documented
+# status codes and fields and logs every request. A missing group is created
+# visible only to the selected repositories with public repos off; a second
+# run only reads and changes nothing; a group that drifted (public access on,
+# visible to all, the wrong repositories) is put back; a token GitHub refuses
+# fails the run with GitHub's answer; repository IDs without org scope fail
+# before any call; and the token never shows in the output. Needs only
+# Python 3. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/github_runner/tests/runner_group.yml
+- name: Verify the runner group against a GitHub API stub
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.runner_group"
+    _port: 18089
+    _state: "{{ _dir }}/state.json"
+    _log: "{{ _dir }}/requests.log"
+    _token: test-dummy-token
+    # Extra vars: the converge's include_vars of the defaults beats play vars.
+    _settings:
+      github_runner_api_url: http://127.0.0.1:{{ _port }}
+      github_runner_scope: org
+      github_runner_org: example-org
+      github_runner_group: example-group
+      github_runner_group_repository_ids: [101, 202]
+      github_runner_access_token: "{{ _token }}"
+    _converge: >-
+      ansible-playbook {{ playbook_dir }}/runner_group_converge.yml
+      -e '{{ _settings | to_json }}'
+    _converge_env:
+      ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+    _drifted:
+      - id: 7
+        name: example-group
+        visibility: all
+        default: false
+        inherited: false
+        allows_public_repositories: true
+        repository_ids: [101]
+  tasks:
+    - name: Run the scenarios against the stub, and stop it afterwards
+      block:
+        - name: Start from an empty directory for the stub's state and log
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: "{{ item }}"
+            mode: "0700"
+          loop: [absent, directory]
+
+        - name: Seed an org with no runner groups
+          ansible.builtin.copy:
+            content: "[]"
+            dest: "{{ _state }}"
+            mode: "0600"
+
+        - name: Start the GitHub API stub
+          ansible.builtin.shell: >-
+            nohup {{ ansible_playbook_python }} -I {{ playbook_dir }}/github_api_stub.py
+            {{ _port }} {{ _token }} {{ _state }} {{ _log }}
+            > {{ _dir }}/stub.out 2>&1 &
+            echo $! > {{ _dir }}/stub.pid
+          changed_when: true
+
+        - name: Wait for the stub to listen
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: "{{ _port }}"
+            timeout: 15
+
+        - name: Converge against an org without the group
+          ansible.builtin.command: "{{ _converge }}"
+          environment: "{{ _converge_env }}"
+          register: _run_create
+          changed_when: true
+
+        - name: Read the requests the first run made
+          ansible.builtin.slurp:
+            src: "{{ _log }}"
+          register: _log_create
+
+        - name: Converge again with the group in place
+          ansible.builtin.shell: ": > {{ _log }} && {{ _converge }}"
+          environment: "{{ _converge_env }}"
+          register: _run_again
+          changed_when: false
+
+        - name: Read the requests the second run made
+          ansible.builtin.slurp:
+            src: "{{ _log }}"
+          register: _log_again
+
+        - name: Seed a group that drifted open
+          ansible.builtin.copy:
+            content: "{{ _drifted | to_json }}"
+            dest: "{{ _state }}"
+            mode: "0600"
+
+        - name: Converge against the drifted group
+          ansible.builtin.shell: ": > {{ _log }} && {{ _converge }}"
+          environment: "{{ _converge_env }}"
+          register: _run_drift
+          changed_when: true
+
+        - name: Read the requests the drift run made and the group it left
+          ansible.builtin.slurp:
+            src: "{{ item }}"
+          loop: ["{{ _log }}", "{{ _state }}"]
+          register: _after_drift
+
+        - name: Converge with settings the role or GitHub must refuse
+          ansible.builtin.command: "{{ _converge }} -e '{{ item.vars | to_json }}'"
+          environment: "{{ _converge_env }}"
+          loop:
+            - {vars: {github_runner_access_token: not-the-token}, says: GitHub answered 401}
+            - {vars: {github_runner_scope: repo}, says: needs github_runner_scope org}
+          loop_control:
+            label: "{{ item.says }}"
+          register: _run_refused
+          changed_when: false
+          failed_when: false
+
+        - name: Assert each run made the calls the group needed, and no more
+          vars:
+            _create: "{{ _log_create.content | b64decode | trim | split('\n') | map('from_json') | list }}"
+            _again: "{{ _log_again.content | b64decode | trim | split('\n') | map('from_json') | list }}"
+            _drift: "{{ _after_drift.results[0].content | b64decode | trim | split('\n') | map('from_json') | list }}"
+            _left: "{{ _after_drift.results[1].content | b64decode | from_json }}"
+            _wanted_body:
+              name: example-group
+              visibility: selected
+              selected_repository_ids: [101, 202]
+              allows_public_repositories: false
+            _patch_body:
+              name: example-group
+              visibility: selected
+              allows_public_repositories: false
+            _put_body:
+              selected_repository_ids: [101, 202]
+            _outputs: "{{ [_run_create, _run_again, _run_drift] + _run_refused.results }}"
+          ansible.builtin.assert:
+            that:
+              - _create | map(attribute='method') | list == ['GET', 'POST']
+              - _create[1].body == _wanted_body
+              - _again | map(attribute='method') | list == ['GET', 'GET']
+              - _run_again.stdout is search('localhost +: ok=\d+ +changed=0 ')
+              - _drift | map(attribute='method') | list == ['GET', 'PATCH', 'GET', 'PUT']
+              - _drift[1].path == '/orgs/example-org/actions/runner-groups/7'
+              - _drift[1].body == _patch_body
+              - _drift[3].body == _put_body
+              - _left[0].visibility == 'selected'
+              - not _left[0].allows_public_repositories
+              - _left[0].repository_ids == [101, 202]
+              - _run_refused.results | rejectattr('rc') | list | length == 0
+              - _run_refused.results[0].stdout is search('GitHub answered 401 to GET /orgs/example-org/actions/runner-groups')
+              - _run_refused.results[0].stdout is search('Bad credentials')
+              - _run_refused.results[1].stdout is search('github_runner_group_repository_ids needs github_runner_scope org')
+              - _outputs | map(attribute='stdout') | select('search', _token) | list | length == 0
+            fail_msg: >-
+              create={{ _create }} again={{ _again }} drift={{ _drift }} left={{ _left }}
+              refused={{ _run_refused.results | map(attribute='stdout') | map('regex_search', 'msg.{0,300}') | list }}
+              again_out={{ _run_again.stdout[-300:] }}
+
+      always:
+        - name: Stop the GitHub API stub
+          ansible.builtin.shell: kill "$(cat {{ _dir }}/stub.pid)" 2>/dev/null || true
+          changed_when: true
+
+        - name: Remove the stub's state and log
+          ansible.builtin.file:
+            path: "{{ _dir }}"
+            state: absent
