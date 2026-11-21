@@ -1,0 +1,10 @@
+# Managed by Ansible (docker role). Schedules docker-prune.service.
+[Unit]
+Description=Prune unused Docker data on a schedule
+
+[Timer]
+OnCalendar={{ docker_prune_on_calendar }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
