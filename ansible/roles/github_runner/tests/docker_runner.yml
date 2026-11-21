@@ -1,0 +1,119 @@
+---
+# Boots systemd in a privileged container with its own dockerd (Ubuntu 24.04
+# by default, Debian 13 with -e _image=debian:13) and converges the role, with
+# its docker dependency, as a runner that mounts the host's Docker socket.
+# Checks Docker installs from Docker's repo for the container's own distro,
+# and that the work dir sits at the same path inside and outside the runner:
+# a job's `docker run -v "$PWD:..."` is resolved by the host's daemon, so any
+# other path hands the job's containers an empty directory. The runner image
+# is the pause image with a dummy token, so nothing registers with GitHub.
+# Needs Docker, community.docker, and internet for the images and Docker's
+# apt repo. From ansible/, once per OS:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/github_runner/tests/docker_runner.yml
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/github_runner/tests/docker_runner.yml -e _image=debian:13
+- name: Verify a runner that drives the host's Docker
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _image: ubuntu:24.04
+    _target: github-runner-docker-test
+    _work: /opt/github-runner/work
+    # Drop the image's policy-rc.d: a host has none, and apt starts dockerd.
+    _boot: >-
+      rm -f /usr/sbin/policy-rc.d
+      && apt-get update -qq
+      && apt-get install -y -qq systemd systemd-sysv python3
+      && exec /lib/systemd/systemd
+    _converge: >-
+      ansible-playbook -i {{ _target }}, -c community.docker.docker
+      {{ playbook_dir }}/docker_runner_converge.yml
+    # The inner run resolves a relative roles path against its own playbook.
+    _converge_env:
+      ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+    _in_target: docker exec {{ _target }}
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on {{ _image }}
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --volume=/sys/fs/cgroup:/sys/fs/cgroup:rw
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          # Inner overlays can't sit on the outer one (Docker 29: containerd).
+          - --tmpfs=/var/lib/docker
+          - --tmpfs=/var/lib/containerd
+          - "{{ _image }}"
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: "{{ _in_target }} systemctl is-system-running"
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Converge the runner
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_first
+      changed_when: true
+
+    - name: Read the distro's Docker apt source
+      ansible.builtin.command: "{{ _in_target }} cat /etc/apt/sources.list.d/docker.sources"
+      register: _source
+      changed_when: false
+
+    - name: Read the target's distro
+      ansible.builtin.command: "{{ _in_target }} sh -c '. /etc/os-release && echo $ID'"
+      register: _distro
+      changed_when: false
+
+    - name: Read the runner container's mounts and environment
+      ansible.builtin.command: >-
+        {{ _in_target }} docker inspect
+        --format '{{ '{{' }} json .Mounts {{ '}}' }}|{{ '{{' }} json .Config.Env {{ '}}' }}'
+        {{ _target }}-ci
+      register: _inspect
+      changed_when: false
+
+    - name: Assert Docker comes from the distro's repo and the work dir lines up
+      vars:
+        _mounts: "{{ _inspect.stdout.split('|')[0] | from_json }}"
+        _env: "{{ _inspect.stdout.split('|')[1] | from_json }}"
+        _work_mounts: "{{ _mounts | selectattr('Destination', 'equalto', _work) | list }}"
+      ansible.builtin.assert:
+        that:
+          - _source.stdout is search('download.docker.com/linux/' ~ _distro.stdout ~ '$', multiline=True)
+          - _work_mounts | length == 1
+          - _work_mounts[0].Source == _work
+          - ('RUNNER_WORKDIR=' ~ _work) in _env
+        fail_msg: >-
+          distro={{ _distro.stdout }} source={{ _source.stdout }}
+          mounts={{ _mounts | map(attribute='Source') | zip(_mounts | map(attribute='Destination')) | list }}
+          env={{ _env | select('match', 'RUNNER_') | list }}
+          converge={{ _run_first.stdout[-600:] }}
+
+    - name: Remove the test host
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: true
