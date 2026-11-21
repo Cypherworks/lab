@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Managed by Ansible (github_runner role). The runner runs this before every
+# job (ACTIONS_RUNNER_HOOK_JOB_STARTED). It clears what earlier jobs left on
+# the Docker daemon, so a fixed container name from a failed or cancelled run
+# can't break the next job, and keeps this runner's own container and every
+# image and build cache layer, so builds stay warm. Exiting non-zero fails
+# the job before its first step.
+set -euo pipefail
+
+runner={{ github_runner_name | quote }}
+
+mapfile -t leftovers < <(
+  docker ps --all --format '{{ '{{' }}.Names{{ '}}' }}' | grep --invert-match --line-regexp --fixed-strings "$runner" || true
+)
+if [[ -n "${leftovers[*]}" ]]; then
+  echo "Removing containers earlier jobs left: ${leftovers[*]}"
+  docker rm --force --volumes "${leftovers[@]}" >/dev/null
+fi
+docker network prune --force
+docker volume prune --all --force

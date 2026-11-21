@@ -26,8 +26,14 @@ services:
       EPHEMERAL: "{{ 'true' if github_runner_ephemeral else 'false' }}"
       DISABLE_AUTO_UPDATE: "true"
       RUNNER_WORKDIR: {{ github_runner_data_dir }}/work
+{% if github_runner_job_started_cleanup %}
+      ACTIONS_RUNNER_HOOK_JOB_STARTED: {{ github_runner_data_dir }}/hooks/job-started.sh
+{% endif %}
     volumes:
       - {{ github_runner_data_dir }}/work:{{ github_runner_data_dir }}/work
+{% if github_runner_job_started_cleanup %}
+      - {{ github_runner_data_dir }}/hooks:{{ github_runner_data_dir }}/hooks:ro
+{% endif %}
 {% if github_runner_mount_docker_socket %}
       - /var/run/docker.sock:/var/run/docker.sock
 {% endif %}

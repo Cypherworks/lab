@@ -16,6 +16,13 @@
       - github_runner_scope != 'org' or github_runner_org | length > 0
     fail_msg: "set github_runner_repo_url (repo scope) or github_runner_org (org)."
 
+- name: Require the Docker socket for the job-start cleanup
+  ansible.builtin.assert:
+    that: github_runner_mount_docker_socket or not github_runner_job_started_cleanup
+    fail_msg: >-
+      github_runner_job_started_cleanup needs github_runner_mount_docker_socket:
+      without the socket the hook has no daemon to clear and fails every job.
+
 - name: Ensure the runner data + work directories exist
   become: true
   ansible.builtin.file:
@@ -25,6 +32,22 @@
   loop:
     - "{{ github_runner_data_dir }}"
     - "{{ github_runner_data_dir }}/work"
+
+- name: Ensure the hooks directory exists
+  become: true
+  ansible.builtin.file:
+    path: "{{ github_runner_data_dir }}/hooks"
+    state: directory
+    mode: "0755"
+  when: github_runner_job_started_cleanup
+
+- name: Render the job-start cleanup hook
+  become: true
+  ansible.builtin.template:
+    src: job-started.sh.j2
+    dest: "{{ github_runner_data_dir }}/hooks/job-started.sh"
+    mode: "0755"
+  when: github_runner_job_started_cleanup
 
 - name: Render the runner compose file
   become: true
