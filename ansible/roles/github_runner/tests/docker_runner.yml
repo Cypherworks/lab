@@ -218,14 +218,6 @@
       changed_when: false
       failed_when: false
 
-    - name: Converge a repo-scoped runner that asks for a managed group
-      ansible.builtin.command: >-
-        {{ _converge }} -e '{"github_runner_group_repository_ids": [101]}'
-      environment: "{{ _converge_env }}"
-      register: _run_group_repo_scope
-      changed_when: false
-      failed_when: false
-
     - name: Converge with pruning left at the role's defaults
       ansible.builtin.command: "{{ _converge_defaults }}"
       environment: "{{ _converge_env }}"
@@ -239,14 +231,11 @@
           - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
           - _run_defaults.rc == 0
           - _run_defaults.stdout is search('Install the scheduled prune units\] \**\nskipping')
-          - _run_group_repo_scope.rc != 0
-          - _run_group_repo_scope.stdout is search('github_runner_group_repository_ids needs github_runner_scope org')
           - _run_no_socket.rc != 0
           - _run_no_socket.stdout is search('github_runner_job_started_cleanup needs github_runner_mount_docker_socket')
         fail_msg: >-
           again={{ _run_again.stdout[-400:] }}
           defaults={{ _run_defaults.stdout[-600:] }}
-          group_repo_scope={{ _run_group_repo_scope.stdout[-600:] }}
           no_socket={{ _run_no_socket.stdout[-600:] }}
 
     - name: Remove the test host

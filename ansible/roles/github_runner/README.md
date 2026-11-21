@@ -15,15 +15,13 @@ The one exception is `github_runner_mount_docker_socket` (see below).
 
 1. Asserts the image pin, the access token, and the registration target (repo URL
    for `repo` scope, org name for `org` scope) are set, failing early otherwise.
-2. With `github_runner_group_repository_ids` set, makes sure the org runner
-   group exists and only those repositories can use it (see below).
-3. Creates the data + work directories on the host. The work dir is mounted
+2. Creates the data + work directories on the host. The work dir is mounted
    into the runner at its host path, so a job's `docker run -v "$PWD:..."`
    (resolved by the host's daemon when the socket is mounted) sees the checkout.
-4. Renders the job-start cleanup hook when it is on.
-5. Renders `compose.yaml` (mode `0600`, it holds the PAT) from the image and
+3. Renders the job-start cleanup hook when it is on.
+4. Renders `compose.yaml` (mode `0600`, it holds the PAT) from the image and
    registration settings.
-6. Brings the stack up with `docker_compose_v2` (idempotent).
+5. Brings the stack up with `docker_compose_v2` (idempotent).
 
 Docker Engine and Compose come from the `docker` role (`meta/main.yml` dependency).
 
@@ -50,8 +48,6 @@ Docker Engine and Compose come from the `docker` role (`meta/main.yml` dependenc
 | `github_runner_security_opt` | `[]` | Extra container `security_opt` entries; empty keeps the default seccomp profile. |
 | `github_runner_mount_docker_socket` | `false` | Bind-mount the host's `/var/run/docker.sock` into the runner so jobs can drive Docker (Molecule's docker driver). Read the section below first. |
 | `github_runner_job_started_cleanup` | `false` | Before each job, remove what earlier jobs left on the host's daemon. Needs the socket mount. See below. |
-| `github_runner_group_repository_ids` | `[]` | Numeric IDs of the only repositories allowed to use `github_runner_group`. The role creates or repairs the group to match. Org scope only. See below. |
-| `github_runner_api_url` | `https://api.github.com` | GitHub REST API base for the runner group calls. |
 
 `github_runner_docker_cli` has no default: it is unset in the role and falls back to
 `default(omit)` at the compose step, so `docker` is found on PATH. Set it to the Synology
@@ -87,30 +83,17 @@ container a cancelled job left behind (or a fixed `--name` it used) can break
 the next job. `github_runner_job_started_cleanup: true` renders
 `<data_dir>/hooks/job-started.sh`, mounts it read-only and points
 `ACTIONS_RUNNER_HOOK_JOB_STARTED` at it, so the runner runs it before every
-job. It removes every container except the runner's own, then unused
-networks and all unused volumes. Images and build cache stay, so builds stay
-warm; prune those on a schedule with the `docker` role's
-`docker_prune_on_calendar`. A non-zero exit fails the job before its first
-step. It removes every other container on the daemon, so use it only on a
-host that runs nothing but this runner. Turning it off drops the env var and
-mount but leaves the script file; the same goes for the `docker` role's
-prune timer, which stays enabled once installed. Rebuild the host to clear
-either, as these runners are rebuilt rather than cleaned.
-
-## Limiting the runner group to selected repositories
-
-With `github_runner_scope: org`, `github_runner_group` set and
-`github_runner_group_repository_ids` listing repository IDs, the role calls
-GitHub's REST API once from the controller, with the runner's own token.
-It creates the group if it's missing, with repository access set to the
-selected repositories and public repositories off. If the group drifted
-(visible to all, public repositories allowed, or a different repository
-list), it puts it back. A second run only reads. It reads one page of 100
-groups and of 100 repositories; an org with more groups fails the run rather
-than create a duplicate. The token needs the
-organization permission Self-hosted runners: Read and write, which org
-registration needs anyway. The calls are `no_log` because they carry the
-token; a failed call reports GitHub's status and message instead.
+job. It removes every container except the runner's own, then runs
+`docker system prune --all` (networks, every image no container uses, build
+cache) and removes all unused volumes. So no job builds on an image or cache
+layer an earlier job made, which matters when jobs from different
+repositories share the daemon, at the cost of cold builds. The runner's own
+image stays, as its container uses it. A non-zero exit fails the job before
+its first step. It removes every other container on the daemon, so use it
+only on a host that runs nothing but this runner. Turning it off drops the
+env var and mount but leaves the script file; the same goes for the
+`docker` role's prune timer, which stays enabled once installed. Rebuild the
+host to clear either, as these runners are rebuilt rather than cleaned.
 
 ## Prerequisites
 
@@ -131,7 +114,6 @@ the running container.
 with its own dockerd, on Ubuntu 24.04 or (with `-e _image=debian:13`) Debian
 13, as a socket-mounted runner with the cleanup hook and the docker role's
 prune timer on. It checks the work dir path, that the hook clears leftovers
-but keeps the runner and its image, the prune, idempotence and the refusals.
-`tests/runner_group.yml` runs the runner group tasks against
-`tests/github_api_stub.py`, a local stub of GitHub's runner-group endpoints.
-Each file's header says how to run it.
+(images included) but keeps the runner and its image, the prune, idempotence
+and the refusal of the hook without the socket. Its header says how to run
+it.
