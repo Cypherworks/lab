@@ -3,11 +3,11 @@
 # the Docker socket mount and the runner group: runner-default takes the role
 # defaults, runner-socket opts in to both. Each instance is a privileged systemd container with
 # its own dockerd, so the role's compose stack runs inside it, never on the CI
-# host. /var/lib/docker is a tmpfs so the inner dockerd isn't overlay on
-# overlay and leaves nothing behind on the CI host after destroy. The pause
-# image stays up without registering anywhere, so the stack runs offline with
-# a dummy token; pull "missing" keeps the idempotence pass from seeing a
-# re-pull.
+# host. /var/lib/docker and /var/lib/containerd (Docker 29's image store)
+# are tmpfs so the inner dockerd isn't overlay on overlay and leaves nothing
+# behind on the CI host after destroy. The pause image stays up without
+# registering anywhere, so the stack runs offline with a dummy token; pull
+# "missing" keeps the idempotence pass from seeing a re-pull.
 driver:
   name: docker
 
@@ -22,6 +22,7 @@ platforms:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     tmpfs:
       - /var/lib/docker
+      - /var/lib/containerd
   - name: runner-socket
     image: geerlingguy/docker-debian13-ansible:latest
     pre_build_image: true
@@ -32,6 +33,7 @@ platforms:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
     tmpfs:
       - /var/lib/docker
+      - /var/lib/containerd
 
 # The role is used by path from the lab checkout, not installed from Galaxy.
 prerun: false

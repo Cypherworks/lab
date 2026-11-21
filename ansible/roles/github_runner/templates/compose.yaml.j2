@@ -25,9 +25,9 @@ services:
       LABELS: "{{ github_runner_labels }}"
       EPHEMERAL: "{{ 'true' if github_runner_ephemeral else 'false' }}"
       DISABLE_AUTO_UPDATE: "true"
-      RUNNER_WORKDIR: /tmp/runner/work
+      RUNNER_WORKDIR: {{ github_runner_data_dir }}/work
     volumes:
-      - {{ github_runner_data_dir }}/work:/tmp/runner/work
+      - {{ github_runner_data_dir }}/work:{{ github_runner_data_dir }}/work
 {% if github_runner_mount_docker_socket %}
       - /var/run/docker.sock:/var/run/docker.sock
 {% endif %}
