@@ -55,8 +55,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(401, {"message": "Bad credentials"})
         groups = load()
         if GROUPS.match(path) and self.command == "GET":
+            per_page = int(re.search(r"per_page=(\d+)", self.path).group(1)) if "per_page=" in self.path else 30
             return self.reply(200, {"total_count": len(groups),
-                                    "runner_groups": [public(g) for g in groups]})
+                                    "runner_groups": [public(g) for g in groups[:per_page]]})
         if GROUPS.match(path) and self.command == "POST":
             group = {"id": 1 + max([g["id"] for g in groups] or [0]),
                      "name": body["name"], "visibility": body.get("visibility", "all"),

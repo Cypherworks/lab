@@ -113,6 +113,25 @@
           loop: ["{{ _log }}", "{{ _state }}"]
           register: _after_drift
 
+        - name: Seed an org with more runner groups than one page holds
+          ansible.builtin.copy:
+            content: |-
+              {% set groups = [] %}
+              {% for i in range(1, 102) %}
+              {% set _ = groups.append({'id': i, 'name': 'group-' ~ i, 'visibility': 'all', 'default': false,
+                                        'inherited': false, 'allows_public_repositories': false, 'repository_ids': []}) %}
+              {% endfor %}
+              {{ groups | to_json }}
+            dest: "{{ _state }}"
+            mode: "0600"
+
+        - name: Converge against an org with more than a page of groups
+          ansible.builtin.command: "{{ _converge }}"
+          environment: "{{ _converge_env }}"
+          register: _run_paged
+          changed_when: false
+          failed_when: false
+
         - name: Converge with settings the role or GitHub must refuse
           ansible.builtin.command: "{{ _converge }} -e '{{ item.vars | to_json }}'"
           environment: "{{ _converge_env }}"
@@ -156,6 +175,8 @@
               - _left[0].visibility == 'selected'
               - not _left[0].allows_public_repositories
               - _left[0].repository_ids == [101, 202]
+              - _run_paged.rc != 0
+              - _run_paged.stdout is search('more than 100 runner groups')
               - _run_refused.results | rejectattr('rc') | list | length == 0
               - _run_refused.results[0].stdout is search('GitHub answered 401 to GET /orgs/example-org/actions/runner-groups')
               - _run_refused.results[0].stdout is search('Bad credentials')
