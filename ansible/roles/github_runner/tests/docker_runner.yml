@@ -8,9 +8,11 @@
 # other path hands the job's containers an empty directory. Then leaves what a
 # cancelled job would (a running and a stopped container, a network, a volume)
 # and runs the job-start hook: it must clear all of that but keep the runner
-# and its image. A second run changes nothing, and the hook without the socket
-# fails the run. The runner image is the pause image with a dummy token, so
-# nothing registers with GitHub.
+# and its image. The docker role's prune timer is scheduled, and its service
+# removes a stopped container but not the running runner. A second run
+# changes nothing, the role's defaults leave pruning off, and the hook
+# without the socket fails the run. The runner image is the pause image with
+# a dummy token, so nothing registers with GitHub.
 # Needs Docker, community.docker, and internet for the images and Docker's
 # apt repo. From ansible/, once per OS:
 #
