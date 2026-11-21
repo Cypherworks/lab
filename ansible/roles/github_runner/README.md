@@ -92,7 +92,10 @@ networks and all unused volumes. Images and build cache stay, so builds stay
 warm; prune those on a schedule with the `docker` role's
 `docker_prune_on_calendar`. A non-zero exit fails the job before its first
 step. It removes every other container on the daemon, so use it only on a
-host that runs nothing but this runner.
+host that runs nothing but this runner. Turning it off drops the env var and
+mount but leaves the script file; the same goes for the `docker` role's
+prune timer, which stays enabled once installed. Rebuild the host to clear
+either, as these runners are rebuilt rather than cleaned.
 
 ## Limiting the runner group to selected repositories
 
@@ -102,7 +105,9 @@ GitHub's REST API once from the controller, with the runner's own token.
 It creates the group if it's missing, with repository access set to the
 selected repositories and public repositories off. If the group drifted
 (visible to all, public repositories allowed, or a different repository
-list), it puts it back. A second run only reads. The token needs the
+list), it puts it back. A second run only reads. It reads one page of 100
+groups and of 100 repositories; an org with more groups fails the run rather
+than create a duplicate. The token needs the
 organization permission Self-hosted runners: Read and write, which org
 registration needs anyway. The calls are `no_log` because they carry the
 token; a failed call reports GitHub's status and message instead.

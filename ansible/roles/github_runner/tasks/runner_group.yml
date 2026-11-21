@@ -20,6 +20,13 @@
     github_runner_api_path: /orgs/{{ github_runner_org }}/actions/runner-groups?per_page=100
     github_runner_api_status: 200
 
+- name: Require every runner group on the one page read
+  ansible.builtin.assert:
+    that: github_runner_api_reply.json.total_count <= 100
+    fail_msg: >-
+      {{ github_runner_org }} has more than 100 runner groups; the role reads
+      one page, so it can't tell whether {{ github_runner_group }} exists.
+
 - name: Find the runner group by name
   ansible.builtin.set_fact:
     github_runner_group_found: >-

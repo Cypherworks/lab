@@ -1,7 +1,7 @@
 ---
-# Docker Engine + Compose v2 from Docker's official APT repo. A shared mechanism the
-# service roles (monitoring, speedtest, vaultwarden, authentik_app) depend on via
-# meta, so the install lives in one place instead of being copied into each.
+# Docker Engine + Compose v2 from Docker's official APT repo. A shared
+# mechanism the service roles depend on via meta (README lists them), so the
+# install lives in one place instead of being copied into each.
 - name: Install what adding Docker's APT repository needs
   # deb822_repository imports python3-debian; the key fetch needs CAs.
   become: true
@@ -11,6 +11,7 @@
       - ca-certificates
     state: present
     update_cache: true
+    cache_valid_time: 3600
 
 - name: Add Docker's official APT repository
   become: true
