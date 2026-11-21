@@ -5,8 +5,12 @@
 # Checks Docker installs from Docker's repo for the container's own distro,
 # and that the work dir sits at the same path inside and outside the runner:
 # a job's `docker run -v "$PWD:..."` is resolved by the host's daemon, so any
-# other path hands the job's containers an empty directory. The runner image
-# is the pause image with a dummy token, so nothing registers with GitHub.
+# other path hands the job's containers an empty directory. Then leaves what a
+# cancelled job would (a running and a stopped container, a network, a volume)
+# and runs the job-start hook: it must clear all of that but keep the runner
+# and its image. A second run changes nothing, and the hook without the socket
+# fails the run. The runner image is the pause image with a dummy token, so
+# nothing registers with GitHub.
 # Needs Docker, community.docker, and internet for the images and Docker's
 # apt repo. From ansible/, once per OS:
 #
@@ -23,6 +27,8 @@
     _image: ubuntu:24.04
     _target: github-runner-docker-test
     _work: /opt/github-runner/work
+    _hook: /opt/github-runner/hooks/job-started.sh
+    _pause: registry.k8s.io/pause:3.10.2
     # Drop the image's policy-rc.d: a host has none, and apt starts dockerd.
     _boot: >-
       rm -f /usr/sbin/policy-rc.d
@@ -113,6 +119,77 @@
           mounts={{ _mounts | map(attribute='Source') | zip(_mounts | map(attribute='Destination')) | list }}
           env={{ _env | select('match', 'RUNNER_') | list }}
           converge={{ _run_first.stdout[-600:] }}
+
+    - name: Leave what a failed or cancelled job would on the daemon
+      ansible.builtin.shell: |
+        set -e
+        {{ _in_target }} docker create --name leftover-stopped {{ _pause }}
+        {{ _in_target }} docker run -d --name leftover-running {{ _pause }}
+        {{ _in_target }} docker network create leftover-net
+        {{ _in_target }} docker volume create leftover-vol
+      changed_when: true
+
+    - name: Run the job-start hook the runner would run
+      ansible.builtin.command: "{{ _in_target }} {{ _hook }}"
+      register: _hook_run
+      changed_when: true
+
+    - name: Read what is left on the daemon
+      ansible.builtin.shell: |
+        set -e
+        echo "containers: $({{ _in_target }} docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' | sort | xargs)"
+        echo "running: $({{ _in_target }} docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | xargs)"
+        echo "networks: $({{ _in_target }} docker network ls --format '{{ '{{' }}.Name{{ '}}' }}' | sort | xargs)"
+        echo "volumes: $({{ _in_target }} docker volume ls -q | xargs)"
+        echo "images: $({{ _in_target }} docker image ls --format '{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}' | xargs)"
+      register: _left
+      changed_when: false
+
+    - name: Assert the hook is wired in and clears only what jobs left
+      vars:
+        _mounts: "{{ _inspect.stdout.split('|')[0] | from_json }}"
+        _env: "{{ _inspect.stdout.split('|')[1] | from_json }}"
+        _hook_mounts: "{{ _mounts | selectattr('Destination', 'equalto', _hook | dirname) | list }}"
+      ansible.builtin.assert:
+        that:
+          - ('ACTIONS_RUNNER_HOOK_JOB_STARTED=' ~ _hook) in _env
+          - _hook_mounts | length == 1
+          - _hook_mounts[0].Source == _hook | dirname
+          - not _hook_mounts[0].RW
+          - _hook_run.stdout is search('leftover-running')
+          - "_left.stdout is search('(?m)^containers: ' ~ _target ~ '-ci$')"
+          - "_left.stdout is search('(?m)^running: ' ~ _target ~ '-ci$')"
+          - _left.stdout is not search('leftover-net')
+          - "_left.stdout is search('(?m)^volumes: $')"
+          - _left.stdout is search(_pause)
+        fail_msg: >-
+          env={{ _env | select('match', 'ACTIONS_') | list }}
+          hook_mounts={{ _hook_mounts }} hook={{ _hook_run.stdout }}
+          left={{ _left.stdout }}
+
+    - name: Converge again with nothing changed
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_again
+      changed_when: false
+
+    - name: Converge the cleanup hook without the Docker socket
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"github_runner_mount_docker_socket": false}'
+      environment: "{{ _converge_env }}"
+      register: _run_no_socket
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a second run changes nothing and a hook without the socket fails
+      ansible.builtin.assert:
+        that:
+          - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
+          - _run_no_socket.rc != 0
+          - _run_no_socket.stdout is search('github_runner_job_started_cleanup needs github_runner_mount_docker_socket')
+        fail_msg: >-
+          again={{ _run_again.stdout[-400:] }}
+          no_socket={{ _run_no_socket.stdout[-600:] }}
 
     - name: Remove the test host
       ansible.builtin.command: docker rm -f {{ _target }}

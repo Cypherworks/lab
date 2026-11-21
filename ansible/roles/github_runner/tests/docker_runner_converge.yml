@@ -12,6 +12,7 @@
     github_runner_access_token: test-dummy-token
     github_runner_repo_url: https://github.com/example/example
     github_runner_mount_docker_socket: true
+    github_runner_job_started_cleanup: true
   tasks:
     - name: Apply the github_runner role
       ansible.builtin.include_role:
