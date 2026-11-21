@@ -6,7 +6,7 @@ Part of the [`lab`](https://github.com/Cypherworks/lab) mechanism library: a gen
 
 ## Requirements
 
-- Debian-family host (the repo is configured against `download.docker.com/linux/debian`).
+- Debian or Ubuntu host. The repo is `download.docker.com/linux/<distro>`, from `ansible_distribution` in lower case.
 - Core `ansible.builtin` modules only: `deb822_repository` and `apt`.
 - Privilege escalation (`become`) to root.
 
@@ -24,8 +24,9 @@ None declared in metadata. This role is itself a shared mechanism that service r
 
 ## What it does
 
-1. Adds Docker's official APT repository as a deb822 source named `docker`, using `ansible_distribution_release` as the suite, `stable` component, and Docker's signing key.
-2. Installs `docker_packages` via apt with the cache refreshed.
+1. Installs `python3-debian` (which `deb822_repository` imports) and `ca-certificates` (to fetch Docker's key), so a minimal image works.
+2. Adds Docker's official APT repository for the host's distro as a deb822 source named `docker`, using `ansible_distribution_release` as the suite, `stable` component, and Docker's signing key.
+3. Installs `docker_packages` via apt with the cache refreshed.
 
 ## Example
 
@@ -37,6 +38,6 @@ None declared in metadata. This role is itself a shared mechanism that service r
 
 ## Notes
 
-The repository suite tracks `ansible_distribution_release`, so the host's Debian release must have a matching Docker package suite upstream.
+The repository suite tracks `ansible_distribution_release`, so the host's Debian or Ubuntu release must have a matching Docker package suite upstream. `github_runner/tests/docker_runner.yml` converges this role on both.
 
 This role installs the engine only. It does not manage the Docker daemon service state, users in the `docker` group, or daemon configuration; consuming roles handle their own runtime concerns.

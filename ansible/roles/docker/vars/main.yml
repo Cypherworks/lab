@@ -1,0 +1,4 @@
+---
+# Docker publishes one APT repo per distro (linux/debian, linux/ubuntu), named
+# after the distro in lower case.
+docker_apt_distribution: "{{ ansible_distribution | lower }}"
