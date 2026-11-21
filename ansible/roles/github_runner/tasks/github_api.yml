@@ -1,0 +1,33 @@
+---
+# One GitHub REST call from the controller with the runner's token. The call
+# is no_log because its arguments hold the token, so a separate assert
+# reports GitHub's status and message when the reply isn't the expected one.
+- name: Call GitHub {{ github_runner_api_method ~ ' ' ~ github_runner_api_path }}
+  delegate_to: localhost
+  run_once: true
+  become: false
+  ansible.builtin.uri:
+    url: "{{ github_runner_api_url }}{{ github_runner_api_path }}"
+    method: "{{ github_runner_api_method }}"
+    headers:
+      Authorization: "Bearer {{ github_runner_access_token }}"
+      Accept: application/vnd.github+json
+      X-GitHub-Api-Version: "2026-03-10"
+    body: "{{ github_runner_api_body | default(omit) }}"
+    body_format: json
+    status_code: "{{ github_runner_api_status }}"
+  register: github_runner_api_reply
+  changed_when: github_runner_api_method != 'GET'
+  failed_when: false
+  no_log: true
+
+- name: Require GitHub's expected reply to {{ github_runner_api_method ~ ' ' ~ github_runner_api_path }}
+  delegate_to: localhost
+  run_once: true
+  become: false
+  ansible.builtin.assert:
+    that: github_runner_api_reply.status == github_runner_api_status
+    fail_msg: >-
+      GitHub answered {{ github_runner_api_reply.status }} to
+      {{ github_runner_api_method }} {{ github_runner_api_path }}:
+      {{ github_runner_api_reply.json.message | default(github_runner_api_reply.msg) }}
