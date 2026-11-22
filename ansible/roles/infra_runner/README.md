@@ -26,7 +26,11 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
    into the system Python with `--break-system-packages` (PEP 668), so they
    import under the interpreter Ansible uses.
 7. lego (the `vcsa` cert step), the release tarball binary, on `PATH`.
-8. Creates the `infra_runner_user`, clones both repos side-by-side under
+8. Go, the go.dev release tarball verified against its published `.sha256`,
+   in `/usr/local/go` with `go` on `PATH`, for building lab's `automation/`
+   binaries (the `runner_supervisor` role builds there). Another release in
+   `/usr/local/go` is removed first.
+9. Creates the `infra_runner_user`, clones both repos side-by-side under
    `~/git/cw` for `roles_path` and installs the galaxy collections/roles, using
    the clone identity from `repos.yml` (the shipped
    `cw-claude-token`/`cw-claude-credential` scripts, reused from the `claude`
@@ -42,6 +46,7 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
 | `infra_runner_pipx_packages` | `[awscli]` | Python CLIs installed isolated on `PATH`. |
 | `infra_runner_pip_packages` | `mitogen==0.3.52`, `pyvmomi` | System-python libs Ansible imports. |
 | `infra_runner_lego_version` | `5.4.0` | lego release for the `vcsa` cert step. |
+| `infra_runner_go_version` | `go1.27.4` | Go release, as go.dev names it. |
 | `infra_runner_user` | `runner` | User that owns the repos and runs the plays. |
 | `infra_runner_home` | `/home/runner` | That user's home; repos land in `~/git/cw`. |
 | `infra_runner_repos` | lab, lab-deploy | Repos cloned side-by-side (only when the App id and key are set). |
@@ -58,3 +63,11 @@ Installs the run toolchain, reusing the checksum-verified download pattern the
   roles:
     - infra_runner
 ```
+
+## Testing
+
+`tests/go.yml` runs the Go tasks against a Debian 13 container on the
+control node's architecture. It checks `go` on `PATH` is the pin, that a
+second run changes nothing, and that a host left on another release moves
+to the pin with none of the old tree left. Its header says how to run it.
+The role's other tasks have no test yet.

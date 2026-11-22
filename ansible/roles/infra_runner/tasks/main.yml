@@ -91,5 +91,8 @@
     include: [lego]
     creates: /usr/local/bin/lego
 
+- name: Install Go
+  ansible.builtin.include_tasks: go.yml
+
 - name: Provision the run identity, repos, and collections
   ansible.builtin.include_tasks: repos.yml

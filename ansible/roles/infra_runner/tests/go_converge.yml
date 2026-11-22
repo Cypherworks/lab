@@ -1,0 +1,15 @@
+---
+# The converge that go.yml runs against its test host. Not run by hand: it
+# needs the container that playbook starts.
+- name: Converge the infra runner's Go toolchain
+  hosts: all
+  gather_facts: true
+  vars:
+    ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Load the role's defaults
+      ansible.builtin.include_vars: "{{ playbook_dir }}/../defaults/main.yml"
+
+    - name: Run the role's Go tasks
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../tasks/go.yml"
