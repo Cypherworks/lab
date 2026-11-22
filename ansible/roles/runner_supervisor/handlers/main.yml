@@ -1,0 +1,9 @@
+---
+# A busy VM's instance only stops once its job ends (stop timeout).
+- name: Restart runner supervisors
+  become: true
+  ansible.builtin.systemd_service:
+    name: runner-supervisor@{{ item }}
+    state: restarted
+    daemon_reload: true
+  loop: "{{ runner_supervisor_vms }}"

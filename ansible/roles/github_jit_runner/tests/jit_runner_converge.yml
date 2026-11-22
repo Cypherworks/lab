@@ -1,0 +1,14 @@
+---
+# The converge that jit_runner.yml runs against its test host. Not run by
+# hand: it needs the systemd container that playbook boots.
+- name: Converge a native runner that waits for a JIT config
+  hosts: all
+  vars:
+    ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
+    github_jit_runner_groups: [adm]
+    github_jit_runner_sudo: true
+  tasks:
+    - name: Apply the github_jit_runner role
+      ansible.builtin.include_role:
+        name: github_jit_runner

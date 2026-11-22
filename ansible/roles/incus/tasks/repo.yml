@@ -1,0 +1,48 @@
+---
+# The Zabbly apt source and pin, shared with roles that need only the CLI.
+# The pin keeps apt and unattended-upgrades from ever resolving incus to the
+# Ubuntu archive's: that cross-origin conflict (Ubuntu 6.0.0 vs Zabbly 7.0)
+# once left the whole incus stack autoremoved and the cluster dead.
+- name: Ensure the apt keyrings directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# Fingerprint 4EFC 5906 96CB 15B8 7C73 A3AD 82CC 8797 C838 DCFD (Zabbly).
+- name: Install the Zabbly repository key
+  become: true
+  ansible.builtin.get_url:
+    url: https://pkgs.zabbly.com/key.asc
+    dest: /etc/apt/keyrings/zabbly.asc
+    mode: "0644"
+
+- name: Add the Zabbly Incus repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: zabbly-incus
+    types: [deb]
+    uris: "https://pkgs.zabbly.com/incus/{{ incus_zabbly_channel }}"
+    suites: ["{{ ansible_distribution_release }}"]
+    components: [main]
+    architectures: ["{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"]
+    signed_by: /etc/apt/keyrings/zabbly.asc
+
+- name: Pin Incus to the Zabbly repository
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/incus-zabbly.pref
+    content: |
+      # Managed by the incus role. Zabbly incus is always preferred; the Ubuntu
+      # archive's incus is never installable.
+      Package: incus*
+      Pin: origin "pkgs.zabbly.com"
+      Pin-Priority: 1001
+
+      Package: incus*
+      Pin: release o=Ubuntu
+      Pin-Priority: -1
+    owner: root
+    group: root
+    mode: "0644"

@@ -43,6 +43,9 @@ infra_runner_pip_packages:
 # lego (the vcsa cert step): the release tarball binary, checksum-verified.
 infra_runner_lego_version: "5.4.0"
 
+# Go (lab automation/ builds): a go.dev release, checksum-verified.
+infra_runner_go_version: go1.27.4
+
 # Dedicated user owning the repos; roles_path needs them cloned side-by-side.
 infra_runner_user: runner
 infra_runner_home: /home/runner

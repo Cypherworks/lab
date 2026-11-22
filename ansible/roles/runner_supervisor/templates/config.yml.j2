@@ -1,0 +1,23 @@
+{# The incus CLI's own layout and no comments, so its rewrites keep it. #}
+default-remote: local
+remotes:
+  images:
+    protocol: simplestreams
+    public: true
+    addr: https://images.linuxcontainers.org
+  {{ runner_supervisor_remote_name }}:
+    auth_type: tls
+    project: {{ runner_supervisor_project }}
+    protocol: incus
+    public: false
+    addr: https://{{ runner_supervisor_remote_address }}:8443
+  local:
+    protocol: incus
+    public: false
+    addr: unix://
+aliases: {}
+defaults:
+  list_format: ""
+  console_type: ""
+  console_spice_command: ""
+  no_color: false

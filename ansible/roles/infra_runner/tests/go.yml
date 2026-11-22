@@ -1,0 +1,97 @@
+---
+# Starts a Debian 13 container on the control node's architecture and runs
+# the role's Go tasks. Checks `go` on PATH is the pinned release, that a
+# second run changes nothing, and that a host left on another release is
+# moved to the pin with nothing of the old tree left. Needs Docker and
+# internet for the image, apt and go.dev. From ansible/:
+#
+#   ansible-playbook -i localhost, -c local roles/infra_runner/tests/go.yml
+- name: Verify the infra runner's Go toolchain
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _target: infra-runner-go-test
+    _converge: >-
+      ansible-playbook -i {{ _target }}, -c community.docker.docker
+      {{ playbook_dir }}/go_converge.yml
+    _in_target: docker exec {{ _target }}
+    _pin: "{{ (lookup('file', playbook_dir ~ '/../defaults/main.yml') | from_yaml).infra_runner_go_version }}"
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Start a Debian 13 host
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - debian:13
+          - sh
+          - -c
+          - apt-get update -qq && apt-get install -y -qq python3 ca-certificates && exec sleep infinity
+      changed_when: true
+
+    - name: Wait for python3 on the host
+      ansible.builtin.command: "{{ _in_target }} test -x /usr/bin/python3"
+      register: _python
+      until: _python.rc == 0
+      retries: 60
+      delay: 3
+      changed_when: false
+
+    - name: Converge Go
+      ansible.builtin.command: "{{ _converge }}"
+      register: _run_first
+      changed_when: true
+
+    - name: Converge Go again
+      ansible.builtin.command: "{{ _converge }}"
+      register: _run_again
+      changed_when: false
+
+    - name: Read the Go on PATH
+      ansible.builtin.command: "{{ _in_target }} sh -lc 'go version'"
+      register: _version
+      changed_when: false
+
+    - name: Leave the host on another Go release
+      ansible.builtin.shell: |
+        set -e
+        {{ _in_target }} sh -c 'echo go1.0.0 > /usr/local/go/VERSION'
+        {{ _in_target }} touch /usr/local/go/stale-file
+      changed_when: true
+
+    - name: Converge Go onto the pin
+      ansible.builtin.command: "{{ _converge }}"
+      register: _run_bump
+      changed_when: true
+
+    - name: Read the Go on PATH and the old tree
+      ansible.builtin.shell: |
+        {{ _in_target }} sh -lc 'go version'
+        {{ _in_target }} test -e /usr/local/go/stale-file && echo stale-left || echo stale-gone
+      register: _bumped
+      changed_when: false
+
+    - name: Assert Go is the pin, idempotent, and moved onto the pin
+      ansible.builtin.assert:
+        that:
+          - _version.stdout is match('go version ' ~ _pin ~ ' linux/(amd64|arm64)$')
+          - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
+          - _run_first.stderr == '' and _run_again.stderr == '' and _run_bump.stderr == ''
+          - _run_bump.stdout is search(_target ~ ' +: ok=\d+ +changed=[1-9]')
+          - _bumped.stdout_lines == [_version.stdout, 'stale-gone']
+        fail_msg: >-
+          version={{ _version.stdout }} bumped={{ _bumped.stdout_lines }}
+          again={{ _run_again.stdout[-500:] }} bump={{ _run_bump.stdout[-500:] }}
+          stderr={{ _run_first.stderr }}{{ _run_again.stderr }}{{ _run_bump.stderr }}
+
+    - name: Remove the test host
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: true

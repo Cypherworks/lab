@@ -1,0 +1,245 @@
+---
+# Boots systemd in a privileged Ubuntu 24.04 container and converges the role
+# as a runner whose user has passwordless sudo. Checks the runner's libraries
+# are installed, the tarball sits unpacked under its version and belongs to
+# the runner user, the user is in its extra groups and can sudo, and the
+# unit exists but isn't enabled, so a boot never starts it. A stale version
+# directory is removed by the next run, and a run after that changes nothing.
+# Then run.sh is swapped for a stub that records how it was called (the real
+# one would dial GitHub) and the JIT hand-off is driven as the supervisor
+# drives it: empty stdin is refused and leaves nothing behind, a config on
+# stdin starts the unit, which runs run.sh --jitconfig as the runner user
+# with the config file readable by that user alone in a directory it can't
+# change, and a second hand-off in the same boot is refused. A run with sudo
+# off removes the sudoers file, and a malformed checksum fails the run. Needs
+# Docker and internet for the image, apt and the runner tarball. From
+# ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/github_jit_runner/tests/jit_runner.yml
+- name: Verify a native runner started by a JIT config
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _image: ubuntu:24.04
+    _target: github-jit-runner-test
+    _root: /opt/actions-runner
+    _version_dir: "{{ _root }}/2.338.2"
+    _config: /run/actions-runner/jitconfig
+    _out: /tmp/jit-stub.out
+    # Drop the image's policy-rc.d: a host has none.
+    _boot: >-
+      rm -f /usr/sbin/policy-rc.d
+      && apt-get update -qq
+      && apt-get install -y -qq systemd systemd-sysv python3
+      && exec /lib/systemd/systemd
+    _converge: >-
+      ansible-playbook -i {{ _target }}, -c community.docker.docker
+      {{ playbook_dir }}/jit_runner_converge.yml
+    # The inner run resolves a relative roles path against its own playbook.
+    _converge_env:
+      ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+    _in_target: docker exec {{ _target }}
+    _stub: |
+      #!/bin/sh
+      echo "$(id -un) $(pwd) $*" > {{ _out }}
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on {{ _image }}
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --volume=/sys/fs/cgroup:/sys/fs/cgroup:rw
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - "{{ _image }}"
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: "{{ _in_target }} systemctl is-system-running"
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Converge the runner
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_first
+      changed_when: true
+
+    - name: Read the runner's packages, user, files and unit
+      ansible.builtin.shell: |
+        set -e
+        t="{{ _in_target }}"
+        echo "packages: $($t dpkg-query -W -f '${Package}=${Status}\n' libkrb5-3 zlib1g liblttng-ust1t64 libssl3t64 libicu74 sudo | grep -c 'install ok installed')"
+        echo "groups: $($t id -nG runner)"
+        echo "home: $($t sh -c 'getent passwd runner | cut -d: -f6')"
+        echo "sudo: $($t su - runner -c 'sudo -n id -u')"
+        echo "owner: $($t stat -c %U {{ _version_dir }}/run.sh {{ _version_dir }}/bin/Runner.Listener | sort -u | xargs)"
+        echo "versions: $($t ls {{ _root }} | xargs)"
+        echo "enabled: $($t systemctl is-enabled actions-runner.service || true)"
+        echo "active: $($t systemctl is-active actions-runner.service || true)"
+        echo "start: $($t stat -c '%U %a' /usr/local/sbin/start-jit-runner)"
+      register: _installed
+      changed_when: false
+
+    - name: Assert the runner is installed and waits for a JIT config
+      ansible.builtin.assert:
+        that:
+          - "_installed.stdout is search('(?m)^packages: 6$')"
+          - "_installed.stdout is search('(?m)^groups: runner adm$')"
+          - "_installed.stdout is search('(?m)^home: /home/runner$')"
+          - "_installed.stdout is search('(?m)^sudo: 0$')"
+          - "_installed.stdout is search('(?m)^owner: runner$')"
+          - "_installed.stdout is search('(?m)^versions: 2.338.2$')"
+          - "_installed.stdout is search('(?m)^enabled: static$')"
+          - "_installed.stdout is search('(?m)^active: inactive$')"
+          - "_installed.stdout is search('(?m)^start: root 700$')"
+        fail_msg: "{{ _installed.stdout }} converge={{ _run_first.stdout[-600:] }}"
+
+    - name: Leave an older runner version behind
+      ansible.builtin.command: "{{ _in_target }} mkdir -p {{ _root }}/2.300.0/bin"
+      changed_when: true
+
+    - name: Converge again to clear the older version
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_prune
+      changed_when: true
+
+    - name: Converge a third time with nothing changed
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_again
+      changed_when: false
+
+    - name: List the runner versions left
+      ansible.builtin.command: "{{ _in_target }} ls {{ _root }}"
+      register: _versions
+      changed_when: false
+
+    - name: Assert the older version went and a third run changes nothing
+      ansible.builtin.assert:
+        that:
+          - _versions.stdout_lines == ['2.338.2']
+          - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
+          - _run_first.stderr == '' and _run_prune.stderr == '' and _run_again.stderr == ''
+        fail_msg: >-
+          versions={{ _versions.stdout_lines }}
+          again={{ _run_again.stdout[-600:] }}
+          stderr={{ _run_first.stderr }}{{ _run_prune.stderr }}{{ _run_again.stderr }}
+
+    - name: Swap run.sh for a stub that records how it was started
+      ansible.builtin.command:
+        argv: [docker, exec, -i, "{{ _target }}", sh, -c, "cat > {{ _version_dir }}/run.sh"]
+        stdin: "{{ _stub }}"
+      changed_when: true
+
+    - name: Hand off an empty JIT config
+      ansible.builtin.command:
+        argv: [docker, exec, -i, "{{ _target }}", /usr/local/sbin/start-jit-runner]
+        stdin: ""
+      register: _empty
+      changed_when: false
+      failed_when: false
+
+    - name: Look for a config file the empty hand-off left
+      ansible.builtin.command: "{{ _in_target }} test -e {{ _config }}"
+      register: _empty_left
+      changed_when: false
+      failed_when: false
+
+    - name: Hand off a JIT config
+      ansible.builtin.command:
+        argv: [docker, exec, -i, "{{ _target }}", /usr/local/sbin/start-jit-runner]
+        stdin: test-jit-config
+      register: _handoff
+      changed_when: true
+
+    - name: Wait for the stub to record its start
+      ansible.builtin.command: "{{ _in_target }} cat {{ _out }}"
+      register: _started
+      until: _started.rc == 0
+      retries: 20
+      delay: 1
+      changed_when: false
+
+    - name: Read the config file's owner and mode
+      ansible.builtin.command: "{{ _in_target }} stat -c '%U %a' {{ _config }} {{ _config | dirname }}"
+      register: _config_stat
+      changed_when: false
+
+    - name: Hand off a second JIT config in the same boot
+      ansible.builtin.command:
+        argv: [docker, exec, -i, "{{ _target }}", /usr/local/sbin/start-jit-runner]
+        stdin: second-jit-config
+      register: _second
+      changed_when: false
+      failed_when: false
+
+    - name: Assert one non-empty JIT config per boot starts the runner as its user
+      ansible.builtin.assert:
+        that:
+          - _empty.rc != 0
+          - _empty.stderr is search('no JIT config on stdin')
+          - _empty_left.rc != 0
+          - _started.stdout == 'runner ' ~ _version_dir ~ ' --jitconfig test-jit-config'
+          - _config_stat.stdout_lines == ['runner 400', 'root 755']
+          - _second.rc != 0
+          - _second.stderr is search('a JIT config was already handed in this boot')
+        fail_msg: >-
+          empty={{ _empty.rc }} {{ _empty.stderr }} left={{ _empty_left.rc }}
+          started={{ _started.stdout }} config={{ _config_stat.stdout_lines }}
+          second={{ _second.rc }} {{ _second.stderr }}
+
+    - name: Converge with sudo off
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"github_jit_runner_sudo": false}'
+      environment: "{{ _converge_env }}"
+      changed_when: true
+
+    - name: Ask the runner user for sudo again
+      ansible.builtin.command: "{{ _in_target }} su - runner -c 'sudo -n id -u'"
+      register: _no_sudo
+      changed_when: false
+      failed_when: false
+
+    - name: Converge with a malformed checksum
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"github_jit_runner_sha256": "not-a-checksum"}'
+      environment: "{{ _converge_env }}"
+      register: _bad_sha
+      changed_when: false
+      failed_when: false
+
+    - name: Assert sudo off takes sudo away and a bad checksum fails the run
+      ansible.builtin.assert:
+        that:
+          - _no_sudo.rc != 0
+          - _bad_sha.rc != 0
+          - _bad_sha.stdout is search('github_jit_runner_sha256 must be the tarball')
+        fail_msg: >-
+          no_sudo={{ _no_sudo.rc }} {{ _no_sudo.stdout }}
+          bad_sha={{ _bad_sha.stdout[-600:] }}
+
+    - name: Remove the test host
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: true

@@ -1,0 +1,54 @@
+---
+# Go for building lab's automation/ binaries here, such as the runner
+# supervisor. The release tarball, checksum-verified against go.dev's sum,
+# replaces any other release in /usr/local/go, as go.dev's install says.
+- name: Read the installed Go release
+  ansible.builtin.command: head -n 1 /usr/local/go/VERSION
+  register: _infra_runner_go_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install Go {{ infra_runner_go_version }}
+  when: _infra_runner_go_installed.stdout != infra_runner_go_version
+  vars:
+    _infra_runner_go_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"
+  block:
+    - name: Make a root-only download directory
+      become: true
+      ansible.builtin.tempfile:
+        state: directory
+      register: _infra_runner_go_tmp
+
+    - name: Download Go {{ infra_runner_go_version }}
+      become: true
+      ansible.builtin.get_url:
+        url: "https://dl.google.com/go/{{ infra_runner_go_version }}.linux-{{ _infra_runner_go_arch }}.tar.gz"
+        dest: "{{ _infra_runner_go_tmp.path }}/go.tar.gz"
+        checksum: "sha256:https://dl.google.com/go/{{ infra_runner_go_version }}.linux-{{ _infra_runner_go_arch }}.tar.gz.sha256"
+        mode: "0644"
+
+    - name: Remove the other Go release
+      become: true
+      ansible.builtin.file:
+        path: /usr/local/go
+        state: absent
+
+    - name: Unpack Go {{ infra_runner_go_version }}
+      become: true
+      ansible.builtin.unarchive:
+        src: "{{ _infra_runner_go_tmp.path }}/go.tar.gz"
+        dest: /usr/local
+        remote_src: true
+
+    - name: Remove the Go download
+      become: true
+      ansible.builtin.file:
+        path: "{{ _infra_runner_go_tmp.path }}"
+        state: absent
+
+- name: Put go on PATH
+  become: true
+  ansible.builtin.file:
+    src: /usr/local/go/bin/go
+    dest: /usr/local/bin/go
+    state: link

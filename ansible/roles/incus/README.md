@@ -47,7 +47,7 @@ None (no `meta/main.yml`). Requires the `community.general` collection noted abo
 
 ## What it does
 
-1. Adds the Zabbly apt repository and key, pins Incus to the Zabbly origin (so apt and unattended-upgrades can never resolve it to the Ubuntu archive's incus), installs the storage tooling, then installs Incus, removes the `incus-ui-canonical` web UI if present, and holds `incus_hold_packages` against unattended-upgrades.
+1. Adds the Zabbly apt repository and key, pins Incus to the Zabbly origin (so apt and unattended-upgrades can never resolve it to the Ubuntu archive's incus), installs the storage tooling, then installs Incus, removes the `incus-ui-canonical` web UI if present, and holds `incus_hold_packages` against unattended-upgrades. The repository, key and pin are `tasks/repo.yml`, which a role that needs only the CLI includes with `tasks_from: repo.yml` (as `runner_supervisor` does).
 2. Adds `ansible_user` to `incus-admin` so it can drive Incus without root.
 3. Renders `/etc/netplan/70-incus.yaml` with a `<uplink>.<vlan>` link and bridge per entry in `incus_networks`, then flushes handlers so the bridges are up before any profile references them, and creates any missing `<uplink>.<vlan>` netdev and bridge attachment with `ip link` (networkd only hot-creates VLAN netdevs at boot).
 4. Carves the dedicated storage LV.

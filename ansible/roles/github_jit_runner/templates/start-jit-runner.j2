@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Managed by Ansible (github_jit_runner role). Takes a single-job JIT config
+# on stdin, leaves it on tmpfs readable by the job user alone, and starts the
+# runner unit with it. One config per boot: a second hand-off is refused, as
+# the VM is reset before it registers again. The config never appears in
+# argv here.
+set -euo pipefail
+
+config={{ github_jit_runner_config_file | quote }}
+user={{ github_jit_runner_user | quote }}
+
+if [[ -e $config ]]; then
+  echo "start-jit-runner: a JIT config was already handed in this boot" >&2
+  exit 1
+fi
+# Root owns the directory, so a job can't replace or remove the config.
+install -d -m 0755 "$(dirname "$config")"
+umask 077
+cat >"$config"
+if [[ ! -s $config ]]; then
+  rm -f "$config"
+  echo "start-jit-runner: no JIT config on stdin" >&2
+  exit 1
+fi
+chown "$user:" "$config"
+chmod 0400 "$config"
+systemctl start {{ github_jit_runner_unit }}

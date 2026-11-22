@@ -1,0 +1,21 @@
+---
+# The converge that supervisor.yml runs against its test host. Not run by
+# hand: it needs the systemd container that playbook boots, and the server
+# certificate and fetch path that playbook passes in with -e @vars.
+- name: Converge a runner supervisor for two VMs
+  hosts: all
+  vars:
+    ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
+    runner_supervisor_vms: [docker-runner-1, docker-runner-2]
+    runner_supervisor_org: example
+    runner_supervisor_remote_address: 192.0.2.10
+    runner_supervisor_project: docker-runners
+    runner_supervisor_token: test-dummy-token
+    # Nothing listens here, so the supervisor retries and never reaches GitHub.
+    runner_supervisor_github_url: http://127.0.0.1:9
+    runner_supervisor_metrics_dir: /var/lib/prometheus/node-exporter
+  tasks:
+    - name: Apply the runner_supervisor role
+      ansible.builtin.include_role:
+        name: runner_supervisor
