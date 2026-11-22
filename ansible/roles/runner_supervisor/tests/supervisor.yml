@@ -4,13 +4,14 @@
 # this checks the binary runs on the target. It checks the incus CLI comes
 # from Zabbly's lts-7.0 line, the client key stays root-only on the target
 # while its certificate is fetched back to the control node, the remote
-# points at the given address with the given server certificate pinned, and
-# the token file is root-only. Both supervisor instances are enabled and
-# running, and each has read the token and is retrying GitHub, which here is
-# a closed local port. A second run changes nothing, and a missing token,
-# VM list, server certificate or org fails the run. Needs Docker, Go on the
-# control node, community.crypto, and internet for the image, apt and
-# Zabbly. From ansible/:
+# points at the given address with the given server certificate pinned, the
+# token file is root-only, and the build writes nothing at a fixed path in
+# the control node's temp directory. Both supervisor instances are enabled
+# and running, and each has read the token and is retrying GitHub, which
+# here is a closed local port. A second run changes nothing, and a missing
+# token, VM list, server certificate or org fails the run. Needs Docker, Go
+# on the control node, community.crypto, and internet for the image, apt
+# and Zabbly. From ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
 #     roles/runner_supervisor/tests/supervisor.yml
@@ -38,11 +39,18 @@
     _converge_env:
       ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
     _in_target: docker exec {{ _target }}
+    _tmp: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}"
   tasks:
     - name: Clear what a failed run left behind for debugging
       ansible.builtin.command: docker rm -f {{ _target }}
       changed_when: false
       failed_when: false
+
+    - name: List supervisor builds left in the control node's temp directory
+      ansible.builtin.find:
+        paths: "{{ _tmp }}"
+        patterns: runner-supervisor-*
+      register: _builds_before
 
     - name: Make a scratch directory on the control node
       ansible.builtin.tempfile:
@@ -123,6 +131,12 @@
       delay: 2
       changed_when: false
 
+    - name: List supervisor builds the converge left in the temp directory
+      ansible.builtin.find:
+        paths: "{{ _tmp }}"
+        patterns: runner-supervisor-*
+      register: _builds_after
+
     - name: Read the CLI, binary, key, remote, token and units
       ansible.builtin.shell: |
         set -e
@@ -161,6 +175,8 @@
           - _journal.stdout is search('vm=docker-runner-1')
           - _journal.stdout is search('vm=docker-runner-2')
           - _journal.stdout is not search('test-dummy-token')
+          - _builds_after.files | map(attribute='path') | list == _builds_before.files | map(attribute='path') | list
+          - _builds_after.files | map(attribute='mtime') | list == _builds_before.files | map(attribute='mtime') | list
         fail_msg: "{{ _installed.stdout }} journal={{ _journal.stdout[-800:] }} converge={{ _run_first.stdout[-600:] }}"
 
     - name: Converge again with nothing changed

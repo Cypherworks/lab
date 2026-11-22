@@ -48,8 +48,9 @@ than Debian's older `incus-client`.
 2. Installs `python3-debian`, adds the Zabbly repository and pin, and
    installs `incus-client` and `python3-cryptography`.
 3. Builds `./cmd/runner-supervisor` on the control node (`CGO_ENABLED=0`,
-   the target's architecture, `-trimpath`, `GOTOOLCHAIN=local`) and
-   installs it as `/usr/local/bin/runner-supervisor`.
+   the target's architecture, `-trimpath`, `GOTOOLCHAIN=local`) in a private
+   temporary directory, installs it as `/usr/local/bin/runner-supervisor`
+   and removes the directory.
 4. Generates an ECC client key on the host, under
    `/var/lib/runner-supervisor/incus` (root, `0600`); it never leaves. A
    self-signed client certificate is fetched to `runner_supervisor_cert_dest`.
@@ -114,6 +115,7 @@ Removing a VM from `runner_supervisor_vms` doesn't stop its instance; run
 container for two VMs, with GitHub pointed at a closed local port. It checks
 the CLI's version and origin, the binary, the key's mode, the certificate's
 subject and that the fetched copy matches, the remote and the pinned server
-certificate, the token file, and that both instances run, have logged their
+certificate, the token file, that the build leaves nothing at a fixed
+temp path on the control node, and that both instances run, have logged their
 retries and never log the token. A second run must change nothing, and
 missing input must fail the run. Its header says how to run it.

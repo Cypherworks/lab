@@ -49,6 +49,16 @@
     state: present
     update_cache: true
 
+# A private build directory: a fixed name in a shared /tmp could be swapped.
+- name: Make a private build directory on the control node
+  delegate_to: localhost
+  become: false
+  run_once: true
+  ansible.builtin.tempfile:
+    state: directory
+  register: _runner_supervisor_build
+  changed_when: false
+
 - name: Build the supervisor for the target on the control node
   delegate_to: localhost
   become: false
@@ -59,7 +69,7 @@
       - build
       - -trimpath
       - -o
-      - "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}/runner-supervisor-{{ runner_supervisor_goarch }}"
+      - "{{ _runner_supervisor_build.path }}/runner-supervisor"
       - ./cmd/runner-supervisor
     chdir: "{{ runner_supervisor_source_dir }}"
   environment:
@@ -72,12 +82,21 @@
 - name: Install the supervisor
   become: true
   ansible.builtin.copy:
-    src: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}/runner-supervisor-{{ runner_supervisor_goarch }}"
+    src: "{{ _runner_supervisor_build.path }}/runner-supervisor"
     dest: /usr/local/bin/runner-supervisor
     owner: root
     group: root
     mode: "0755"
   notify: Restart runner supervisors
+
+- name: Remove the build directory
+  delegate_to: localhost
+  become: false
+  run_once: true
+  ansible.builtin.file:
+    path: "{{ _runner_supervisor_build.path }}"
+    state: absent
+  changed_when: false
 
 - name: Create the supervisor's directories
   become: true
