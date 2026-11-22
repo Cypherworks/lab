@@ -98,6 +98,7 @@ Each role has its own README with variables, dependencies, and an example. Roles
 |------|---------|
 | [`claude`](ansible/roles/claude) | AI-assisted development workbench: the CI toolchain (Go, Node, Terraform, Ansible, linters, gh), Claude Code, tmux, and the cw-claude GitHub App helper scripts. |
 | [`github_runner`](ansible/roles/github_runner) | Self-hosted, ephemeral GitHub Actions runner as a container on a Docker host; registers against a single repository or a whole organisation, optionally into a runner group. |
+| [`github_jit_runner`](ansible/roles/github_jit_runner) | Native GitHub Actions runner from the pinned tarball, holding no token: a supervisor hands in a single-job JIT config at runtime, for VMs reset after every job. |
 | [`infra_runner`](ansible/roles/infra_runner) | x86_64 Linux control host an operator SSHes into to run Terraform and Ansible plays by hand; also the native host for the VCSA deploy. |
 
 ### Backup

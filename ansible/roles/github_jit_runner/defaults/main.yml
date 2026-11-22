@@ -1,0 +1,30 @@
+---
+# A self-hosted GitHub Actions runner installed natively from the
+# actions/runner tarball. Nothing registers at deploy time and the role holds
+# no token: start-jit-runner takes a single-job JIT config on stdin and
+# starts the runner with it. Generic mechanism; the deploy supplies the pin.
+
+github_jit_runner_version: "2.338.2"
+# SHA-256 of the linux-x64 tarball, as listed in the release notes.
+github_jit_runner_sha256: baebf204307bac6193480852732f0aba2ae97b6c5597c244f4d5558390147c40
+github_jit_runner_release_base: https://github.com/actions/runner/releases/download
+github_jit_runner_archive: "actions-runner-linux-x64-{{ github_jit_runner_version }}.tar.gz"
+github_jit_runner_url: "{{ github_jit_runner_release_base }}/v{{ github_jit_runner_version }}/{{ github_jit_runner_archive }}"
+
+# Each version unpacks to <dir>/<version>; other versions are removed.
+github_jit_runner_dir: /opt/actions-runner
+
+# The user jobs run as, and its extra groups (e.g. [docker]).
+github_jit_runner_user: runner
+github_jit_runner_groups: []
+
+# Passwordless sudo for the job user, as on GitHub-hosted runners (README).
+github_jit_runner_sudo: false
+
+# The runner's runtime libraries, by their Ubuntu 24.04 names (README).
+github_jit_runner_packages:
+  - libkrb5-3
+  - zlib1g
+  - liblttng-ust1t64
+  - libssl3t64
+  - libicu74

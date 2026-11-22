@@ -1,0 +1,4 @@
+---
+# Where start-jit-runner leaves the JIT config for the unit (tmpfs, per boot).
+github_jit_runner_config_file: /run/actions-runner/jitconfig
+github_jit_runner_unit: actions-runner.service

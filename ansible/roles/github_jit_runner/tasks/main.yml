@@ -1,0 +1,117 @@
+---
+- name: Require a well-formed tarball checksum
+  ansible.builtin.assert:
+    that: github_jit_runner_sha256 is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      github_jit_runner_sha256 must be the tarball's SHA-256 as 64 lowercase
+      hex digits, from the release notes of v{{ github_jit_runner_version }}.
+
+- name: Install the runner's runtime libraries
+  become: true
+  ansible.builtin.apt:
+    name: "{{ github_jit_runner_packages + (['sudo'] if github_jit_runner_sudo else []) }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the job user
+  become: true
+  ansible.builtin.user:
+    name: "{{ github_jit_runner_user }}"
+    groups: "{{ github_jit_runner_groups }}"
+    append: true
+    shell: /bin/bash
+    create_home: true
+    comment: GitHub Actions jobs
+
+- name: Set the job user's passwordless sudo
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/github-jit-runner
+    content: "{{ github_jit_runner_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+  when: github_jit_runner_sudo
+
+- name: Remove the job user's sudo when it is off
+  become: true
+  ansible.builtin.file:
+    path: /etc/sudoers.d/github-jit-runner
+    state: absent
+  when: not github_jit_runner_sudo
+
+- name: Look for runner v{{ github_jit_runner_version }}
+  ansible.builtin.stat:
+    path: "{{ github_jit_runner_dir }}/{{ github_jit_runner_version }}/run.sh"
+  register: _github_jit_runner_installed
+
+- name: Install runner v{{ github_jit_runner_version }}
+  when: not _github_jit_runner_installed.stat.exists
+  block:
+    - name: Download the runner tarball, checksum-verified
+      become: true
+      ansible.builtin.get_url:
+        url: "{{ github_jit_runner_url }}"
+        dest: "/tmp/{{ github_jit_runner_archive }}"
+        checksum: "sha256:{{ github_jit_runner_sha256 }}"
+        mode: "0644"
+
+    - name: Create the runner's version directory
+      become: true
+      ansible.builtin.file:
+        path: "{{ github_jit_runner_dir }}/{{ github_jit_runner_version }}"
+        state: directory
+        owner: "{{ github_jit_runner_user }}"
+        group: "{{ github_jit_runner_user }}"
+        mode: "0755"
+
+    - name: Unpack the runner as the job user's
+      become: true
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ github_jit_runner_archive }}"
+        dest: "{{ github_jit_runner_dir }}/{{ github_jit_runner_version }}"
+        remote_src: true
+        owner: "{{ github_jit_runner_user }}"
+        group: "{{ github_jit_runner_user }}"
+
+    - name: Remove the downloaded tarball
+      become: true
+      ansible.builtin.file:
+        path: "/tmp/{{ github_jit_runner_archive }}"
+        state: absent
+
+- name: Find the runner versions on disk
+  ansible.builtin.find:
+    paths: "{{ github_jit_runner_dir }}"
+    file_type: directory
+  register: _github_jit_runner_versions
+
+- name: Remove the other runner versions
+  become: true
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _github_jit_runner_versions.files | rejectattr('path', 'equalto', github_jit_runner_dir ~ '/' ~ github_jit_runner_version) | list }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Install the runner unit
+  become: true
+  ansible.builtin.template:
+    src: actions-runner.service.j2
+    dest: /etc/systemd/system/{{ github_jit_runner_unit }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install start-jit-runner
+  become: true
+  ansible.builtin.template:
+    src: start-jit-runner.j2
+    dest: /usr/local/sbin/start-jit-runner
+    owner: root
+    group: root
+    mode: "0700"

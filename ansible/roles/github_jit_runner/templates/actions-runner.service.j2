@@ -1,0 +1,14 @@
+# Managed by Ansible (github_jit_runner role). Runs one job from the JIT
+# config start-jit-runner left; no [Install] section, so a boot never starts
+# it. $$ hands bash a literal $ past systemd's own expansion.
+[Unit]
+Description=GitHub Actions runner (one JIT job)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User={{ github_jit_runner_user }}
+WorkingDirectory={{ github_jit_runner_dir }}/{{ github_jit_runner_version }}
+ExecStart=/bin/bash -c 'exec ./run.sh --jitconfig "$$(< {{ github_jit_runner_config_file }})"'
+Restart=no
