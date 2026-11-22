@@ -105,6 +105,7 @@ type fakeIncus struct {
 	stdin    []string
 	notReady int
 	before   func(op string)
+	hang     map[string]bool
 }
 
 func (f *fakeIncus) fail(op string) error {
@@ -155,12 +156,16 @@ func (f *fakeIncus) Running(context.Context, string) (bool, error) {
 	return f.running, nil
 }
 
-func (f *fakeIncus) Exec(_ context.Context, vm string, stdin io.Reader, command ...string) error {
+func (f *fakeIncus) Exec(ctx context.Context, vm string, stdin io.Reader, command ...string) error {
 	op := "exec " + strings.Join(command, " ")
 	f.ops = append(f.ops, op)
 	if stdin != nil {
 		b, _ := io.ReadAll(stdin)
 		f.stdin = append(f.stdin, string(b))
+	}
+	if f.hang[command[0]] {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	if command[0] == "docker" && f.notReady > 0 {
 		f.notReady--
@@ -802,5 +807,44 @@ func TestDrainDuringTheLastResetAttemptIsNotAFailure(t *testing.T) {
 	}
 	if v.State() == Failed {
 		t.Fatal("a drained VM was marked failed")
+	}
+}
+
+func TestAHungHandOffTimesOutAndIsTreatedAsFailed(t *testing.T) {
+	v, gh, inc, clk := newVM(t)
+	v.Timing.Exec = 20 * time.Millisecond
+	inc.hang = map[string]bool{startJITRunner: true}
+	done := make(chan error, 1)
+	go func() { done <- v.Cycle(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hung hand-off blocked the loop")
+	}
+	if !reflect.DeepEqual(gh.deleted, []int64{101}) {
+		t.Fatalf("deleted = %v, want the runner removed", gh.deleted)
+	}
+	if countSleeps(clk, v.Timing.Poll) != 0 {
+		t.Fatal("watched a runner whose hand-off hung")
+	}
+}
+
+func TestAHungDockerCheckTimesOutAndCountsAsNotReady(t *testing.T) {
+	v, _, inc, _ := newVM(t)
+	v.Timing.Exec = 20 * time.Millisecond
+	v.Timing.Ready = 0
+	inc.hang = map[string]bool{"docker": true}
+	done := make(chan error, 1)
+	go func() { done <- v.Cycle(context.Background()) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrFailed) {
+			t.Fatalf("err = %v, want ErrFailed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hung docker check blocked the loop")
 	}
 }

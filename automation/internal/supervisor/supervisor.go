@@ -98,6 +98,7 @@ type Timing struct {
 	Lifetime         time.Duration
 	Ready            time.Duration
 	ReadyPoll        time.Duration
+	Exec             time.Duration
 	ResetBackoff     []time.Duration
 	MintBackoffStart time.Duration
 	MintBackoffMax   time.Duration
@@ -111,6 +112,7 @@ func DefaultTiming() Timing {
 		Lifetime:         time.Hour,
 		Ready:            5 * time.Minute,
 		ReadyPoll:        2 * time.Second,
+		Exec:             time.Minute,
 		ResetBackoff:     []time.Duration{30 * time.Second, 2 * time.Minute, 10 * time.Minute},
 		MintBackoffStart: 15 * time.Second,
 		MintBackoffMax:   5 * time.Minute,
@@ -152,7 +154,7 @@ func (v *VM) Cycle(ctx context.Context) error {
 		return ErrDrained
 	}
 	v.setState(Registering)
-	err = v.Incus.Exec(ctx, v.Name, strings.NewReader(config), startJITRunner)
+	err = v.exec(ctx, strings.NewReader(config), startJITRunner)
 	if err != nil {
 		v.log().Warn("hand-off failed", "runner", runner.ID, "err", err)
 		v.finish(ctx, runner.ID)
@@ -241,7 +243,7 @@ func (v *VM) resetOnce(ctx context.Context) (time.Time, error) {
 func (v *VM) waitReady(ctx context.Context) error {
 	deadline := v.Clock.Now().Add(v.Timing.Ready)
 	for {
-		err := v.Incus.Exec(ctx, v.Name, nil, "docker", "info")
+		err := v.exec(ctx, nil, "docker", "info")
 		if err == nil {
 			return nil
 		}
@@ -343,6 +345,13 @@ func (v *VM) watch(ctx context.Context, id int64, started time.Time) error {
 		return ErrDrained
 	}
 	return nil
+}
+
+// exec runs command in the VM, bounded so a hung guest can't hold the loop.
+func (v *VM) exec(ctx context.Context, stdin io.Reader, command ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, v.Timing.Exec)
+	defer cancel()
+	return v.Incus.Exec(ctx, v.Name, stdin, command...)
 }
 
 // finish deregisters the runner and stops the VM, even while draining.
