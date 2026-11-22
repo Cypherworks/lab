@@ -1,0 +1,34 @@
+---
+# Runs lab's automation/cmd/runner-supervisor, one systemd instance per VM:
+# each keeps an Incus VM taking one GitHub Actions job per boot. The binary
+# is built from this repo with Go on the control node. Generic mechanism;
+# the deploy supplies the VMs, org, Incus endpoint, certificate and token.
+
+# The Incus VMs to supervise, one runner-supervisor@<vm> each.
+runner_supervisor_vms: []
+runner_supervisor_org: ""
+runner_supervisor_labels: [self-hosted, docker]
+
+# The Incus API (port 8443), its server certificate (PEM, pinned) and project.
+runner_supervisor_remote_name: lab
+runner_supervisor_remote_address: ""
+runner_supervisor_server_cert: ""
+runner_supervisor_project: ""
+
+# The GitHub token that mints, polls and deletes runners, from SOPS.
+runner_supervisor_token: ""
+runner_supervisor_github_url: https://api.github.com
+
+# node_exporter's textfile directory; empty writes no metrics.
+runner_supervisor_metrics_dir: ""
+
+# Where the client certificate is fetched to on the control node, to trust.
+runner_supervisor_cert_dest: ""
+runner_supervisor_cert_name: runner-supervisor
+
+# A drain waits for a busy VM's job, up to the supervisor's 1-hour cap.
+runner_supervisor_stop_timeout: 70min
+
+# The Go module the binary is built from, on the control node.
+runner_supervisor_source_dir: "{{ role_path }}/../../../automation"
+runner_supervisor_incus: /usr/bin/incus

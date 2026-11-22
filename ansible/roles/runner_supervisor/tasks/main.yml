@@ -1,0 +1,176 @@
+---
+- name: Require the GitHub token (supplied from SOPS)
+  ansible.builtin.assert:
+    that: runner_supervisor_token | length > 0
+    fail_msg: "runner_supervisor_token is not set: supply it from SOPS."
+
+- name: Require at least one VM
+  ansible.builtin.assert:
+    that: runner_supervisor_vms | length > 0
+    fail_msg: "runner_supervisor_vms is empty: name the Incus VMs to supervise."
+
+- name: Require the Incus server certificate
+  ansible.builtin.assert:
+    that: runner_supervisor_server_cert | length > 0
+    fail_msg: >-
+      runner_supervisor_server_cert is not set: give the cluster's PEM
+      certificate, so the remote is pinned rather than trusted on first use.
+
+- name: Require the org, Incus endpoint and certificate destination
+  vars:
+    _missing: >-
+      {{ {'runner_supervisor_org': runner_supervisor_org,
+          'runner_supervisor_remote_address': runner_supervisor_remote_address,
+          'runner_supervisor_project': runner_supervisor_project,
+          'runner_supervisor_cert_dest': runner_supervisor_cert_dest}
+         | dict2items | selectattr('value', 'equalto', '') | map(attribute='key') | list }}
+  ansible.builtin.assert:
+    that: _missing | length == 0
+    fail_msg: "Not set: {{ _missing | join(', ') }}."
+
+# deb822_repository needs python3-debian, which Debian 13's image lacks.
+- name: Install what the Zabbly repository task needs
+  become: true
+  ansible.builtin.apt:
+    name: python3-debian
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Add the Zabbly Incus repository and pin
+  ansible.builtin.include_role:
+    name: incus
+    tasks_from: repo.yml
+
+- name: Install the incus CLI and what the certificate tasks need
+  become: true
+  ansible.builtin.apt:
+    name: [incus-client, python3-cryptography]
+    state: present
+    update_cache: true
+
+- name: Build the supervisor for the target on the control node
+  delegate_to: localhost
+  become: false
+  run_once: true
+  ansible.builtin.command:
+    argv:
+      - go
+      - build
+      - -trimpath
+      - -o
+      - "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}/runner-supervisor-{{ runner_supervisor_goarch }}"
+      - ./cmd/runner-supervisor
+    chdir: "{{ runner_supervisor_source_dir }}"
+  environment:
+    CGO_ENABLED: "0"
+    GOOS: linux
+    GOARCH: "{{ runner_supervisor_goarch }}"
+    GOTOOLCHAIN: local
+  changed_when: false
+
+- name: Install the supervisor
+  become: true
+  ansible.builtin.copy:
+    src: "{{ lookup('ansible.builtin.env', 'TMPDIR') | default('/tmp', true) }}/runner-supervisor-{{ runner_supervisor_goarch }}"
+    dest: /usr/local/bin/runner-supervisor
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart runner supervisors
+
+- name: Create the supervisor's directories
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ runner_supervisor_state_dir }}"
+    - "{{ runner_supervisor_conf_dir }}"
+    - "{{ runner_supervisor_conf_dir }}/servercerts"
+    - "{{ runner_supervisor_token_file | dirname }}"
+
+- name: Generate the Incus client key, which never leaves this host
+  become: true
+  community.crypto.openssl_privatekey:
+    path: "{{ runner_supervisor_conf_dir }}/client.key"
+    type: ECC
+    curve: secp384r1
+    mode: "0600"
+
+- name: Generate the Incus client CSR
+  become: true
+  community.crypto.openssl_csr:
+    path: "{{ runner_supervisor_conf_dir }}/client.csr"
+    privatekey_path: "{{ runner_supervisor_conf_dir }}/client.key"
+    common_name: "{{ runner_supervisor_cert_name }}"
+    extended_key_usage: [clientAuth]
+    mode: "0644"
+
+- name: Self-sign the Incus client certificate
+  become: true
+  community.crypto.x509_certificate:
+    path: "{{ runner_supervisor_conf_dir }}/client.crt"
+    csr_path: "{{ runner_supervisor_conf_dir }}/client.csr"
+    privatekey_path: "{{ runner_supervisor_conf_dir }}/client.key"
+    provider: selfsigned
+    selfsigned_not_after: "+3650d"
+    mode: "0644"
+
+- name: Fetch the client certificate for the cluster to trust
+  become: true
+  ansible.builtin.fetch:
+    src: "{{ runner_supervisor_conf_dir }}/client.crt"
+    dest: "{{ runner_supervisor_cert_dest }}"
+    flat: true
+
+- name: Pin the Incus server certificate
+  become: true
+  ansible.builtin.copy:
+    content: "{{ runner_supervisor_server_cert | trim }}\n"
+    dest: "{{ runner_supervisor_conf_dir }}/servercerts/{{ runner_supervisor_remote_name }}.crt"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure the Incus remote
+  become: true
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ runner_supervisor_conf_dir }}/config.yml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the GitHub token
+  become: true
+  ansible.builtin.copy:
+    content: "{{ runner_supervisor_token }}\n"
+    dest: "{{ runner_supervisor_token_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart runner supervisors
+
+- name: Install the supervisor unit
+  become: true
+  ansible.builtin.template:
+    src: runner-supervisor@.service.j2
+    dest: /etc/systemd/system/runner-supervisor@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart runner supervisors
+
+- name: Enable and start a supervisor per VM
+  become: true
+  ansible.builtin.systemd_service:
+    name: runner-supervisor@{{ item }}
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: "{{ runner_supervisor_vms }}"

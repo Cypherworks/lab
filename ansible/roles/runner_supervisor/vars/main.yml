@@ -1,0 +1,5 @@
+---
+runner_supervisor_state_dir: /var/lib/runner-supervisor
+runner_supervisor_conf_dir: "{{ runner_supervisor_state_dir }}/incus"
+runner_supervisor_token_file: /etc/runner-supervisor/token
+runner_supervisor_goarch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] }}"

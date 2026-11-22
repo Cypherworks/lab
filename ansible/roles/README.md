@@ -47,6 +47,7 @@ The grouped index with one-line descriptions is in the [repository README](../..
 | `claude` | AI-assisted development workbench: CI toolchain, Claude Code, and the cw-claude GitHub App helper scripts. |
 | `github_runner` | Self-hosted, ephemeral GitHub Actions runner as a container on a Docker host. |
 | `github_jit_runner` | Native GitHub Actions runner that runs one job from a JIT config handed in at runtime, for hosts reset after every job. |
+| `runner_supervisor` | Per-VM service that resets an Incus VM to its golden snapshot after every job and registers it with a single-job JIT config. |
 | `infra_runner` | x86_64 Linux control host an operator runs the estate's Terraform and Ansible from. |
 | `s3_backup` | Scheduled backup to S3 via a systemd oneshot and timer. |
 | `rpi_poe_fan` | Quiet PoE HAT fan thresholds. |

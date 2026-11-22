@@ -1,0 +1,233 @@
+---
+# Boots systemd in a privileged Debian 13 container and converges the role
+# for two VMs. The role builds the supervisor with the control node's Go, so
+# this checks the binary runs on the target. It checks the incus CLI comes
+# from Zabbly's lts-7.0 line, the client key stays root-only on the target
+# while its certificate is fetched back to the control node, the remote
+# points at the given address with the given server certificate pinned, and
+# the token file is root-only. Both supervisor instances are enabled and
+# running, and each has read the token and is retrying GitHub, which here is
+# a closed local port. A second run changes nothing, and a missing token,
+# VM list, server certificate or org fails the run. Needs Docker, Go on the
+# control node, community.crypto, and internet for the image, apt and
+# Zabbly. From ansible/:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/runner_supervisor/tests/supervisor.yml
+- name: Verify a runner supervisor
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _image: debian:13
+    _target: runner-supervisor-test
+    _conf: /var/lib/runner-supervisor/incus
+    _metrics: /var/lib/prometheus/node-exporter
+    # Drop the image's policy-rc.d: a host has none.
+    _boot: >-
+      rm -f /usr/sbin/policy-rc.d
+      && apt-get update -qq
+      && apt-get install -y -qq systemd systemd-sysv python3
+      && exec /lib/systemd/systemd
+    _converge_base: >-
+      ansible-playbook -i {{ _target }}, -c community.docker.docker
+      {{ playbook_dir }}/supervisor_converge.yml
+    _converge: "{{ _converge_base }} -e @{{ _work.path }}/vars.yml"
+    # The inner run resolves a relative roles path against its own playbook.
+    _converge_env:
+      ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+    _in_target: docker exec {{ _target }}
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Make a scratch directory on the control node
+      ansible.builtin.tempfile:
+        state: directory
+      register: _work
+
+    - name: Make a stand-in Incus server certificate
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -x509
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -keyout
+          - "{{ _work.path }}/server.key"
+          - -out
+          - "{{ _work.path }}/server.crt"
+          - -days
+          - "1"
+          - -subj
+          - /CN=test-incus
+      changed_when: true
+
+    - name: Write the converge's certificate and fetch path
+      ansible.builtin.copy:
+        dest: "{{ _work.path }}/vars.yml"
+        mode: "0600"
+        content: "{{ {'runner_supervisor_server_cert': lookup('file', _work.path ~ '/server.crt'),
+                      'runner_supervisor_cert_dest': _work.path ~ '/client.crt'} | to_nice_yaml }}"
+
+    - name: Boot systemd on {{ _image }}
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --volume=/sys/fs/cgroup:/sys/fs/cgroup:rw
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          - "{{ _image }}"
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: "{{ _in_target }} systemctl is-system-running"
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Give the target node_exporter's textfile directory
+      ansible.builtin.command: "{{ _in_target }} mkdir -p {{ _metrics }}"
+      changed_when: true
+
+    - name: Converge the supervisor
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_first
+      changed_when: true
+
+    - name: Wait for both supervisors to give up on GitHub at least once
+      ansible.builtin.command: >-
+        {{ _in_target }} journalctl --no-pager -o cat
+        -u runner-supervisor@docker-runner-1 -u runner-supervisor@docker-runner-2
+      register: _journal
+      until: _journal.stdout is search('runner group lookup failed')
+      retries: 30
+      delay: 2
+      changed_when: false
+
+    - name: Read the CLI, binary, key, remote, token and units
+      ansible.builtin.shell: |
+        set -e
+        t="{{ _in_target }}"
+        echo "client: $($t incus --version)"
+        echo "incus: $($t sh -c 'command -v incus')"
+        echo "origin: $($t apt-cache policy incus-client | grep -c pkgs.zabbly.com)"
+        echo "usage: $($t /usr/local/bin/runner-supervisor 2>&1 || true)"
+        echo "key: $($t stat -c '%U %a' {{ _conf }}/client.key)"
+        echo "subject: $($t openssl x509 -noout -subject -in {{ _conf }}/client.crt)"
+        echo "remote: $($t env INCUS_CONF={{ _conf }} incus remote list --format csv | grep '^lab,')"
+        echo "token: $($t stat -c '%U %a' /etc/runner-supervisor/token) $($t cat /etc/runner-supervisor/token)"
+        for vm in docker-runner-1 docker-runner-2; do
+          echo "unit $vm: $($t systemctl is-enabled runner-supervisor@$vm) $($t systemctl is-active runner-supervisor@$vm)"
+        done
+        $t cat {{ _conf }}/client.crt > {{ _work.path }}/target-client.crt
+        $t cat {{ _conf }}/servercerts/lab.crt > {{ _work.path }}/target-server.crt
+      register: _installed
+      changed_when: false
+
+    - name: Assert the supervisor is installed and running for both VMs
+      ansible.builtin.assert:
+        that:
+          - "_installed.stdout is search('(?m)^client: 7\\.0\\.')"
+          - "_installed.stdout is search('(?m)^origin: [1-9]')"
+          - "_installed.stdout is search('(?m)^incus: /usr/bin/incus$')"
+          - "_installed.stdout is search('-vm is required')"
+          - "_installed.stdout is search('(?m)^key: root 600$')"
+          - "_installed.stdout is search('(?m)^subject: .*CN *= *runner-supervisor')"
+          - "_installed.stdout is search('(?m)^remote: lab,https://192\\.0\\.2\\.10:8443,')"
+          - "_installed.stdout is search('(?m)^token: root 600 test-dummy-token$')"
+          - "_installed.stdout is search('(?m)^unit docker-runner-1: enabled active$')"
+          - "_installed.stdout is search('(?m)^unit docker-runner-2: enabled active$')"
+          - lookup('file', _work.path ~ '/client.crt') == lookup('file', _work.path ~ '/target-client.crt')
+          - lookup('file', _work.path ~ '/server.crt') == lookup('file', _work.path ~ '/target-server.crt')
+          - _journal.stdout is search('vm=docker-runner-1')
+          - _journal.stdout is search('vm=docker-runner-2')
+          - _journal.stdout is not search('test-dummy-token')
+        fail_msg: "{{ _installed.stdout }} journal={{ _journal.stdout[-800:] }} converge={{ _run_first.stdout[-600:] }}"
+
+    - name: Converge again with nothing changed
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_again
+      changed_when: false
+
+    - name: Converge without a token
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"runner_supervisor_token": ""}'
+      environment: "{{ _converge_env }}"
+      register: _no_token
+      changed_when: false
+      failed_when: false
+
+    - name: Converge without VMs
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"runner_supervisor_vms": []}'
+      environment: "{{ _converge_env }}"
+      register: _no_vms
+      changed_when: false
+      failed_when: false
+
+    - name: Converge without the server certificate
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"runner_supervisor_server_cert": ""}'
+      environment: "{{ _converge_env }}"
+      register: _no_cert
+      changed_when: false
+      failed_when: false
+
+    - name: Converge without an org
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"runner_supervisor_org": ""}'
+      environment: "{{ _converge_env }}"
+      register: _no_org
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a second run changes nothing and missing input fails
+      ansible.builtin.assert:
+        that:
+          - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
+          - _run_first.stderr == '' and _run_again.stderr == ''
+          - _no_token.rc != 0
+          - _no_token.stdout is search('runner_supervisor_token is not set')
+          - _no_token.stdout is not search('test-dummy-token')
+          - _no_vms.rc != 0
+          - _no_vms.stdout is search('runner_supervisor_vms is empty')
+          - _no_cert.rc != 0
+          - _no_cert.stdout is search('runner_supervisor_server_cert is not set')
+          - _no_org.rc != 0
+          - _no_org.stdout is search('Not set: runner_supervisor_org\\.')
+        fail_msg: >-
+          again={{ _run_again.stdout[-600:] }}
+          stderr={{ _run_first.stderr }}{{ _run_again.stderr }}
+          no_token={{ _no_token.stdout[-400:] }}
+          no_vms={{ _no_vms.stdout[-400:] }}
+          no_cert={{ _no_cert.stdout[-400:] }}
+          no_org={{ _no_org.stdout[-400:] }}
+
+    - name: Remove the test host
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: true
+
+    - name: Remove the scratch directory
+      ansible.builtin.file:
+        path: "{{ _work.path }}"
+        state: absent
