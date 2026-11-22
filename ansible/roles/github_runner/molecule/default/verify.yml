@@ -30,7 +30,7 @@
         that:
           - (docker_socket_mount in _volumes) == (expect_socket | bool)
           - ('/var/run/docker.sock' in _mount_targets) == (expect_socket | bool)
-          - "'/opt/github-runner/work:/tmp/runner/work' in _volumes"
+          - "'/opt/github-runner/work:/opt/github-runner/work' in _volumes"
         fail_msg: >-
           {{ inventory_hostname }}: expected the Docker socket mount
           {{ 'present' if expect_socket | bool else 'absent' }};

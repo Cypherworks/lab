@@ -67,7 +67,8 @@ groups:
           description: "Over {{ monitoring_disk_used_percent }}% used."
 
       - alert: FilesystemReadOnly
-        expr: node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs"} == 1
+        # Incus mounts each VM's config read-only on purpose.
+        expr: node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs",mountpoint!~"/var/lib/incus/devices/[^/]+/config[.]mount"} == 1
         for: 1m
         labels:
           severity: critical

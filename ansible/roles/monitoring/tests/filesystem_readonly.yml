@@ -1,0 +1,127 @@
+---
+# Runs the role's rendered alert rules through promtool against made-up
+# node_exporter filesystem metrics. A host filesystem gone read-only must
+# fire; the config mount Incus makes read-only on purpose for every VM
+# (/var/lib/incus/devices/<vm>/config.mount, btrfs on a btrfs pool) and a
+# read-only tmpfs must not. Needs Docker, and internet to pull the images
+# once. From ansible/:
+#
+#   ansible-playbook -i localhost, \
+#     roles/monitoring/tests/filesystem_readonly.yml
+- name: Verify the filesystem read-only alert
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _dir: "{{ playbook_dir }}/.filesystem_readonly"
+    _image: prom/prometheus:v2.53.4
+    _spec: |
+      rule_files:
+        - alert-rules.yml
+      evaluation_interval: 30s
+      tests:
+        - name: a VM's config mount, read-only by design, stays quiet
+          interval: 1m
+          input_series:
+            - series: 'node_filesystem_readonly{instance="node-1",mountpoint="/var/lib/incus/devices/vm-1/config.mount",fstype="btrfs",device="/dev/sda3"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 5m
+              alertname: FilesystemReadOnly
+        - name: a read-only tmpfs stays quiet
+          interval: 1m
+          input_series:
+            - series: 'node_filesystem_readonly{instance="node-1",mountpoint="/run/credentials",fstype="tmpfs",device="tmpfs"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 5m
+              alertname: FilesystemReadOnly
+        - name: a host filesystem remounted read-only fires
+          interval: 1m
+          input_series:
+            - series: 'node_filesystem_readonly{instance="node-1",mountpoint="/",fstype="btrfs",device="/dev/sda3"}'
+              values: '0 0 1x10'
+          alert_rule_test:
+            - eval_time: 1m
+              alertname: FilesystemReadOnly
+            - eval_time: 4m
+              alertname: FilesystemReadOnly
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    instance: node-1
+                    mountpoint: /
+                    fstype: btrfs
+                    device: /dev/sda3
+                  exp_annotations:
+                    summary: "Filesystem read-only on node-1 (/)"
+                    description: "The filesystem was remounted read-only — usually a storage or corruption error. Check dmesg and btrfs device stats now."
+        - name: a config.mount outside Incus's devices directory still fires
+          interval: 1m
+          input_series:
+            - series: 'node_filesystem_readonly{instance="node-1",mountpoint="/srv/config.mount",fstype="ext4",device="/dev/sdb1"}'
+              values: '1x10'
+          alert_rule_test:
+            - eval_time: 4m
+              alertname: FilesystemReadOnly
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    instance: node-1
+                    mountpoint: /srv/config.mount
+                    fstype: ext4
+                    device: /dev/sdb1
+                  exp_annotations:
+                    summary: "Filesystem read-only on node-1 (/srv/config.mount)"
+                    description: "The filesystem was remounted read-only — usually a storage or corruption error. Check dmesg and btrfs device stats now."
+  tasks:
+    - name: Read the role's defaults
+      ansible.builtin.include_vars:
+        file: ../defaults/main.yml
+
+    - name: Create the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Render the role's rules
+      ansible.builtin.template:
+        src: ../templates/alert-rules.yml.j2
+        dest: "{{ _dir }}/alert-rules.yml"
+        mode: "0644"
+
+    - name: Write the test cases
+      ansible.builtin.copy:
+        content: "{{ _spec }}"
+        dest: "{{ _dir }}/rules_test.yml"
+        mode: "0644"
+
+    - name: Run promtool
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work -w /work --entrypoint promtool
+        {{ _image }} test rules rules_test.yml
+      register: _promtool
+      changed_when: false
+      failed_when: false
+
+    - name: Load the rules in vmalert, the engine that runs them
+      ansible.builtin.command: >-
+        docker run --rm -v {{ _dir }}:/work {{ monitoring_vmalert_image }}
+        -rule=/work/alert-rules.yml -dryRun
+      register: _vmalert
+      changed_when: false
+      failed_when: false
+
+    - name: Remove the working directory
+      ansible.builtin.file:
+        path: "{{ _dir }}"
+        state: absent
+
+    - name: Assert the alert behaves
+      ansible.builtin.assert:
+        that:
+          - _promtool.rc == 0
+          - _vmalert.rc == 0
+        fail_msg: "{{ _promtool.stdout }} {{ _promtool.stderr }} {{ _vmalert.stderr }}"

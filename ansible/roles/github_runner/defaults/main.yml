@@ -27,7 +27,6 @@ github_runner_org: ""
 # Runner group to join (RUNNER_GROUP). Empty renders nothing: the image joins
 # the Default group.
 github_runner_group: ""
-
 # Ephemeral: de-register after each job so no state leaks between runs.
 github_runner_ephemeral: true
 
@@ -36,6 +35,9 @@ github_runner_ephemeral: true
 
 # Mount the host Docker socket for Molecule jobs: root on the host (README).
 github_runner_mount_docker_socket: false
+
+# Before each job, clear what earlier jobs left on the daemon (README).
+github_runner_job_started_cleanup: false
 
 # Extra container security_opt entries. Empty by default (keep the default
 # seccomp profile). Only relax it where an old host kernel/seccomp needs it.

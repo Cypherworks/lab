@@ -1,16 +1,27 @@
 ---
-# Docker Engine + Compose v2 from Docker's official APT repo. A shared mechanism the
-# service roles (monitoring, speedtest, vaultwarden, authentik_app) depend on via
-# meta, so the install lives in one place instead of being copied into each.
+# Docker Engine + Compose v2 from Docker's official APT repo. A shared
+# mechanism the service roles depend on via meta (README lists them), so the
+# install lives in one place instead of being copied into each.
+- name: Install what adding Docker's APT repository needs
+  # deb822_repository imports python3-debian; the key fetch needs CAs.
+  become: true
+  ansible.builtin.apt:
+    name:
+      - python3-debian
+      - ca-certificates
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Add Docker's official APT repository
   become: true
   ansible.builtin.deb822_repository:
     name: docker
     types: [deb]
-    uris: "https://download.docker.com/linux/debian"
+    uris: "https://download.docker.com/linux/{{ docker_apt_distribution }}"
     suites: "{{ ansible_distribution_release }}"
     components: [stable]
-    signed_by: https://download.docker.com/linux/debian/gpg
+    signed_by: "https://download.docker.com/linux/{{ docker_apt_distribution }}/gpg"
 
 - name: Install Docker Engine + Compose v2 plugin
   become: true
@@ -18,3 +29,23 @@
     name: "{{ docker_packages }}"
     state: present
     update_cache: true
+
+- name: Install the scheduled prune units
+  become: true
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: /etc/systemd/system/{{ item }}
+    mode: "0644"
+  loop:
+    - docker-prune.service
+    - docker-prune.timer
+  when: docker_prune_on_calendar | length > 0
+
+- name: Enable and start the prune timer
+  become: true
+  ansible.builtin.systemd_service:
+    name: docker-prune.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: docker_prune_on_calendar | length > 0

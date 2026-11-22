@@ -1,0 +1,19 @@
+---
+# The converge that docker_runner.yml runs against its test host. Not run by
+# hand: it needs the systemd container that playbook boots.
+- name: Converge a runner that drives the host's Docker
+  hosts: all
+  vars:
+    ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
+    # The pause image stays up without registering, so nothing reaches GitHub.
+    github_runner_image: registry.k8s.io/pause:3.10.2
+    github_runner_pull: missing
+    github_runner_access_token: test-dummy-token
+    github_runner_repo_url: https://github.com/example/example
+    github_runner_mount_docker_socket: true
+    github_runner_job_started_cleanup: true
+  tasks:
+    - name: Apply the github_runner role
+      ansible.builtin.include_role:
+        name: github_runner

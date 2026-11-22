@@ -6,3 +6,8 @@ docker_packages:
   - docker-ce-cli
   - containerd.io
   - docker-compose-plugin
+
+# OnCalendar for a scheduled `docker system prune --all` (README). Empty: off.
+docker_prune_on_calendar: ""
+# Prune only what was created longer ago than this (a Go duration).
+docker_prune_until: 168h

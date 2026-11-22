@@ -1,0 +1,11 @@
+# Managed by Ansible (docker role). Removes what the daemon no longer uses:
+# stopped containers, unused networks and images, and build cache older than
+# {{ docker_prune_until }}. Volumes are never touched. docker-prune.timer runs it.
+[Unit]
+Description=Prune unused Docker data
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker system prune --all --force --filter until={{ docker_prune_until }}

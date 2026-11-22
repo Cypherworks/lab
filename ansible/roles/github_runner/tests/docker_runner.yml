@@ -1,0 +1,243 @@
+---
+# Boots systemd in a privileged container with its own dockerd (Ubuntu 24.04
+# by default, Debian 13 with -e _image=debian:13) and converges the role, with
+# its docker dependency, as a runner that mounts the host's Docker socket.
+# Checks Docker installs from Docker's repo for the container's own distro,
+# and that the work dir sits at the same path inside and outside the runner:
+# a job's `docker run -v "$PWD:..."` is resolved by the host's daemon, so any
+# other path hands the job's containers an empty directory. Then leaves what a
+# cancelled job would (a running and a stopped container, a network, a volume,
+# an image) and runs the job-start hook: it must clear all of that but keep
+# the runner and its image. The docker role's prune timer is scheduled, and
+# its service removes a stopped container but not the running runner. A
+# second run changes nothing, the role's defaults leave pruning off, and the
+# hook without the socket fails the run. The runner image is the pause image
+# with a dummy token, so nothing registers with GitHub.
+# Needs Docker, community.docker, and internet for the images and Docker's
+# apt repo. From ansible/, once per OS:
+#
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/github_runner/tests/docker_runner.yml
+#   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
+#     roles/github_runner/tests/docker_runner.yml -e _image=debian:13
+- name: Verify a runner that drives the host's Docker
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _image: ubuntu:24.04
+    _target: github-runner-docker-test
+    _work: /opt/github-runner/work
+    _hook: /opt/github-runner/hooks/job-started.sh
+    _pause: registry.k8s.io/pause:3.10.2
+    # Drop the image's policy-rc.d: a host has none, and apt starts dockerd.
+    _boot: >-
+      rm -f /usr/sbin/policy-rc.d
+      && apt-get update -qq
+      && apt-get install -y -qq systemd systemd-sysv python3
+      && exec /lib/systemd/systemd
+    _converge_defaults: >-
+      ansible-playbook -i {{ _target }}, -c community.docker.docker
+      {{ playbook_dir }}/docker_runner_converge.yml
+    # until=0s prunes everything unused, however new, so the test sees it.
+    _prune_vars: {docker_prune_on_calendar: "Sun *-*-* 04:00:00", docker_prune_until: 0s}
+    _converge: "{{ _converge_defaults }} -e '{{ _prune_vars | to_json }}'"
+    # The inner run resolves a relative roles path against its own playbook.
+    _converge_env:
+      ANSIBLE_ROLES_PATH: "{{ playbook_dir | dirname | dirname }}"
+    _in_target: docker exec {{ _target }}
+  tasks:
+    - name: Clear what a failed run left behind for debugging
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: false
+      failed_when: false
+
+    - name: Boot systemd on {{ _image }}
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - -d
+          - --name={{ _target }}
+          - --hostname={{ _target }}
+          - --privileged
+          - --cgroupns=host
+          - --volume=/sys/fs/cgroup:/sys/fs/cgroup:rw
+          - --tmpfs=/run
+          - --tmpfs=/run/lock
+          # Inner overlays can't sit on the outer one (Docker 29: containerd).
+          - --tmpfs=/var/lib/docker
+          - --tmpfs=/var/lib/containerd
+          - "{{ _image }}"
+          - sh
+          - -c
+          - "{{ _boot }}"
+      changed_when: true
+
+    - name: Wait for systemd to finish booting
+      ansible.builtin.command: "{{ _in_target }} systemctl is-system-running"
+      register: _booted
+      until: _booted.stdout in ['running', 'degraded']
+      retries: 80
+      delay: 3
+      changed_when: false
+      failed_when: false
+
+    - name: Converge the runner
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_first
+      changed_when: true
+
+    - name: Read the distro's Docker apt source
+      ansible.builtin.command: "{{ _in_target }} cat /etc/apt/sources.list.d/docker.sources"
+      register: _source
+      changed_when: false
+
+    - name: Read the target's distro
+      ansible.builtin.command: "{{ _in_target }} sh -c '. /etc/os-release && echo $ID'"
+      register: _distro
+      changed_when: false
+
+    - name: Read the runner container's mounts and environment
+      ansible.builtin.command: >-
+        {{ _in_target }} docker inspect
+        --format '{{ '{{' }} json .Mounts {{ '}}' }}|{{ '{{' }} json .Config.Env {{ '}}' }}'
+        {{ _target }}-ci
+      register: _inspect
+      changed_when: false
+
+    - name: Assert Docker comes from the distro's repo and the work dir lines up
+      vars:
+        _mounts: "{{ _inspect.stdout.split('|')[0] | from_json }}"
+        _env: "{{ _inspect.stdout.split('|')[1] | from_json }}"
+        _work_mounts: "{{ _mounts | selectattr('Destination', 'equalto', _work) | list }}"
+      ansible.builtin.assert:
+        that:
+          - _source.stdout is search('download.docker.com/linux/' ~ _distro.stdout ~ '$', multiline=True)
+          - _work_mounts | length == 1
+          - _work_mounts[0].Source == _work
+          - ('RUNNER_WORKDIR=' ~ _work) in _env
+        fail_msg: >-
+          distro={{ _distro.stdout }} source={{ _source.stdout }}
+          mounts={{ _mounts | map(attribute='Source') | zip(_mounts | map(attribute='Destination')) | list }}
+          env={{ _env | select('match', 'RUNNER_') | list }}
+          converge={{ _run_first.stdout[-600:] }}
+
+    - name: Leave what a failed or cancelled job would on the daemon
+      ansible.builtin.shell: |
+        set -e
+        {{ _in_target }} docker create --name leftover-stopped {{ _pause }}
+        {{ _in_target }} docker run -d --name leftover-running {{ _pause }}
+        {{ _in_target }} docker network create leftover-net
+        {{ _in_target }} docker volume create leftover-vol
+        {{ _in_target }} docker commit --change 'LABEL leftover=1' leftover-stopped leftover-image:job
+      changed_when: true
+
+    - name: Run the job-start hook the runner would run
+      ansible.builtin.command: "{{ _in_target }} {{ _hook }}"
+      register: _hook_run
+      changed_when: true
+
+    - name: Read what is left on the daemon
+      ansible.builtin.shell: |
+        set -e
+        echo "containers: $({{ _in_target }} docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' | sort | xargs)"
+        echo "running: $({{ _in_target }} docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | xargs)"
+        echo "networks: $({{ _in_target }} docker network ls --format '{{ '{{' }}.Name{{ '}}' }}' | sort | xargs)"
+        echo "volumes: $({{ _in_target }} docker volume ls -q | xargs)"
+        echo "images: $({{ _in_target }} docker image ls --format '{{ '{{' }}.Repository{{ '}}' }}:{{ '{{' }}.Tag{{ '}}' }}' | xargs)"
+      register: _left
+      changed_when: false
+
+    - name: Assert the hook is wired in and clears only what jobs left
+      vars:
+        _mounts: "{{ _inspect.stdout.split('|')[0] | from_json }}"
+        _env: "{{ _inspect.stdout.split('|')[1] | from_json }}"
+        _hook_mounts: "{{ _mounts | selectattr('Destination', 'equalto', _hook | dirname) | list }}"
+      ansible.builtin.assert:
+        that:
+          - ('ACTIONS_RUNNER_HOOK_JOB_STARTED=' ~ _hook) in _env
+          - _hook_mounts | length == 1
+          - _hook_mounts[0].Source == _hook | dirname
+          - not _hook_mounts[0].RW
+          - _hook_run.stdout is search('leftover-running')
+          - "_left.stdout is search('(?m)^containers: ' ~ _target ~ '-ci$')"
+          - "_left.stdout is search('(?m)^running: ' ~ _target ~ '-ci$')"
+          - _left.stdout is not search('leftover-net')
+          - "_left.stdout is search('(?m)^volumes: $')"
+          - _left.stdout is not search('leftover-image')
+          - _left.stdout is search(_pause)
+        fail_msg: >-
+          env={{ _env | select('match', 'ACTIONS_') | list }}
+          hook_mounts={{ _hook_mounts }} hook={{ _hook_run.stdout }}
+          left={{ _left.stdout }}
+
+    - name: Leave a stopped container, then run the prune as its timer would
+      ansible.builtin.shell: |
+        set -e
+        {{ _in_target }} docker create --name prune-me {{ _pause }}
+        {{ _in_target }} systemctl start docker-prune.service
+      changed_when: true
+
+    - name: Read the prune timer, its last run and what is left
+      ansible.builtin.shell: |
+        set -e
+        echo "enabled: $({{ _in_target }} systemctl is-enabled docker-prune.timer)"
+        echo "active: $({{ _in_target }} systemctl is-active docker-prune.timer)"
+        {{ _in_target }} systemctl show docker-prune.timer -p TimersCalendar
+        {{ _in_target }} systemctl show docker-prune.service -p Result
+        echo "containers: $({{ _in_target }} docker ps -a --format '{{ '{{' }}.Names{{ '}}' }}' | sort | xargs)"
+        echo "running: $({{ _in_target }} docker ps --format '{{ '{{' }}.Names{{ '}}' }}' | xargs)"
+      register: _prune
+      changed_when: false
+
+    - name: Assert the prune is scheduled and removes only what nothing uses
+      ansible.builtin.assert:
+        that:
+          - "_prune.stdout is search('(?m)^enabled: enabled$')"
+          - "_prune.stdout is search('(?m)^active: active$')"
+          - _prune.stdout is search('OnCalendar=Sun \*-\*-\* 04:00:00')
+          - _prune.stdout is search('(?m)^Result=success$')
+          - "_prune.stdout is search('(?m)^containers: ' ~ _target ~ '-ci$')"
+          - "_prune.stdout is search('(?m)^running: ' ~ _target ~ '-ci$')"
+        fail_msg: "{{ _prune.stdout }}"
+
+    - name: Converge again with nothing changed
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_again
+      changed_when: false
+
+    - name: Converge the cleanup hook without the Docker socket
+      ansible.builtin.command: >-
+        {{ _converge }} -e '{"github_runner_mount_docker_socket": false}'
+      environment: "{{ _converge_env }}"
+      register: _run_no_socket
+      changed_when: false
+      failed_when: false
+
+    - name: Converge with pruning left at the role's defaults
+      ansible.builtin.command: "{{ _converge_defaults }}"
+      environment: "{{ _converge_env }}"
+      register: _run_defaults
+      changed_when: false
+      failed_when: false
+
+    - name: Assert a second run changes nothing and a hook without the socket fails
+      ansible.builtin.assert:
+        that:
+          - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
+          - _run_defaults.rc == 0
+          - _run_defaults.stdout is search('Install the scheduled prune units\] \**\nskipping')
+          - _run_no_socket.rc != 0
+          - _run_no_socket.stdout is search('github_runner_job_started_cleanup needs github_runner_mount_docker_socket')
+        fail_msg: >-
+          again={{ _run_again.stdout[-400:] }}
+          defaults={{ _run_defaults.stdout[-600:] }}
+          no_socket={{ _run_no_socket.stdout[-600:] }}
+
+    - name: Remove the test host
+      ansible.builtin.command: docker rm -f {{ _target }}
+      changed_when: true
