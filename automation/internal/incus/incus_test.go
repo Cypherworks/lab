@@ -60,7 +60,7 @@ func TestResetStepsAreScopedToTheRemoteAndProject(t *testing.T) {
 	want := [][]string{
 		{"query", "lab:/1.0/instances/docker-runner-1/state?project=docker-runners"},
 		{"stop", "lab:docker-runner-1", "--force", "--project", "docker-runners"},
-		{"snapshot", "restore", "lab:docker-runner-1", "golden-20261122T150000Z", "--project", "docker-runners"},
+		{"snapshot", "restore", "lab:docker-runner-1", "golden-20261122T150000Z", "--diskonly", "--project", "docker-runners"},
 		{"start", "lab:docker-runner-1", "--project", "docker-runners"},
 	}
 	if len(r.calls) != len(want) {

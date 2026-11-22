@@ -56,9 +56,10 @@ func (c *Client) Start(ctx context.Context, vm string) error {
 	return c.run(ctx, "start", c.target(vm))
 }
 
-// Restore rolls vm back to snapshot, disk and config.
+// Restore rolls vm's disk back to snapshot. The instance config stays as
+// Terraform last set it, so a restore never reverts a later apply.
 func (c *Client) Restore(ctx context.Context, vm, snapshot string) error {
-	return c.run(ctx, "snapshot", "restore", c.target(vm), snapshot)
+	return c.run(ctx, "snapshot", "restore", c.target(vm), snapshot, "--diskonly")
 }
 
 // NewestGolden names vm's latest golden-<UTC timestamp> snapshot.
