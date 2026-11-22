@@ -13,7 +13,8 @@ if [[ -e $config ]]; then
   echo "start-jit-runner: a JIT config was already handed in this boot" >&2
   exit 1
 fi
-install -d -m 0700 -o "$user" -g "$user" "$(dirname "$config")"
+# Root owns the directory, so a job can't replace or remove the config.
+install -d -m 0755 "$(dirname "$config")"
 umask 077
 cat >"$config"
 if [[ ! -s $config ]]; then

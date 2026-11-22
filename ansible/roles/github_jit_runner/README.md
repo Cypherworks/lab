@@ -49,7 +49,8 @@ so the `docker` group exists for `github_jit_runner_groups`.
 6. Installs `/usr/local/sbin/start-jit-runner` (root, `0700`).
 
 `start-jit-runner` reads a JIT config from stdin, writes it to
-`/run/actions-runner/jitconfig` (tmpfs, owned by the job user, `0400`) and
+`/run/actions-runner/jitconfig` (tmpfs, owned by the job user, `0400`, in a
+root-owned directory so a job can't replace or remove it) and
 starts the unit, which runs `run.sh --jitconfig <config>` as the job user.
 It refuses empty stdin, leaving nothing behind, and refuses a second config
 in the same boot.
@@ -81,6 +82,12 @@ job runs as the job user, which can read the config file and see it in
 `run.sh`'s argv, so it's no more protected than the job's own token. That's
 why the host must be reset before it registers again, and why the script
 refuses a second hand-off.
+
+The unpacked runner belongs to the job user, as the runner writes its
+`_diag` and `_work` directories (and possibly more) inside its own tree. A
+job can therefore rewrite `run.sh` and the runner binaries. That's harmless
+only because the host is reset before the next job; on a host that isn't,
+a job would plant code in the next one.
 
 Passwordless sudo matches GitHub-hosted runners, so workflows that `apt-get`
 work unchanged. Where the job user is in the `docker` group it's

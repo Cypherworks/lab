@@ -9,10 +9,11 @@
 # one would dial GitHub) and the JIT hand-off is driven as the supervisor
 # drives it: empty stdin is refused and leaves nothing behind, a config on
 # stdin starts the unit, which runs run.sh --jitconfig as the runner user
-# with the config file readable by that user alone, and a second hand-off in
-# the same boot is refused. A run with sudo off removes the sudoers file,
-# and a malformed checksum fails the run. Needs Docker and internet for the
-# image, apt and the runner tarball. From ansible/:
+# with the config file readable by that user alone in a directory it can't
+# change, and a second hand-off in the same boot is refused. A run with sudo
+# off removes the sudoers file, and a malformed checksum fails the run. Needs
+# Docker and internet for the image, apt and the runner tarball. From
+# ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
 #     roles/github_jit_runner/tests/jit_runner.yml
@@ -201,7 +202,7 @@
           - _empty.stderr is search('no JIT config on stdin')
           - _empty_left.rc != 0
           - _started.stdout == 'runner ' ~ _version_dir ~ ' --jitconfig test-jit-config'
-          - _config_stat.stdout_lines == ['runner 400', 'runner 700']
+          - _config_stat.stdout_lines == ['runner 400', 'root 755']
           - _second.rc != 0
           - _second.stderr is search('a JIT config was already handed in this boot')
         fail_msg: >-
