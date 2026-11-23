@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -316,13 +319,14 @@ func TestLookupErrorsKeepPolling(t *testing.T) {
 func TestAFailedResetIsRetriedWithBackoff(t *testing.T) {
 	v, gh, inc, clk := newVM(t)
 	inc.fails["restore"] = 2
+	at := opTimes(inc, clk, "restore")
 	gh.polls = []poll{{err: runners.ErrNotFound}}
 	if err := v.Cycle(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	want := []time.Duration{30 * time.Second, 2 * time.Minute}
-	if len(clk.sleeps) < 2 || !reflect.DeepEqual(clk.sleeps[:2], want) {
-		t.Fatalf("sleeps = %v, want them to start %v", clk.sleeps, want)
+	if got := gaps(*at); !reflect.DeepEqual(got, want) {
+		t.Fatalf("restores %v apart, want %v", got, want)
 	}
 	if len(gh.minted) != 1 {
 		t.Fatalf("minted %d, want 1 after the reset recovered", len(gh.minted))
@@ -332,13 +336,17 @@ func TestAFailedResetIsRetriedWithBackoff(t *testing.T) {
 func TestAResetThatKeepsFailingLeavesTheVMStoppedAndFailed(t *testing.T) {
 	v, gh, inc, clk := newVM(t)
 	inc.fails["start"] = 4
+	at := opTimes(inc, clk, "start")
 	err := v.Cycle(context.Background())
 	if !errors.Is(err, ErrFailed) {
 		t.Fatalf("err = %v, want ErrFailed", err)
 	}
 	want := []time.Duration{30 * time.Second, 2 * time.Minute, 10 * time.Minute}
-	if !reflect.DeepEqual(clk.sleeps, want) {
-		t.Fatalf("backoff = %v, want %v", clk.sleeps, want)
+	if got := gaps(*at); !reflect.DeepEqual(got, want) {
+		t.Fatalf("starts %v apart, want %v", got, want)
+	}
+	if got, total := clk.now.Sub(start), 12*time.Minute+30*time.Second; got != total {
+		t.Fatalf("slept %v in all, want only the backoff, %v", got, total)
 	}
 	if len(gh.minted) != 0 {
 		t.Fatal("minted a runner for a VM whose reset failed")
@@ -388,7 +396,7 @@ func TestDockerReadyAfterAFewTriesProceeds(t *testing.T) {
 }
 
 func TestMintFailuresRetryWithAFreshNameAndCappedBackoff(t *testing.T) {
-	v, gh, _, clk := newVM(t)
+	v, gh, _, _ := newVM(t)
 	gh.mintFails = 6
 	gh.polls = []poll{{err: runners.ErrNotFound}}
 	if err := v.Cycle(context.Background()); err != nil {
@@ -404,10 +412,18 @@ func TestMintFailuresRetryWithAFreshNameAndCappedBackoff(t *testing.T) {
 		}
 		seen[n] = true
 	}
+	var at []time.Time
+	for _, n := range gh.minted {
+		ts, err := time.Parse(nameTime, strings.TrimPrefix(n, v.Name+"-"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		at = append(at, ts)
+	}
 	want := []time.Duration{15 * time.Second, 30 * time.Second, time.Minute,
 		2 * time.Minute, 4 * time.Minute, 5 * time.Minute}
-	if len(clk.sleeps) < 6 || !reflect.DeepEqual(clk.sleeps[:6], want) {
-		t.Fatalf("sleeps = %v, want them to start %v", clk.sleeps, want)
+	if got := gaps(at); !reflect.DeepEqual(got, want) {
+		t.Fatalf("mints %v apart, want %v", got, want)
 	}
 	if v.MintFailures() != 6 {
 		t.Fatalf("mint failures = %d", v.MintFailures())
@@ -567,6 +583,92 @@ func TestMetricsFileDescribesTheVM(t *testing.T) {
 	}
 }
 
+// The heartbeat means the process is alive, so no wait may outlast a poll.
+func TestTheHeartbeatStaysFreshThroughEveryWait(t *testing.T) {
+	cases := map[string]func(*fakeGitHub, *fakeIncus){
+		"reset backoff":    func(_ *fakeGitHub, inc *fakeIncus) { inc.fails["start"] = 4 },
+		"mint backoff":     func(gh *fakeGitHub, _ *fakeIncus) { gh.mintFails = 6 },
+		"docker not ready": func(_ *fakeGitHub, inc *fakeIncus) { inc.notReady = 120 },
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			v, gh, inc, clk := newVM(t)
+			v.MetricsDir = t.TempDir()
+			gh.polls = []poll{{err: runners.ErrNotFound}}
+			setup(gh, inc)
+			var stalest time.Duration
+			clk.onTick = func() {
+				if age := clk.now.Sub(heartbeat(t, v)); age > stalest {
+					stalest = age
+				}
+			}
+			_ = v.Cycle(context.Background())
+			if stalest > v.Timing.Poll {
+				t.Fatalf("the heartbeat went %v stale, want at most a poll (%v)", stalest, v.Timing.Poll)
+			}
+		})
+	}
+}
+
+func heartbeat(t *testing.T, v *VM) time.Time {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(v.MetricsDir, "docker_runner_"+v.Name+".prom"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`docker_runner_heartbeat_timestamp_seconds\{[^}]*\} (\d+)`).FindSubmatch(b)
+	if m == nil {
+		t.Fatalf("no heartbeat in:\n%s", b)
+	}
+	s, _ := strconv.ParseInt(string(m[1]), 10, 64)
+	return time.Unix(s, 0)
+}
+
+// A drain is maintenance, so the metrics must tell it from a dead process.
+func TestADrainedVMSaysSoInItsMetrics(t *testing.T) {
+	cases := map[string]func(*VM, *fakeGitHub, *fakeIncus, *fakeClock, context.CancelFunc){
+		"while idle": func(v *VM, gh *fakeGitHub, _ *fakeIncus, clk *fakeClock, cancel context.CancelFunc) {
+			gh.polls = []poll{online(false)}
+			clk.onTick = func() {
+				if countSleeps(clk, v.Timing.Poll) == 2 {
+					cancel()
+				}
+			}
+		},
+		"during a reset's backoff": func(_ *VM, _ *fakeGitHub, inc *fakeIncus, clk *fakeClock, cancel context.CancelFunc) {
+			inc.fails["start"] = 1
+			clk.onTick = cancel
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			v, gh, inc, clk := newVM(t)
+			v.MetricsDir = t.TempDir()
+			ctx, cancel := context.WithCancel(context.Background())
+			setup(v, gh, inc, clk, cancel)
+			if err := v.Cycle(ctx); !errors.Is(err, ErrDrained) {
+				t.Fatalf("err = %v, want ErrDrained", err)
+			}
+			if v.State() != Drained {
+				t.Fatalf("state = %v, want drained", v.State())
+			}
+			b, err := os.ReadFile(filepath.Join(v.MetricsDir, "docker_runner_docker-runner-1.prom"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range []string{
+				`docker_runner_state{vm="docker-runner-1",state="drained"} 1`,
+				`docker_runner_state{vm="docker-runner-1",state="resetting"} 0`,
+				fmt.Sprintf(`docker_runner_state_since_seconds{vm="docker-runner-1"} %d`, clk.now.Unix()),
+			} {
+				if !strings.Contains(string(b), line+"\n") {
+					t.Fatalf("metrics lack %q:\n%s", line, b)
+				}
+			}
+		})
+	}
+}
+
 func countSleeps(c *fakeClock, d time.Duration) int {
 	n := 0
 	for _, s := range c.sleeps {
@@ -575,6 +677,26 @@ func countSleeps(c *fakeClock, d time.Duration) int {
 		}
 	}
 	return n
+}
+
+// opTimes records the fake clock's time at each Incus call of kind op.
+func opTimes(f *fakeIncus, c *fakeClock, op string) *[]time.Time {
+	var at []time.Time
+	f.before = func(o string) {
+		if o == op {
+			at = append(at, c.Now())
+		}
+	}
+	return &at
+}
+
+// gaps is the time between each pair of consecutive instants.
+func gaps(at []time.Time) []time.Duration {
+	var d []time.Duration
+	for i := 1; i < len(at); i++ {
+		d = append(d, at[i].Sub(at[i-1]))
+	}
+	return d
 }
 
 func countOps(f *fakeIncus, op string) int {
@@ -770,8 +892,8 @@ func TestMetricsWriteFailuresAreLogged(t *testing.T) {
 }
 
 func TestStatesHaveTheirMetricNames(t *testing.T) {
-	got := []string{Resetting.String(), Registering.String(), Idle.String(), Busy.String(), Failed.String()}
-	want := []string{"resetting", "registering", "idle", "busy", "failed"}
+	got := []string{Resetting.String(), Registering.String(), Idle.String(), Busy.String(), Failed.String(), Drained.String()}
+	want := []string{"resetting", "registering", "idle", "busy", "failed", "drained"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("names = %q", got)
 	}

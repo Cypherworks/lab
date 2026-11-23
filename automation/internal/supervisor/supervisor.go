@@ -79,9 +79,10 @@ const (
 	Idle
 	Busy
 	Failed
+	Drained
 )
 
-var stateNames = [...]string{"resetting", "registering", "idle", "busy", "failed"}
+var stateNames = [...]string{"resetting", "registering", "idle", "busy", "failed", "drained"}
 
 func (s State) String() string { return stateNames[s] }
 
@@ -142,7 +143,12 @@ type VM struct {
 }
 
 // Cycle runs one reset, registration and job, and leaves the VM stopped.
-func (v *VM) Cycle(ctx context.Context) error {
+func (v *VM) Cycle(ctx context.Context) (err error) {
+	defer func() {
+		if errors.Is(err, ErrDrained) {
+			v.setState(Drained)
+		}
+	}()
 	v.retryDeletes(ctx)
 	started, err := v.reset(ctx)
 	if err != nil {
@@ -213,7 +219,7 @@ func (v *VM) reset(ctx context.Context) (time.Time, error) {
 			v.setState(Failed)
 			return time.Time{}, fmt.Errorf("%s: %w: %v", v.Name, ErrFailed, err)
 		}
-		if v.Clock.Sleep(ctx, v.Timing.ResetBackoff[attempt]) != nil {
+		if v.pause(ctx, v.Timing.ResetBackoff[attempt]) != nil {
 			v.stop(ctx)
 			return time.Time{}, ErrDrained
 		}
@@ -250,7 +256,7 @@ func (v *VM) waitReady(ctx context.Context) error {
 		if !v.Clock.Now().Before(deadline) {
 			return fmt.Errorf("docker not ready within %v: %w", v.Timing.Ready, err)
 		}
-		if err := v.Clock.Sleep(ctx, v.Timing.ReadyPoll); err != nil {
+		if err := v.pause(ctx, v.Timing.ReadyPoll); err != nil {
 			return err
 		}
 	}
@@ -271,7 +277,7 @@ func (v *VM) mint(ctx context.Context) (runners.Runner, string, error) {
 		v.mintFailures++
 		v.publish()
 		v.log().Warn("mint failed", "name", name, "err", err)
-		if err := v.Clock.Sleep(ctx, backoff); err != nil {
+		if err := v.pause(ctx, backoff); err != nil {
 			return runners.Runner{}, "", err
 		}
 		backoff = min(2*backoff, v.Timing.MintBackoffMax)
@@ -374,6 +380,20 @@ func (v *VM) retryDeletes(ctx context.Context) {
 		}
 	}
 	v.undeleted = left
+}
+
+// pause waits d in poll-sized steps, refreshing the heartbeat after each.
+func (v *VM) pause(ctx context.Context, d time.Duration) error {
+	for {
+		step := min(d, v.Timing.Poll)
+		if err := v.Clock.Sleep(ctx, step); err != nil {
+			return err
+		}
+		v.publish()
+		if d -= step; d <= 0 {
+			return nil
+		}
+	}
 }
 
 // stop stops the VM, ignoring ctx's cancellation; failures are logged.
