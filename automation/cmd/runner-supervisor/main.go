@@ -2,7 +2,8 @@
 // boot: it restores the VM to its golden snapshot, registers it with a
 // single-job JIT config, and resets it when the job ends. Run one per VM.
 // SIGTERM drains: an idle VM is deregistered and stopped, a busy one is
-// stopped once its job ends. See lab-deploy docs/docker-runner-reset.md.
+// stopped once its job ends. Once a week, between jobs, it patches the
+// golden snapshot. See lab-deploy docs/docker-runner-reset.md.
 package main
 
 import (

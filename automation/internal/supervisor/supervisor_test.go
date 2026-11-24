@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,11 +22,28 @@ import (
 
 var start = time.Date(2026, 11, 22, 15, 0, 0, 0, time.UTC)
 
-// fakeClock advances instantly on Sleep and records each wait.
+// fakeClock advances instantly on Sleep and records each wait. After fires
+// only when ticking is set, as a test sets it while a call in the VM hangs:
+// otherwise the fake time would race the call's goroutine.
 type fakeClock struct {
-	now    time.Time
-	sleeps []time.Duration
-	onTick func()
+	now     time.Time
+	sleeps  []time.Duration
+	onTick  func()
+	ticking bool
+}
+
+func (c *fakeClock) After(d time.Duration) <-chan time.Time {
+	if !c.ticking {
+		return nil
+	}
+	c.sleeps = append(c.sleeps, d)
+	c.now = c.now.Add(d)
+	if c.onTick != nil {
+		c.onTick()
+	}
+	ch := make(chan time.Time, 1)
+	ch <- c.now
+	return ch
 }
 
 func (c *fakeClock) Now() time.Time { return c.now }
@@ -105,7 +123,9 @@ type fakeIncus struct {
 	fails    map[string]int
 	running  bool
 	golden   string
+	older    []string
 	stdin    []string
+	release  chan struct{}
 	notReady int
 	before   func(op string)
 	hang     map[string]bool
@@ -152,6 +172,41 @@ func (f *fakeIncus) NewestGolden(_ context.Context, vm string) (string, error) {
 	return f.golden, nil
 }
 
+func (f *fakeIncus) Goldens(context.Context, string) ([]string, error) {
+	if err := f.fail("goldens"); err != nil {
+		return nil, err
+	}
+	return append(slices.Clone(f.older), f.golden), nil
+}
+
+func (f *fakeIncus) Shutdown(_ context.Context, vm string, _ time.Duration) error {
+	f.ops = append(f.ops, "shutdown "+vm)
+	if err := f.fail("shutdown"); err != nil {
+		return err
+	}
+	f.running = false
+	return nil
+}
+
+func (f *fakeIncus) Snapshot(_ context.Context, vm, name string) error {
+	f.ops = append(f.ops, "snapshot "+vm+" "+name)
+	if err := f.fail("snapshot"); err != nil {
+		return err
+	}
+	f.older = append(f.older, f.golden)
+	f.golden = name
+	return nil
+}
+
+func (f *fakeIncus) DeleteSnapshot(_ context.Context, vm, name string) error {
+	f.ops = append(f.ops, "delete-snapshot "+vm+" "+name)
+	if err := f.fail("delete-snapshot"); err != nil {
+		return err
+	}
+	f.older = slices.DeleteFunc(f.older, func(g string) bool { return g == name })
+	return nil
+}
+
 func (f *fakeIncus) Running(context.Context, string) (bool, error) {
 	if err := f.fail("running"); err != nil {
 		return false, err
@@ -169,6 +224,9 @@ func (f *fakeIncus) Exec(ctx context.Context, vm string, stdin io.Reader, comman
 	if f.hang[command[0]] {
 		<-ctx.Done()
 		return ctx.Err()
+	}
+	if command[0] == "sh" && f.release != nil {
+		<-f.release
 	}
 	if command[0] == "docker" && f.notReady > 0 {
 		f.notReady--
@@ -892,10 +950,20 @@ func TestMetricsWriteFailuresAreLogged(t *testing.T) {
 }
 
 func TestStatesHaveTheirMetricNames(t *testing.T) {
-	got := []string{Resetting.String(), Registering.String(), Idle.String(), Busy.String(), Failed.String(), Drained.String()}
-	want := []string{"resetting", "registering", "idle", "busy", "failed", "drained"}
+	got := []string{Resetting.String(), Registering.String(), Idle.String(), Busy.String(), Failed.String(),
+		Drained.String(), Refreshing.String()}
+	want := []string{"resetting", "registering", "idle", "busy", "failed", "drained", "refreshing"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("names = %q", got)
+	}
+}
+
+func TestRealClockAfterFiresOnceTheTimeHasPassed(t *testing.T) {
+	c := RealClock{}
+	before := c.Now()
+	<-c.After(20 * time.Millisecond)
+	if took := c.Now().Sub(before); took < 20*time.Millisecond {
+		t.Fatalf("fired after %v, want 20ms", took)
 	}
 }
 
@@ -968,5 +1036,266 @@ func TestAHungDockerCheckTimesOutAndCountsAsNotReady(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a hung docker check blocked the loop")
+	}
+}
+
+// weekOld is a VM whose golden turns a week old during its first cycle,
+// which has run, so its next cycle refreshes the golden.
+func weekOld(t *testing.T) (*VM, *fakeGitHub, *fakeIncus, *fakeClock) {
+	t.Helper()
+	v, gh, inc, clk := newVM(t)
+	inc.golden = "golden-20261115T150000Z"
+	gh.polls = []poll{{err: runners.ErrNotFound}}
+	if err := v.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	inc.ops = nil
+	return v, gh, inc, clk
+}
+
+var goldenName = regexp.MustCompile(`^golden-\d{8}T\d{6}Z$`)
+
+// snapshots lists the snapshots the cycle took, by name.
+func snapshots(f *fakeIncus) []string {
+	var names []string
+	for _, o := range f.ops {
+		if name, ok := strings.CutPrefix(o, "snapshot docker-runner-1 "); ok {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func TestAWeekOldGoldenIsRefreshedBeforeTheNextReset(t *testing.T) {
+	v, gh, inc, _ := weekOld(t)
+	if err := v.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	taken := snapshots(inc)
+	if len(taken) != 1 || !goldenName.MatchString(taken[0]) || taken[0] <= "golden-20261122T150000Z" {
+		t.Fatalf("snapshots taken = %q, want one golden-<now>", taken)
+	}
+	wantOps := []string{
+		"stop docker-runner-1",
+		"restore docker-runner-1 golden-20261115T150000Z",
+		"start docker-runner-1",
+		"exec docker info",
+		"exec " + strings.Join(upgrade, " "),
+		"shutdown docker-runner-1",
+		"start docker-runner-1",
+		"exec docker info",
+		"exec " + checkGolden,
+		"shutdown docker-runner-1",
+		"snapshot docker-runner-1 " + taken[0],
+		"stop docker-runner-1",
+		"restore docker-runner-1 " + taken[0],
+		"start docker-runner-1",
+		"exec docker info",
+		"exec /usr/local/sbin/start-jit-runner",
+		"stop docker-runner-1",
+	}
+	if !reflect.DeepEqual(inc.ops, wantOps) {
+		t.Fatalf("incus ops = %q\nwant %q", inc.ops, wantOps)
+	}
+	if len(gh.minted) != 2 {
+		t.Fatalf("minted = %q, want the refresh to mint nothing", gh.minted)
+	}
+}
+
+func TestAGoldenUnderAWeekOldIsNotRefreshed(t *testing.T) {
+	v, gh, inc, _ := newVM(t)
+	inc.golden = "golden-20261115T150100Z"
+	gh.polls = []poll{{err: runners.ErrNotFound}}
+	for range 2 {
+		if err := v.Cycle(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if taken := snapshots(inc); len(taken) != 0 {
+		t.Fatalf("snapshots taken = %q, want none", taken)
+	}
+}
+
+func TestARefreshKeepsTheNewestTwoGoldens(t *testing.T) {
+	v, _, inc, _ := weekOld(t)
+	inc.older = []string{"golden-20261108T150000Z"}
+	if err := v.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := countOps(inc, "delete-snapshot docker-runner-1 golden-20261108T150000Z"); got != 1 {
+		t.Fatalf("ops = %q, want the oldest golden deleted", inc.ops)
+	}
+	if want := []string{"golden-20261115T150000Z"}; !reflect.DeepEqual(inc.older, want) {
+		t.Fatalf("goldens left = %q + %q, want %q + the new one", inc.older, inc.golden, want)
+	}
+}
+
+func TestAFailedPruneIsLoggedAndTheNewGoldenStands(t *testing.T) {
+	cases := map[string]string{"listing": "goldens", "deleting": "delete-snapshot"}
+	for name, op := range cases {
+		t.Run(name, func(t *testing.T) {
+			v, _, inc, _ := weekOld(t)
+			var logs bytes.Buffer
+			v.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			inc.older = []string{"golden-20261108T150000Z"}
+			inc.fails[op] = 1
+			if err := v.Cycle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(logs.String(), "pruning old goldens failed") {
+				t.Fatalf("logs lack the prune failure:\n%s", logs.String())
+			}
+			if taken := snapshots(inc); len(taken) != 1 || countOps(inc, "restore docker-runner-1 "+taken[0]) != 1 {
+				t.Fatalf("ops = %q, want the new golden restored", inc.ops)
+			}
+		})
+	}
+}
+
+// arm runs set the first time the fake sees op, to fail a later step.
+func arm(f *fakeIncus, op string, set func()) {
+	armed := false
+	f.before = func(o string) {
+		if o == op && !armed {
+			armed = true
+			set()
+		}
+	}
+}
+
+func TestAFailedRefreshKeepsTheOldGoldenAndRetriesADayLater(t *testing.T) {
+	cases := map[string]func(*VM, *fakeIncus){
+		"restore":  func(_ *VM, inc *fakeIncus) { inc.fails["restore"] = 1 },
+		"upgrade":  func(_ *VM, inc *fakeIncus) { inc.fails["sh"] = 1 },
+		"reboot":   func(_ *VM, inc *fakeIncus) { inc.fails["shutdown"] = 1 },
+		"boot":     func(_ *VM, inc *fakeIncus) { arm(inc, "shutdown", func() { inc.fails["start"] = 1 }) },
+		"checks":   func(_ *VM, inc *fakeIncus) { inc.fails[checkGolden] = 1 },
+		"snapshot": func(_ *VM, inc *fakeIncus) { inc.fails["snapshot"] = 1 },
+		"docker after the reboot": func(v *VM, inc *fakeIncus) {
+			v.Timing.Ready = 0
+			arm(inc, "shutdown", func() { inc.notReady = 1 })
+		},
+		"clean stop": func(_ *VM, inc *fakeIncus) {
+			arm(inc, checkGolden, func() { inc.fails["shutdown"] = 1 })
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			v, gh, inc, clk := weekOld(t)
+			var logs bytes.Buffer
+			v.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			setup(v, inc)
+			if err := v.Cycle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(logs.String(), "golden refresh failed") {
+				t.Fatalf("logs lack the failure:\n%s", logs.String())
+			}
+			if inc.golden != "golden-20261115T150000Z" {
+				t.Fatalf("golden = %q, want the old one kept", inc.golden)
+			}
+			if len(gh.minted) < 2 {
+				t.Fatalf("minted = %q, want the cycle to carry on after the failure", gh.minted)
+			}
+			failedAt := clk.now
+			inc.ops = nil
+			if err := v.Cycle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if countOps(inc, "exec "+strings.Join(upgrade, " ")) != 0 {
+				t.Fatalf("refreshed again straight after a failure: %q", inc.ops)
+			}
+			clk.now = failedAt.Add(v.Timing.RefreshRetry)
+			if err := v.Cycle(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if taken := snapshots(inc); len(taken) != 1 {
+				t.Fatalf("snapshots = %q, want a retry a day after the failure", taken)
+			}
+		})
+	}
+}
+
+func TestAFailedRefreshLeavesTheVMStopped(t *testing.T) {
+	v, _, inc, _ := weekOld(t)
+	inc.fails[checkGolden] = 1
+	if err := v.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	i := slices.Index(inc.ops, "exec "+checkGolden)
+	if i < 0 || i+1 >= len(inc.ops) || inc.ops[i+1] != "stop docker-runner-1" {
+		t.Fatalf("ops = %q, want a stop straight after the failed checks", inc.ops)
+	}
+}
+
+func TestAHungUpgradeTimesOutAndTakesNoSnapshot(t *testing.T) {
+	v, _, inc, clk := weekOld(t)
+	inc.hang = map[string]bool{"sh": true}
+	clk.ticking = true
+	at := opTimes(inc, clk, "shutdown")
+	began := clk.now
+	if err := v.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if taken := snapshots(inc); len(taken) != 0 {
+		t.Fatalf("snapshots = %q, want none after a hung upgrade", taken)
+	}
+	if len(*at) != 0 {
+		t.Fatalf("shut down after a hung upgrade at %v", *at)
+	}
+	if took := clk.now.Sub(began); took < v.Timing.Upgrade {
+		t.Fatalf("gave up after %v, want the %v deadline", took, v.Timing.Upgrade)
+	}
+}
+
+func TestTheHeartbeatStaysFreshThroughARefresh(t *testing.T) {
+	v, _, inc, clk := weekOld(t)
+	v.MetricsDir = t.TempDir()
+	inc.release = make(chan struct{})
+	clk.ticking = true
+	var stalest time.Duration
+	ticks := 0
+	var refreshing bool
+	clk.onTick = func() {
+		if age := clk.now.Sub(heartbeat(t, v)); age > stalest {
+			stalest = age
+		}
+		refreshing = refreshing || v.State() == Refreshing
+		if ticks++; ticks == 40 {
+			close(inc.release)
+			clk.ticking = false
+		}
+	}
+	if err := v.Cycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ticks < 40 {
+		t.Fatalf("%d ticks, want the upgrade to have run for 40 polls", ticks)
+	}
+	if stalest > v.Timing.Poll {
+		t.Fatalf("the heartbeat went %v stale, want at most a poll (%v)", stalest, v.Timing.Poll)
+	}
+	if !refreshing {
+		t.Fatal("never read refreshing during the refresh")
+	}
+}
+
+func TestDrainDuringARefreshStopsTheVMWithoutASnapshot(t *testing.T) {
+	v, gh, inc, clk := weekOld(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	inc.hang = map[string]bool{"sh": true}
+	clk.ticking = true
+	clk.onTick = cancel
+	if err := v.Cycle(ctx); !errors.Is(err, ErrDrained) {
+		t.Fatalf("err = %v, want ErrDrained", err)
+	}
+	if taken := snapshots(inc); len(taken) != 0 {
+		t.Fatalf("snapshots = %q, want none", taken)
+	}
+	if inc.running || inc.ops[len(inc.ops)-1] != "stop docker-runner-1" {
+		t.Fatalf("ops = %q, want the VM stopped", inc.ops)
+	}
+	if len(gh.minted) != 1 || v.State() != Drained {
+		t.Fatalf("minted %q, state %v; want no mint and drained", gh.minted, v.State())
 	}
 }

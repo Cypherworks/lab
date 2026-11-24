@@ -7,6 +7,15 @@ token, hands it in with `start-jit-runner` (the `github_jit_runner` role),
 and resets the VM once the job ends. The VM never sees the token. The
 design is lab-deploy's `docs/docker-runner-reset.md`.
 
+Once the newest golden is a week old, the instance refreshes it between
+jobs: it boots the golden, which no job has touched, runs `apt-get
+full-upgrade` from every origin, reboots it, runs the image's own
+`check-golden`, stops it cleanly and snapshots it as `golden-<UTC time>`,
+keeping the newest two. A failed refresh takes no snapshot, so the old
+golden stands, and it's tried again a day later. The runner software isn't
+touched: it moves only when the deploy bumps its pin and rebuilds the
+golden by hand.
+
 ## Requirements
 
 Debian 13 or Ubuntu 24.04 with systemd, as root (or `become`). On the

@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // goldenPrefix marks restorable snapshots; a UTC timestamp sorts the rest.
@@ -64,27 +67,52 @@ func (c *Client) Restore(ctx context.Context, vm, snapshot string) error {
 
 // NewestGolden names vm's latest golden-<UTC timestamp> snapshot.
 func (c *Client) NewestGolden(ctx context.Context, vm string) (string, error) {
+	goldens, err := c.Goldens(ctx, vm)
+	if err != nil {
+		return "", err
+	}
+	if len(goldens) == 0 {
+		return "", fmt.Errorf("%s has no %s* snapshot", vm, goldenPrefix)
+	}
+	return goldens[len(goldens)-1], nil
+}
+
+// Goldens names vm's golden-<UTC timestamp> snapshots, oldest first.
+func (c *Client) Goldens(ctx context.Context, vm string) ([]string, error) {
 	out, err := c.Run(ctx, nil, "snapshot", "list", c.target(vm), "--format", "json",
 		"--project", c.Project)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var snaps []struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(out, &snaps); err != nil {
-		return "", fmt.Errorf("snapshots of %s: %w", vm, err)
+		return nil, fmt.Errorf("snapshots of %s: %w", vm, err)
 	}
-	newest := ""
+	var goldens []string
 	for _, s := range snaps {
-		if strings.HasPrefix(s.Name, goldenPrefix) && s.Name > newest {
-			newest = s.Name
+		if strings.HasPrefix(s.Name, goldenPrefix) {
+			goldens = append(goldens, s.Name)
 		}
 	}
-	if newest == "" {
-		return "", fmt.Errorf("%s has no %s* snapshot", vm, goldenPrefix)
-	}
-	return newest, nil
+	slices.Sort(goldens)
+	return goldens, nil
+}
+
+// Shutdown stops vm cleanly, failing if it takes longer than timeout.
+func (c *Client) Shutdown(ctx context.Context, vm string, timeout time.Duration) error {
+	return c.run(ctx, "stop", c.target(vm), "--timeout", strconv.Itoa(int(timeout.Seconds())))
+}
+
+// Snapshot takes a snapshot of vm called name.
+func (c *Client) Snapshot(ctx context.Context, vm, name string) error {
+	return c.run(ctx, "snapshot", "create", c.target(vm), name)
+}
+
+// DeleteSnapshot deletes vm's snapshot called name.
+func (c *Client) DeleteSnapshot(ctx context.Context, vm, name string) error {
+	return c.run(ctx, "snapshot", "delete", c.target(vm), name)
 }
 
 // Running reports whether Incus has vm running.
