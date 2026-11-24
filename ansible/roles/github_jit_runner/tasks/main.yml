@@ -107,11 +107,12 @@
     mode: "0644"
   notify: Reload systemd
 
-- name: Install start-jit-runner
+- name: Install start-jit-runner and check-golden
   become: true
   ansible.builtin.template:
-    src: start-jit-runner.j2
-    dest: /usr/local/sbin/start-jit-runner
+    src: "{{ item }}.j2"
+    dest: /usr/local/sbin/{{ item }}
     owner: root
     group: root
     mode: "0700"
+  loop: [start-jit-runner, check-golden]

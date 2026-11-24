@@ -3,7 +3,9 @@
 # as a runner whose user has passwordless sudo. Checks the runner's libraries
 # are installed, the tarball sits unpacked under its version and belongs to
 # the runner user, the user is in its extra groups and can sudo, and the
-# unit exists but isn't enabled, so a boot never starts it. A stale version
+# unit exists but isn't enabled, so a boot never starts it. check-golden
+# passes on the converged host and fails, naming files only, on a stale
+# runner version, a registration and a PAT left on disk. A stale version
 # directory is removed by the next run, and a run after that changes nothing.
 # Then run.sh is swapped for a stub that records how it was called (the real
 # one would dial GitHub) and the JIT hand-off is driven as the supervisor
@@ -28,6 +30,8 @@
     _root: /opt/actions-runner
     _version_dir: "{{ _root }}/2.338.2"
     _config: /run/actions-runner/jitconfig
+    # Built here so no token-shaped string sits in the repo.
+    _fake_pat: "{{ 'github_' ~ 'pat_' ~ 'A' * 30 }}"
     _out: /tmp/jit-stub.out
     # Drop the image's policy-rc.d: a host has none.
     _boot: >-
@@ -98,6 +102,7 @@
         echo "enabled: $($t systemctl is-enabled actions-runner.service || true)"
         echo "active: $($t systemctl is-active actions-runner.service || true)"
         echo "start: $($t stat -c '%U %a' /usr/local/sbin/start-jit-runner)"
+        echo "check: $($t stat -c '%U %a' /usr/local/sbin/check-golden)"
       register: _installed
       changed_when: false
 
@@ -113,11 +118,58 @@
           - "_installed.stdout is search('(?m)^enabled: static$')"
           - "_installed.stdout is search('(?m)^active: inactive$')"
           - "_installed.stdout is search('(?m)^start: root 700$')"
+          - "_installed.stdout is search('(?m)^check: root 700$')"
         fail_msg: "{{ _installed.stdout }} converge={{ _run_first.stdout[-600:] }}"
+
+    - name: Check the converged host is fit for a golden snapshot
+      ansible.builtin.command: "{{ _in_target }} /usr/local/sbin/check-golden"
+      register: _fit
+      changed_when: false
+      failed_when: false
 
     - name: Leave an older runner version behind
       ansible.builtin.command: "{{ _in_target }} mkdir -p {{ _root }}/2.300.0/bin"
       changed_when: true
+
+    - name: Leave a registration and a PAT behind as well
+      ansible.builtin.shell: |
+        set -e
+        {{ _in_target }} touch {{ _version_dir }}/.runner
+        echo '{{ _fake_pat }}' | docker exec -i {{ _target }} sh -c 'cat > /etc/leaked-token'
+      changed_when: true
+
+    - name: Check the host with all three left behind
+      ansible.builtin.command: "{{ _in_target }} /usr/local/sbin/check-golden"
+      register: _unfit
+      changed_when: false
+      failed_when: false
+
+    - name: Clear the registration and the PAT
+      ansible.builtin.command: "{{ _in_target }} rm {{ _version_dir }}/.runner /etc/leaked-token"
+      changed_when: true
+
+    - name: Assert check-golden passes a clean host and names each fault
+      vars:
+        _fit_lines:
+          - "ok: runner 2.338.2 installed"
+          - "ok: not registered"
+          - "ok: hand-off script"
+          - "ok: runner idle"
+          - "ok: no PAT on disk"
+        _unfit_lines:
+          - "FAIL: runner 2.338.2 installed (found: 2.300.0 2.338.2)"
+          - "FAIL: not registered: {{ _version_dir }}/.runner"
+          - "ok: hand-off script"
+          - "ok: runner idle"
+          - "FAIL: no PAT on disk: /etc/leaked-token"
+      ansible.builtin.assert:
+        that:
+          - _fit.rc == 0
+          - _fit.stdout_lines == _fit_lines
+          - _unfit.rc == 1
+          - _unfit.stdout_lines == _unfit_lines
+          - _fake_pat not in _unfit.stdout ~ _unfit.stderr
+        fail_msg: "fit={{ _fit.rc }} {{ _fit.stdout_lines }} unfit={{ _unfit.rc }} {{ _unfit.stdout_lines }}"
 
     - name: Converge again to clear the older version
       ansible.builtin.command: "{{ _converge }}"
