@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // call is one recorded run of the incus CLI.
@@ -142,6 +143,72 @@ func TestNewestGoldenWithoutAGoldenSnapshotIsAnError(t *testing.T) {
 	r.fail["snapshot list"] = errors.New("exit status 1")
 	if _, err := c.NewestGolden(context.Background(), "docker-runner-1"); err == nil {
 		t.Fatal("no error when the list fails")
+	}
+}
+
+func TestGoldensListsOnlyGoldenSnapshotsOldestFirst(t *testing.T) {
+	r, c := newClient()
+	r.out["snapshot list"] = `[
+		{"name": "golden-20261122T020000Z"},
+		{"name": "before-cis"},
+		{"name": "golden-20261115T020000Z"}
+	]`
+	got, err := c.Goldens(context.Background(), "docker-runner-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"golden-20261115T020000Z", "golden-20261122T020000Z"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("goldens = %q, want %q", got, want)
+	}
+	r.out["snapshot list"] = `[{"name": "before-cis"}]`
+	if got, err := c.Goldens(context.Background(), "docker-runner-1"); err != nil || len(got) != 0 {
+		t.Fatalf("goldens with none = %q, %v; want none and no error", got, err)
+	}
+}
+
+func TestGoldenBuildStepsAreScopedToTheRemoteAndProject(t *testing.T) {
+	r, c := newClient()
+	ctx := context.Background()
+	if err := c.Shutdown(ctx, "docker-runner-1", 5*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Snapshot(ctx, "docker-runner-1", "golden-20261129T020000Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeleteSnapshot(ctx, "docker-runner-1", "golden-20261115T020000Z"); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"stop", "lab:docker-runner-1", "--timeout", "300", "--project", "docker-runners"},
+		{"snapshot", "create", "lab:docker-runner-1", "golden-20261129T020000Z", "--project", "docker-runners"},
+		{"snapshot", "delete", "lab:docker-runner-1", "golden-20261115T020000Z", "--project", "docker-runners"},
+	}
+	for i, w := range want {
+		if i >= len(r.calls) || !reflect.DeepEqual(r.calls[i].args, w) {
+			t.Fatalf("calls = %q, want %q", r.calls, want)
+		}
+	}
+}
+
+func TestGoldenBuildStepFailuresSurface(t *testing.T) {
+	r, c := newClient()
+	ctx := context.Background()
+	r.fail["stop"] = errors.New("exit status 1")
+	r.fail["snapshot create"] = errors.New("exit status 1")
+	r.fail["snapshot delete"] = errors.New("exit status 1")
+	if err := c.Shutdown(ctx, "docker-runner-1", time.Minute); err == nil {
+		t.Fatal("shutdown failure swallowed")
+	}
+	if err := c.Snapshot(ctx, "docker-runner-1", "golden-x"); err == nil {
+		t.Fatal("snapshot failure swallowed")
+	}
+	if err := c.DeleteSnapshot(ctx, "docker-runner-1", "golden-x"); err == nil {
+		t.Fatal("snapshot delete failure swallowed")
+	}
+	r.fail["snapshot list"] = errors.New("exit status 1")
+	if _, err := c.Goldens(ctx, "docker-runner-1"); err == nil {
+		t.Fatal("snapshot list failure swallowed")
 	}
 }
 

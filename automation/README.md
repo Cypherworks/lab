@@ -2,7 +2,7 @@
 
 Go code for the AWS Lambdas that hold the lab automation's root of trust: the broker (issues short-lived apply credentials and down-scoped GitHub App tokens to verified workflow runs), the registrar (mints single-job runner configs for enrolled hosts) and the manifest function (creates the GitHub App and stores its key in SSM). Generic mechanism only; the deploy repo supplies account, org, repository and actor IDs.
 
-It also holds `runner-supervisor`, a daemon that runs on a lab host rather than in AWS: it resets a Docker runner VM to its golden Incus snapshot after every job and registers the clean VM with a single-job JIT config, so the registration credential never enters the VM. Design: lab-deploy `docs/docker-runner-reset.md`.
+It also holds `runner-supervisor`, a daemon that runs on a lab host rather than in AWS: it resets a Docker runner VM to its golden Incus snapshot after every job and registers the clean VM with a single-job JIT config, so the registration credential never enters the VM. Once a week, between jobs, it patches the golden snapshot. Design: lab-deploy `docs/docker-runner-reset.md`.
 
 Design: Cypherworks/lab-deploy#245.
 

@@ -1,7 +1,8 @@
 // Package supervisor runs one Docker runner VM: it restores the VM to its
 // golden snapshot, registers it with a single-job JIT config, waits for the
 // job to end by watching GitHub and Incus, and starts again. The signal that
-// a job ended never comes from the VM, since the job controls the VM.
+// a job ended never comes from the VM, since the job controls the VM. Once a
+// week, between jobs, it patches the golden snapshot.
 package supervisor
 
 import (
@@ -28,6 +29,16 @@ const nameTime = "20060102T150405Z"
 // goldenPrefix starts every golden snapshot's name.
 const goldenPrefix = "golden-"
 
+// checkGolden is the golden image's own check that it's fit to snapshot.
+const checkGolden = "/usr/local/sbin/check-golden"
+
+// keepGoldens is how many golden snapshots a refresh leaves, newest first.
+const keepGoldens = 2
+
+// upgrade patches the VM from every origin, keeping its own config files.
+var upgrade = []string{"sh", "-c", "export DEBIAN_FRONTEND=noninteractive; apt-get update -q &&" +
+	" apt-get full-upgrade -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"}
+
 // GitHub is the part of the runners client the loop uses.
 type GitHub interface {
 	MintJIT(ctx context.Context, name string, groupID int64, labels []string) (runners.Runner, string, error)
@@ -42,6 +53,10 @@ type Incus interface {
 	Start(ctx context.Context, vm string) error
 	Restore(ctx context.Context, vm, snapshot string) error
 	NewestGolden(ctx context.Context, vm string) (string, error)
+	Goldens(ctx context.Context, vm string) ([]string, error)
+	Shutdown(ctx context.Context, vm string, timeout time.Duration) error
+	Snapshot(ctx context.Context, vm, name string) error
+	DeleteSnapshot(ctx context.Context, vm, name string) error
 	Running(ctx context.Context, vm string) (bool, error)
 	Exec(ctx context.Context, vm string, stdin io.Reader, command ...string) error
 }
@@ -50,6 +65,7 @@ type Incus interface {
 type Clock interface {
 	Now() time.Time
 	Sleep(ctx context.Context, d time.Duration) error
+	After(d time.Duration) <-chan time.Time
 }
 
 // RealClock is the wall clock.
@@ -57,6 +73,9 @@ type RealClock struct{}
 
 // Now is time.Now.
 func (RealClock) Now() time.Time { return time.Now() }
+
+// After is time.After.
+func (RealClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 // Sleep waits d, or returns early with ctx's error.
 func (RealClock) Sleep(ctx context.Context, d time.Duration) error {
@@ -80,9 +99,10 @@ const (
 	Busy
 	Failed
 	Drained
+	Refreshing
 )
 
-var stateNames = [...]string{"resetting", "registering", "idle", "busy", "failed", "drained"}
+var stateNames = [...]string{"resetting", "registering", "idle", "busy", "failed", "drained", "refreshing"}
 
 func (s State) String() string { return stateNames[s] }
 
@@ -103,6 +123,10 @@ type Timing struct {
 	ResetBackoff     []time.Duration
 	MintBackoffStart time.Duration
 	MintBackoffMax   time.Duration
+	RefreshAfter     time.Duration
+	RefreshRetry     time.Duration
+	Upgrade          time.Duration
+	Shutdown         time.Duration
 }
 
 // DefaultTiming is lab-deploy docs/docker-runner-reset.md's timing.
@@ -117,6 +141,10 @@ func DefaultTiming() Timing {
 		ResetBackoff:     []time.Duration{30 * time.Second, 2 * time.Minute, 10 * time.Minute},
 		MintBackoffStart: 15 * time.Second,
 		MintBackoffMax:   5 * time.Minute,
+		RefreshAfter:     7 * 24 * time.Hour,
+		RefreshRetry:     24 * time.Hour,
+		Upgrade:          30 * time.Minute,
+		Shutdown:         5 * time.Minute,
 	}
 }
 
@@ -140,6 +168,7 @@ type VM struct {
 	resetsOK     int
 	resetsFailed int
 	undeleted    []int64
+	refreshFail  time.Time
 }
 
 // Cycle runs one reset, registration and job, and leaves the VM stopped.
@@ -150,6 +179,16 @@ func (v *VM) Cycle(ctx context.Context) (err error) {
 		}
 	}()
 	v.retryDeletes(ctx)
+	if v.refreshDue() {
+		if err := v.refresh(ctx); err != nil {
+			v.stop(ctx)
+			if ctx.Err() != nil {
+				return ErrDrained
+			}
+			v.refreshFail = v.Clock.Now()
+			v.log().Warn("golden refresh failed, keeping the old golden", "err", err)
+		}
+	}
 	started, err := v.reset(ctx)
 	if err != nil {
 		return err
@@ -243,6 +282,109 @@ func (v *VM) resetOnce(ctx context.Context) (time.Time, error) {
 	started := v.Clock.Now()
 	v.golden = golden
 	return started, v.waitReady(ctx)
+}
+
+// refreshDue reports whether the golden the last reset restored is a week
+// old, and no refresh has failed in the last day.
+func (v *VM) refreshDue() bool {
+	built, err := time.Parse(nameTime, strings.TrimPrefix(v.golden, goldenPrefix))
+	if err != nil {
+		return false
+	}
+	now := v.Clock.Now()
+	return now.Sub(built) >= v.Timing.RefreshAfter &&
+		(v.refreshFail.IsZero() || now.Sub(v.refreshFail) >= v.Timing.RefreshRetry)
+}
+
+// refresh patches the golden snapshot: it boots the newest golden, which no
+// job has touched, upgrades it, boots the result so the checks see what
+// every job will, and snapshots it cleanly stopped. Any failure takes no
+// snapshot, so the old golden stands.
+func (v *VM) refresh(ctx context.Context) error {
+	v.setState(Refreshing)
+	from := v.golden
+	if _, err := v.resetOnce(ctx); err != nil {
+		return err
+	}
+	if err := v.execFor(ctx, v.Timing.Upgrade, upgrade...); err != nil {
+		return fmt.Errorf("upgrade: %w", err)
+	}
+	if err := v.shutdown(ctx); err != nil {
+		return err
+	}
+	if err := v.Incus.Start(ctx, v.Name); err != nil {
+		return err
+	}
+	if err := v.waitReady(ctx); err != nil {
+		return err
+	}
+	if err := v.execFor(ctx, v.Timing.Upgrade, checkGolden); err != nil {
+		return fmt.Errorf("golden checks: %w", err)
+	}
+	if err := v.shutdown(ctx); err != nil {
+		return err
+	}
+	name := goldenPrefix + v.Clock.Now().UTC().Format(nameTime)
+	if err := v.Incus.Snapshot(ctx, v.Name, name); err != nil {
+		return err
+	}
+	v.golden = name
+	v.log().Info("golden refreshed", "from", from, "to", name)
+	v.prune(ctx)
+	return nil
+}
+
+// prune deletes all but the newest goldens; a failure is only logged.
+func (v *VM) prune(ctx context.Context) {
+	goldens, err := v.Incus.Goldens(ctx, v.Name)
+	var errs []error
+	for _, g := range goldens[:max(0, len(goldens)-keepGoldens)] {
+		errs = append(errs, v.Incus.DeleteSnapshot(ctx, v.Name, g))
+	}
+	if err := errors.Join(append(errs, err)...); err != nil {
+		v.log().Warn("pruning old goldens failed", "err", err)
+	}
+}
+
+// shutdown stops the VM cleanly, as a snapshot must be of a clean stop.
+func (v *VM) shutdown(ctx context.Context) error {
+	return v.await(ctx, v.Timing.Shutdown, func(ctx context.Context) error {
+		return v.Incus.Shutdown(ctx, v.Name, v.Timing.Shutdown)
+	})
+}
+
+// execFor runs command in the VM with a deadline of d.
+func (v *VM) execFor(ctx context.Context, d time.Duration, command ...string) error {
+	return v.await(ctx, d, func(ctx context.Context) error {
+		return v.Incus.Exec(ctx, v.Name, nil, command...)
+	})
+}
+
+// await runs do with a deadline of d, refreshing the heartbeat each poll
+// while it runs, so a long step never reads as a dead loop. The deadline
+// is on the loop's clock, and do gets a context that ends with it.
+func (v *VM) await(ctx context.Context, d time.Duration, do func(context.Context) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- do(ctx) }()
+	deadline := v.Clock.Now().Add(d)
+	for {
+		select {
+		case err := <-done:
+			return err
+		case <-ctx.Done():
+			<-done
+			return ctx.Err()
+		case <-v.Clock.After(v.Timing.Poll):
+			v.publish()
+			if !v.Clock.Now().Before(deadline) {
+				cancel()
+				<-done
+				return fmt.Errorf("still running after %v", d)
+			}
+		}
+	}
 }
 
 // waitReady waits for the incus agent and Docker to answer inside the VM.

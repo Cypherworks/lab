@@ -46,7 +46,8 @@ so the `docker` group exists for `github_jit_runner_groups`.
    Other versions under `<dir>` are removed.
 5. Installs `actions-runner.service`. It has no `[Install]` section, so it
    is never enabled and a boot never starts it.
-6. Installs `/usr/local/sbin/start-jit-runner` (root, `0700`).
+6. Installs `/usr/local/sbin/start-jit-runner` and
+   `/usr/local/sbin/check-golden` (root, `0700`).
 
 `start-jit-runner` reads a JIT config from stdin, writes it to
 `/run/actions-runner/jitconfig` (tmpfs, owned by the job user, `0400`, in a
@@ -54,6 +55,15 @@ root-owned directory so a job can't replace or remove it) and
 starts the unit, which runs `run.sh --jitconfig <config>` as the job user.
 It refuses empty stdin, leaving nothing behind, and refuses a second config
 in the same boot.
+
+`check-golden` says whether the host is fit to be snapshotted as the golden
+image every job boots from: the pinned runner alone is installed, nothing
+under `<dir>` is registered (`.runner`, `.credentials`), the unit isn't
+running, `start-jit-runner` is in place, and no file under 20 MB on the
+root filesystem holds a fine-grained PAT (`github_pat_...`). It runs every
+check, prints one `ok:` or `FAIL:` line each, naming files but never their
+contents, and exits 1 if any failed. Whatever builds or refreshes the golden
+image runs it before taking the snapshot.
 
 ## Example
 
@@ -109,6 +119,8 @@ systemd container with sudo on. It checks the packages, the user and its
 groups, sudo, the unpacked runner's owner, that the unit isn't enabled,
 that a stale version is removed and a further run changes nothing. It then
 swaps `run.sh` for a stub and drives `start-jit-runner` as a supervisor
-would: empty stdin, one config, then a second. A run with sudo off must take
+would: empty stdin, one config, then a second. Before that, `check-golden`
+must pass the converged host, then fail on a stale runner version, a
+`.runner` file and a planted PAT, naming each without printing the PAT. A run with sudo off must take
 sudo away, and a malformed checksum must fail the run. Its header says how
 to run it.

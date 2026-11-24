@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Managed by Ansible (github_jit_runner role). Checks this host is fit to be
+# snapshotted as the golden image every job boots from: the pinned runner
+# alone is installed, nothing is registered, the runner isn't running and no
+# GitHub PAT is anywhere on disk. Runs every check, prints one line each with
+# file names only, never contents, and exits 1 if any failed.
+set -uo pipefail
+
+dir={{ github_jit_runner_dir | quote }}
+version={{ github_jit_runner_version | quote }}
+failed=0
+
+pass() { printf 'ok: %s\n' "$1"; }
+fail() { printf 'FAIL: %s\n' "$1"; failed=1; }
+
+versions=$(find "$dir" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort | paste -sd ' ' -)
+if [[ $versions == "$version" && -x $dir/$version/run.sh ]]; then
+  pass "runner $version installed"
+else
+  fail "runner $version installed (found: ${versions:-nothing})"
+fi
+
+registered=$(find "$dir" \( -name .runner -o -name .credentials \) -print 2>/dev/null | paste -sd ' ' -)
+if [[ -z $registered ]]; then pass "not registered"; else fail "not registered: $registered"; fi
+
+if [[ -x /usr/local/sbin/start-jit-runner ]]; then
+  pass "hand-off script"
+else
+  fail "hand-off script"
+fi
+
+if systemctl is-active --quiet {{ github_jit_runner_unit }}; then
+  fail "runner idle"
+else
+  pass "runner idle"
+fi
+
+leaked=$(find / -xdev -type f -size -20M -print0 2>/dev/null |
+  xargs -0 grep -lsIE 'github_pat_[A-Za-z0-9_]{20,}' | paste -sd ' ' -)
+if [[ -z $leaked ]]; then pass "no PAT on disk"; else fail "no PAT on disk: $leaked"; fi
+
+exit "$failed"
