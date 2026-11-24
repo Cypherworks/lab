@@ -37,7 +37,7 @@ it. `community.crypto` for the client certificate. Internet access to
 | `runner_supervisor_project` | `""` | The Incus project holding the VMs. Required. |
 | `runner_supervisor_token` | `""` | GitHub token that mints, polls and deletes runners, from SOPS. Required. |
 | `runner_supervisor_github_url` | `https://api.github.com` | GitHub REST API base URL. |
-| `runner_supervisor_metrics_dir` | `""` | node_exporter's textfile directory. Empty writes no metrics. |
+| `runner_supervisor_metrics_dir` | `""` | node_exporter's textfile directory, created root 0755 if missing so the units start before node_exporter is installed. Empty writes no metrics. |
 | `runner_supervisor_cert_dest` | `""` | Path on the control node the client certificate is fetched to, for the deploy to trust (Terraform `incus_certificate`, restricted to the project). Required. |
 | `runner_supervisor_cert_name` | `runner-supervisor` | The client certificate's common name. |
 | `runner_supervisor_stop_timeout` | `70min` | How long stopping an instance may take. A busy VM's instance waits for its job, which the supervisor caps at an hour. |
