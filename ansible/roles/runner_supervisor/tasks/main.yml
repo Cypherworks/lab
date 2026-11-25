@@ -112,6 +112,17 @@
     - "{{ runner_supervisor_conf_dir }}/servercerts"
     - "{{ runner_supervisor_token_file | dirname }}"
 
+# Root 0755, as node_exporter's package ships it, so neither changes it.
+- name: Create the metrics directory, which the unit won't start without
+  become: true
+  ansible.builtin.file:
+    path: "{{ runner_supervisor_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: runner_supervisor_metrics_dir | length > 0
+
 - name: Generate the Incus client key, which never leaves this host
   become: true
   community.crypto.openssl_privatekey:

@@ -7,11 +7,13 @@
 # points at the given address with the given server certificate pinned, the
 # token file is root-only, and the build writes nothing at a fixed path in
 # the control node's temp directory. Both supervisor instances are enabled
-# and running, and each has read the token and is retrying GitHub, which
-# here is a closed local port. A second run changes nothing, and a missing
-# token, VM list, server certificate or org fails the run. Needs Docker, Go
-# on the control node, community.crypto, and internet for the image, apt
-# and Zabbly. From ansible/:
+# and running before node_exporter is installed, so the role makes its
+# textfile directory itself, and each has read the token and is retrying
+# GitHub, which here is a closed local port. A second run changes nothing,
+# nor does one after node_exporter's package ships the same directory, and
+# a missing token, VM list, server certificate or org fails the run. Needs
+# Docker, Go on the control node, community.crypto, and internet for the
+# image, apt and Zabbly. From ansible/:
 #
 #   ANSIBLE_ROLES_PATH=roles ansible-playbook -i localhost, -c local \
 #     roles/runner_supervisor/tests/supervisor.yml
@@ -111,10 +113,6 @@
       changed_when: false
       failed_when: false
 
-    - name: Give the target node_exporter's textfile directory
-      ansible.builtin.command: "{{ _in_target }} mkdir -p {{ _metrics }}"
-      changed_when: true
-
     - name: Converge the supervisor
       ansible.builtin.command: "{{ _converge }}"
       environment: "{{ _converge_env }}"
@@ -149,6 +147,7 @@
         echo "subject: $($t openssl x509 -noout -subject -in {{ _conf }}/client.crt)"
         echo "remote: $($t env INCUS_CONF={{ _conf }} incus remote list --format csv | grep '^lab,')"
         echo "token: $($t stat -c '%U %a' /etc/runner-supervisor/token) $($t cat /etc/runner-supervisor/token)"
+        echo "metrics: $($t stat -c '%U %G %a' {{ _metrics }})"
         for vm in docker-runner-1 docker-runner-2; do
           echo "unit $vm: $($t systemctl is-enabled runner-supervisor@$vm) $($t systemctl is-active runner-supervisor@$vm)"
         done
@@ -168,6 +167,7 @@
           - "_installed.stdout is search('(?m)^subject: .*CN *= *runner-supervisor')"
           - "_installed.stdout is search('(?m)^remote: lab,https://192\\.0\\.2\\.10:8443,')"
           - "_installed.stdout is search('(?m)^token: root 600 test-dummy-token$')"
+          - "_installed.stdout is search('(?m)^metrics: root root 755$')"
           - "_installed.stdout is search('(?m)^unit docker-runner-1: enabled active$')"
           - "_installed.stdout is search('(?m)^unit docker-runner-2: enabled active$')"
           - lookup('file', _work.path ~ '/client.crt') == lookup('file', _work.path ~ '/target-client.crt')
@@ -183,6 +183,23 @@
       ansible.builtin.command: "{{ _converge }}"
       environment: "{{ _converge_env }}"
       register: _run_again
+      changed_when: false
+
+    - name: Install node_exporter's package, which ships the same directory
+      ansible.builtin.command: >-
+        {{ _in_target }} sh -c
+        'DEBIAN_FRONTEND=noninteractive apt-get install -y -qq prometheus-node-exporter'
+      changed_when: true
+
+    - name: Converge after node_exporter with nothing changed
+      ansible.builtin.command: "{{ _converge }}"
+      environment: "{{ _converge_env }}"
+      register: _run_after_exporter
+      changed_when: false
+
+    - name: Read the textfile directory node_exporter now owns too
+      ansible.builtin.command: "{{ _in_target }} stat -c '%U %G %a' {{ _metrics }}"
+      register: _metrics_after
       changed_when: false
 
     - name: Converge without a token
@@ -221,7 +238,9 @@
       ansible.builtin.assert:
         that:
           - _run_again.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
-          - _run_first.stderr == '' and _run_again.stderr == ''
+          - _run_after_exporter.stdout is search(_target ~ ' +: ok=\d+ +changed=0 ')
+          - _metrics_after.stdout == 'root root 755'
+          - _run_first.stderr == '' and _run_again.stderr == '' and _run_after_exporter.stderr == ''
           - _no_token.rc != 0
           - _no_token.stdout is search('runner_supervisor_token is not set')
           - _no_token.stdout is not search('test-dummy-token')
@@ -233,6 +252,7 @@
           - _no_org.stdout is search('Not set: runner_supervisor_org\\.')
         fail_msg: >-
           again={{ _run_again.stdout[-600:] }}
+          after_exporter={{ _run_after_exporter.stdout[-600:] }} metrics={{ _metrics_after.stdout }}
           stderr={{ _run_first.stderr }}{{ _run_again.stderr }}
           no_token={{ _no_token.stdout[-400:] }}
           no_vms={{ _no_vms.stdout[-400:] }}
