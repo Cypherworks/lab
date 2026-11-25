@@ -44,9 +44,10 @@ groups:
           description: "Health probe failing for a minute."
 {% if monitoring_incus_instances %}
 
-      # Incus drops every series of a stopped instance, so look for none.
+      # Incus drops every series of a stopped instance, so look for none. An
+      # instance whose last reporting node is unscraped is TargetDown's to raise.
       - alert: InstanceNotRunning
-        expr: '{% for name in monitoring_incus_instances %}absent(incus_procs_total{name="{{ name }}"}){{ " or " if not loop.last }}{% endfor %}'
+        expr: '{% for name in monitoring_incus_instances %}(absent(incus_procs_total{name="{{ name }}"}) unless on() (last_over_time(incus_procs_total{name="{{ name }}"}[1h]) and on(instance) up{job="incus"} == 0)){{ " or " if not loop.last }}{% endfor %}'
         for: 1m
         labels:
           severity: critical

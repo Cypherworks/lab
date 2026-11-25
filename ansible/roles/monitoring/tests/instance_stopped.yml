@@ -65,6 +65,44 @@
                     description: "Incus has reported nothing for it for a minute."
             - eval_time: 13m
               alertname: InstanceNotRunning
+        - name: instances on a node whose Incus stops answering stay quiet
+          interval: 1m
+          input_series:
+            - series: 'up{job="incus",instance="node-1"}'
+              values: '1x15'
+            - series: 'up{job="incus",instance="node-2"}'
+              values: '1 1 0x10 1x3'
+            - series: 'incus_procs_total{instance="node-1",name="web-1"}'
+              values: '5x15'
+            - series: 'incus_procs_total{instance="node-2",name="db-1"}'
+              values: '3 3 _x10 3x3'
+          alert_rule_test:
+            - eval_time: 10m
+              alertname: InstanceNotRunning
+            - eval_time: 14m
+              alertname: InstanceNotRunning
+        - name: an instance stopping on a node that answers fires while another node is silent
+          interval: 1m
+          input_series:
+            - series: 'up{job="incus",instance="node-1"}'
+              values: '1 1 0x10'
+            - series: 'up{job="incus",instance="node-2"}'
+              values: '1x12'
+            - series: 'incus_procs_total{instance="node-1",name="web-1"}'
+              values: '5 5 _x10'
+            - series: 'incus_procs_total{instance="node-2",name="db-1"}'
+              values: '3 3 _x10'
+          alert_rule_test:
+            - eval_time: 10m
+              alertname: InstanceNotRunning
+              exp_alerts:
+                - exp_labels:
+                    severity: critical
+                    name: db-1
+                    instance: db-1
+                  exp_annotations:
+                    summary: "Instance not running: db-1"
+                    description: "Incus has reported nothing for it for a minute."
   tasks:
     - name: Read the role's defaults
       ansible.builtin.include_vars:
